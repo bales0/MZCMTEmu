@@ -1,0 +1,6 @@
+.pio/
+.tmp/
+.vscode/
+.agents/
+build
+tests/

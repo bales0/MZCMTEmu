@@ -1,0 +1,65 @@
+gcc.exe (i686-posix-dwarf-rev0, Built by MinGW-W64 project) 5.1.0
+PASS LEP/L16 independent widths, half units, 127 extensions, 1 s idle, 8 generations
+PASS WAV 44100 Hz absolute phase: 44210 samples, RIFF lengths, physical levels
+PASS WAV 22050 Hz absolute phase: 22105 samples, RIFF lengths, physical levels
+PASS user pause priority, motor wait, cancel deletes, overrun errors, AUTO activity timeout
+PASS TAP all four speeds: golden pilot/sync/MSB data/terminator/gaps and exact totals
+PASS TAP empty/truncated/invalid lengths and flags, bad later block, arguments and cleanup
+PASS TAP maximum 65535-byte block and duration beyond 32-bit microseconds
+PASS TAP 2000 deterministic bounded parser fuzz cases (sanitizers depend on host)
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Boovie.tap @ 1400 Bd
+PASS fixture: 35379 bytes, 8 blocks, 610975 intervals, 3625512004 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Boovie.tap @ 1800 Bd
+PASS fixture: 35379 bytes, 8 blocks, 610975 intervals, 2835465696 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Boovie.tap @ 2100 Bd
+PASS fixture: 35379 bytes, 8 blocks, 610975 intervals, 2440584060 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Boovie.tap @ 2500 Bd
+PASS fixture: 35379 bytes, 8 blocks, 610975 intervals, 2061584992 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Bubl-128.tap @ 1400 Bd
+PASS fixture: 50433 bytes, 5 blocks, 827731 intervals, 4456144534 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Bubl-128.tap @ 1800 Bd
+PASS fixture: 50433 bytes, 5 blocks, 827731 intervals, 3477749379 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Bubl-128.tap @ 2100 Bd
+PASS fixture: 50433 bytes, 5 blocks, 827731 intervals, 2988806409 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Bubl-128.tap @ 2500 Bd
+PASS fixture: 50433 bytes, 5 blocks, 827731 intervals, 2519479243 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Circlelu.tap @ 1400 Bd
+PASS fixture: 14860 bytes, 4 blocks, 260215 intervals, 1606610524 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Circlelu.tap @ 1800 Bd
+PASS fixture: 14860 bytes, 4 blocks, 260215 intervals, 1255624076 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Circlelu.tap @ 2100 Bd
+PASS fixture: 14860 bytes, 4 blocks, 260215 intervals, 1080181912 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Circlelu.tap @ 2500 Bd
+PASS fixture: 14860 bytes, 4 blocks, 260215 intervals, 911805676 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Rapid128.tap @ 1400 Bd
+PASS fixture: 52367 bytes, 7 blocks, 869903 intervals, 4828151482 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Rapid128.tap @ 1800 Bd
+PASS fixture: 52367 bytes, 7 blocks, 869903 intervals, 3771891893 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Rapid128.tap @ 2100 Bd
+PASS fixture: 52367 bytes, 7 blocks, 869903 intervals, 3244010995 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Rapid128.tap @ 2500 Bd
+PASS fixture: 52367 bytes, 7 blocks, 869903 intervals, 2737325781 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Xfiles.tap @ 1400 Bd
+PASS fixture: 23470 bytes, 4 blocks, 397975 intervals, 2438481764 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Xfiles.tap @ 1800 Bd
+PASS fixture: 23470 bytes, 4 blocks, 397975 intervals, 1902628284 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Xfiles.tap @ 2100 Bd
+PASS fixture: 23470 bytes, 4 blocks, 397975 intervals, 1634783008 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Xfiles.tap @ 2500 Bd
+PASS fixture: 23470 bytes, 4 blocks, 397975 intervals, 1377730716 ticks
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+PASS real browser/player/GPTimer TAP integration: all speeds, inverted output, absolute edge times and physical progress
+PASS queued EOF MOTOR pause, user pause priority, active speed isolation, final terminator before FINISHED
+player: START sr=0 TAP
+player: START sr=0 TAP
+player: START sr=0 TAP
+player: UNDERRUN
+PASS STOP/replay while paused, actual FIFO underrun, malformed TAP error and idle output
+PASS real driver completed clock: 32-bit carry, session reset and partial-interval pause/resume

@@ -1,0 +1,10 @@
+Original MOTOR EOF branch exit: 3
+player: START sr=0 TAP
+
+Assertion failed!
+
+Program: C:\Dokumenty\GitHub\MZCMTEmu\.tmp\tap-negative-htkqre7l\negative.exe
+File: C:\Dokumenty\GitHub\MZCMTEmu\tests\host\test_player_tap.c, Line 88
+
+Expression: player_get_state()==PLAYER_STATE_PAUSED
+

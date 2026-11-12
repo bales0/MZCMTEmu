@@ -1,0 +1,5 @@
+gcc.exe (i686-posix-dwarf-rev0, Built by MinGW-W64 project) 5.1.0
+PASS LEP/L16 independent widths, half units, 127 extensions, 1 s idle, 8 generations
+PASS WAV 44100 Hz absolute phase: 44210 samples, RIFF lengths, physical levels
+PASS WAV 22050 Hz absolute phase: 22105 samples, RIFF lengths, physical levels
+PASS user pause priority, motor wait, cancel deletes, overrun errors, AUTO activity timeout

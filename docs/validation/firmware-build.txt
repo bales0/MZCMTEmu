@@ -1,0 +1,16 @@
+Processing MZCMTEmu (platform: espressif32; board: esp32-s3-devkitc-1; framework: espidf)
+PLATFORM: Espressif 32 (7.0.1) > Espressif ESP32-S3-DevKitC-1-N8 (8 MB QD, No PSRAM)
+HARDWARE: ESP32S3 240MHz, 320KB RAM, 8MB Flash
+ - framework-espidf @ 4.60001.0 (6.0.1)
+ - toolchain-xtensa-esp-elf @ 15.2.0+20251204
+RAM:   [======    ]  59.7% (used 195568 bytes from 327680 bytes)
+Flash: [===       ]  27.3% (used 286537 bytes from 1048576 bytes)
+  "$PYTHONEXE" "$OBJCOPY" --chip esp32s3 elf2image --flash_mode ${__get_board_flash_mode(__env__)} --flash_freq ${__get_board_f_image(__env__)} --flash_size 16MB --elf-sha256-offset 0xb0 -o $TARGET $SOURCES
+======================== [SUCCESS] Took 174.56 seconds ========================
+Image header byte[3] >> 4 = 4 (16 MB).
+
+Final incremental build after source whitespace review:
+RAM:   [======    ]  59.7% (used 195568 bytes from 327680 bytes)
+Flash: [===       ]  27.3% (used 286537 bytes from 1048576 bytes)
+  "$PYTHONEXE" "$OBJCOPY" --chip esp32s3 elf2image --flash_mode ${__get_board_flash_mode(__env__)} --flash_freq ${__get_board_f_image(__env__)} --flash_size 16MB --elf-sha256-offset 0xb0 -o $TARGET $SOURCES
+========================= [SUCCESS] Took 6.40 seconds =========================

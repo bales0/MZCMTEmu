@@ -1,0 +1,7 @@
+TAP fixture snapshots after read-only validation (2026-11-12)
+path	bytes	sha256
+tests/TAP/Boovie.tap	35379	1d889356d6f137fdb63ffc4918ad4eca3222af42e2a77d5288ab7540d59e737b
+tests/TAP/Bubl-128.tap	50433	76e707f023c73bb12818a16ebdabc61e8584d16693e6687d2bdd57778c239c90
+tests/TAP/Circlelu.tap	14860	6a9dd45079f7c8ae895860b68beec98f81092e2b9ee6578fced7edbdcca174a4
+tests/TAP/Rapid128.tap	52367	1d9f7d1d71af6f411ac127bd9f74744fa1a9c427f98dd0f2c0f3ddc12f7a7b82
+tests/TAP/Xfiles.tap	23470	9179314784bcc0602d2f2911ec79bc34e86144c90f644b11a30e70537db8181a
