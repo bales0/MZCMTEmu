@@ -7,6 +7,7 @@
  * AVR timer/ISR/SD drivers are replaced with a bounded foreground pulse source.
  */
 #include "audio/tap_stream.h"
+#include "formats/program_metadata.h"
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -27,6 +28,13 @@ static uint16_t remaining, pilot_halves;
 static uint8_t flag, current_byte, mask, half;
 static uint32_t gap_ticks;
 static phase_t phase;
+static program_metadata_t metadata,pair_header;
+static program_metadata_store_t metadata_store;
+static bool pair_pending;static uint32_t block_number,total_blocks,metadata_revision;
+static uint8_t block_xor;static uint16_t block_length;
+static void publish_metadata(void){program_metadata_publish(&metadata_store,&metadata);++metadata_revision;}
+void tap_stream_metadata(program_metadata_t *out){program_metadata_snapshot(&metadata_store,out);}
+uint32_t tap_stream_metadata_revision(void){return metadata_revision;}
 static bool error;
 static bool cancelled;
 static tap_stream_cancel_fn scan_cancel;static void *scan_context;
@@ -104,6 +112,17 @@ static bool begin_block(void)
     uint16_t length;
     if (position < 0 || !read_block_header((uint32_t)position,&length,&flag)) return fail();
     block_end = (uint32_t)position+2U+length;
+    ++block_number;block_length=length;block_xor=flag;
+    program_metadata_reset(&metadata,FILE_FORMAT_TAP);metadata.confidence=PROGRAM_UNKNOWN;
+    if(flag==0 && length==19) {
+        uint8_t h[19];h[0]=flag;long restore=cmt_ftell(fp);
+        if(cmt_fread(h+1,1,18,fp)!=18 || cmt_fseek(fp,restore,SEEK_SET))return fail();
+        pair_pending=program_metadata_zx(&metadata,h);
+        if(pair_pending)pair_header=metadata;else metadata.confidence=PROGRAM_INVALID;
+    } else if(flag==255 && pair_pending && pair_header.declared_size==(uint32_t)length-2) {
+        metadata=pair_header;pair_pending=false;
+    } else pair_pending=false;
+    metadata.record=block_number;metadata.records=total_blocks;publish_metadata();
     remaining=length; current_byte=flag; mask=0x80; half=0;
     pilot_halves=(uint16_t)(pilot_cycles(flag)*2U);
     phase=PILOT;
@@ -129,7 +148,9 @@ bool tap_stream_open(const char *path, tap_speed_t speed, tap_stream_info_t *inf
         (uint64_t)end > UINT32_MAX || cmt_fseek(fp,0,SEEK_SET)) goto bad;
     file_size=(uint32_t)end;
     result.total_bytes=file_size; result.baud=bauds[speed];
-    if (!scan(&result) || !begin_block()) goto bad;
+    if (!scan(&result))goto bad;
+    block_number=0;total_blocks=result.block_count;pair_pending=false;
+    if(!begin_block())goto bad;
     if (info) *info=result;
     return true;
 bad:
@@ -162,12 +183,15 @@ bool tap_stream_next_pulse(uint8_t *level, uint32_t *ticks, bool *count_pulse)
                     else {
                         int value=cmt_fgetc(fp);
                         if (value == EOF) return fail();
-                        current_byte=(uint8_t)value; mask=0x80;
+                        current_byte=(uint8_t)value;block_xor^=current_byte;mask=0x80;
                     }
                 }
             }
             return true;
         case TERMINATOR:
+            if(flag==255 && metadata.protocol==PROGRAM_SPECTRUM) {
+                metadata.received_bytes=block_length-2;metadata.confidence=block_xor ? PROGRAM_INVALID:PROGRAM_PAYLOAD_VALID;publish_metadata();
+            }
             *level=0; *ticks=timing.pilot;
             if (block_end == file_size) phase=END;
             else { gap_ticks=block_gap(flag); phase=GAP; }

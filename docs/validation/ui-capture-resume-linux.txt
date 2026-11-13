@@ -1,0 +1,20 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_capture_pcnt
+PASS PCNT enabled epochs: pending latch accounted, pause tail excluded, one/two lost physical transitions detected, signed accumulator safety limit fails closed
+PASS actual MCPWM capture driver: hardware latch ignores ISR delay, 32-bit wrap and multi-wrap idle, stale IRQ, pending-edge pause tail, resume clock and polarity
+PASS MCPWM independent quantization, FIFO overflow and missed-polarity error, all initialization failures clean resources; no allocation on start/stop
+RUN test_capture_mcpwm
+PASS actual MCPWM capture driver: hardware latch ignores ISR delay, 32-bit wrap and multi-wrap idle, stale IRQ, pending-edge pause tail, resume clock and polarity
+PASS MCPWM independent quantization, FIFO overflow and missed-polarity error, all initialization failures clean resources; no allocation on start/stop
+RUN test_recorder
+PASS deferred recorder finalization: frozen public state/path, nonblocking service, STOP/PLAY/MOTOR isolation, cancel and removal cannot report SAVED
+PASS LEP/L16 independent widths, half units, 127 extensions, 1 s idle, 8 generations
+PASS WAV 44100 Hz absolute phase: 44210 samples, RIFF lengths, physical levels
+PASS WAV 22050 Hz absolute phase: 22105 samples, RIFF lengths, physical levels
+PASS user pause priority, motor wait, cancel deletes, overrun errors, AUTO activity timeout
+PASS real recorder MZF motor wait, user-pause priority, automatic checksum completion, byte-exact file, incomplete STOP and abort cleanup
+PASS real recorder AutoName for WAV 22kHz, LEP, L16 and MZF: validated live header, closed-file rename, MFI under final name
+PASS media removal aborts recording with error and closed/deleted provisional file; exhausted REC9999 sequence cannot overwrite existing recording
+
+
+EXIT 0

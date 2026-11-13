@@ -11,4 +11,11 @@ config MZ_TX_GPTIMER_FALLBACK
     help
         Default TX uses RMT DMA with one continuous encoder transaction.
         This option retains the older per-interval GPTimer for comparison.
+config MZ_RX_PCNT_GUARD
+    bool "Independent PCNT WRITE edge diagnostic"
+    default n
+    help
+        Counts both GPIO5 edges independently of MCPWM with no glitch filter.
+        Epoch boundary uncertainty is reported, not treated as proven loss.
+        Enable after board timing checks; no extra pin or wire is required.
 endmenu

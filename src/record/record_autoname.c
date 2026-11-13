@@ -5,6 +5,7 @@
  * Native ESP32-S3 foreground processing; no AVR peripheral code.
  */
 #include "record_autoname.h"
+#include "formats/program_metadata.h"
 
 #include <string.h>
 
@@ -55,9 +56,17 @@
 #define AUTONAME_WAV_X8_Q_SHIFT 11U
 #define AUTONAME_WAV_X8_Q_ROUND (1UL << (AUTONAME_WAV_X8_Q_SHIFT - 1U))
 
+static program_metadata_t program;
+static program_metadata_store_t program_store;
+static void publish_program(void){program_metadata_publish(&program_store,&program);
+}
+void record_autoname_metadata(program_metadata_t *out){program_metadata_snapshot(&program_store,out);
+}
 static bool autoname_enabled = false;
 static bool autoname_found = false;
 static char autoname_name[AUTONAME_NAME_BYTES + 1U];
+static char filename_name[AUTONAME_NAME_BYTES + 1U];
+static uint8_t sinclair_header[19];
 
 /* WAV-only run accumulator. Packed source bytes are bit 0 first. */
 static bool autoname_sample_active = false;
@@ -306,13 +315,20 @@ static bool metadata_loader_from_copier(mz_copier_profile_t profile,
     if (loader_mode == NULL) return false;
     switch (profile)
     {
-        case MZ_COPIER_IC_1_1: *loader_mode = LOADER_MODE_IC_1_1; return true;
-        case MZ_COPIER_IC_1_4: *loader_mode = LOADER_MODE_IC_1_4; return true;
-        case MZ_COPIER_IC_1_3: *loader_mode = LOADER_MODE_IC_1_3; return true;
-        case MZ_COPIER_IC_1_2: *loader_mode = LOADER_MODE_IC_1_2; return true;
-        case MZ_COPIER_TC_1_1: *loader_mode = LOADER_MODE_TC_1_1; return true;
-        case MZ_COPIER_TC_1_3: *loader_mode = LOADER_MODE_TC_1_3; return true;
-        case MZ_COPIER_TC_1_2: *loader_mode = LOADER_MODE_TC_1_2; return true;
+        case MZ_COPIER_IC_1_1: *loader_mode = LOADER_MODE_IC_1_1;
+        return true;
+        case MZ_COPIER_IC_1_4: *loader_mode = LOADER_MODE_IC_1_4;
+        return true;
+        case MZ_COPIER_IC_1_3: *loader_mode = LOADER_MODE_IC_1_3;
+        return true;
+        case MZ_COPIER_IC_1_2: *loader_mode = LOADER_MODE_IC_1_2;
+        return true;
+        case MZ_COPIER_TC_1_1: *loader_mode = LOADER_MODE_TC_1_1;
+        return true;
+        case MZ_COPIER_TC_1_3: *loader_mode = LOADER_MODE_TC_1_3;
+        return true;
+        case MZ_COPIER_TC_1_2: *loader_mode = LOADER_MODE_TC_1_2;
+        return true;
         case MZ_COPIER_NONE:
         default: return false;
     }
@@ -432,6 +448,7 @@ static void autoname_aux_publish_header(record_autoname_aux_profile_t profile,
         return;
     }
 
+    if(!autoname_found)memcpy(filename_name,autoname_name,sizeof(filename_name));
     autoname_found = true;
     metadata_loader_valid = false;
     metadata_tc_pending = false;
@@ -440,6 +457,21 @@ static void autoname_aux_publish_header(record_autoname_aux_profile_t profile,
     metadata_payload_received = 0UL;
     metadata_payload_known = true;
 
+    uint32_t record=program.record+1;
+    program_metadata_reset(&program,metadata_format);
+    program.source=PROGRAM_TAPE_DECODE;
+    program.protocol=profile<=4 ? PROGRAM_SPECTRUM:PROGRAM_CPM;
+    program.confidence=PROGRAM_HEADER_VALID;
+    program.valid=PROGRAM_TITLE|PROGRAM_SIZE;
+    program.declared_size=payload_bytes;
+    if(profile<=4){program_metadata_t zx;
+    program_metadata_reset(&zx,metadata_format);
+    if(program_metadata_zx(&zx,sinclair_header))program=zx;
+    program.source=PROGRAM_TAPE_DECODE;
+    }
+    program.record=record;
+    memcpy(program.title,autoname_name,sizeof(autoname_name));
+    publish_program();
     mz_tape_decoder_stop();
     autoname_aux_reset_probe();
 }
@@ -473,6 +505,7 @@ static void autoname_aux_sinclair_accept_byte(uint8_t value)
 
     {
         uint8_t index = state->byte_index;
+        if(index<sizeof(sinclair_header))sinclair_header[index]=value;
         if ((index == 0U) && (value != 0x00U))
         {
             autoname_aux_reset_probe();
@@ -704,7 +737,8 @@ static void autoname_aux_feed_cmt_interval(uint16_t interval_x8)
             return;
         }
         state->short_pending = 0U;
-        symbol = 0U; /* two shorts */
+        symbol = 0U;
+        /* two shorts */
     }
     else if (autoname_ratio_between_q5(interval_x8, state->short_x8,
                                        29U, 54U))
@@ -715,7 +749,8 @@ static void autoname_aux_feed_cmt_interval(uint16_t interval_x8)
         /* If probing entered halfway through a short pair, drop that orphan
            short and use this long interval to regain symbol alignment. */
         state->short_pending = 0U;
-        symbol = 1U; /* one long */
+        symbol = 1U;
+        /* one long */
     }
     else
     {
@@ -846,11 +881,21 @@ static void autoname_aux_feed(uint16_t duration_units)
 
 void record_autoname_accept_header(const uint8_t *header)
 {
-    if (!autoname_enabled || autoname_found || (header == NULL)) return;
-    memcpy(autoname_name, &header[1], AUTONAME_NAME_BYTES);
-    autoname_name[AUTONAME_NAME_BYTES] = '\0';
-    autoname_found = autoname_sanitize();
-    if (autoname_found) autoname_aux.state = AUTONAME_AUX_LOCKED;
+    if(!autoname_enabled || !header)return;
+    uint16_t record=program.record;
+    program_metadata_t next=program;
+    program_metadata_sharp(&next,header,PROGRAM_TAPE_DECODE);
+    if(!record || next.load!=program.load || next.declared_size!=program.declared_size || strcmp(next.title,program.title))++record;
+    next.record=record;
+    program=next;
+    publish_program();
+    if(!autoname_found){
+        memcpy(autoname_name,header+1,AUTONAME_NAME_BYTES);
+        autoname_name[AUTONAME_NAME_BYTES]=0;
+        autoname_found=autoname_sanitize();
+        if(autoname_found)memcpy(filename_name,autoname_name,sizeof(filename_name));
+    }
+    if(autoname_found)autoname_aux.state=AUTONAME_AUX_LOCKED;
 }
 
 static void autoname_take_decoder_event(void)
@@ -861,9 +906,10 @@ static void autoname_take_decoder_event(void)
         if (event.type == MZ_TAPE_DECODER_EVENT_HEADER_VALID)
         {
             const uint8_t *header = mz_tape_decoder_get_header();
+            autoname_aux.state=AUTONAME_AUX_LOCKED;
             mz_copier_profile_t copier_profile;
 
-            record_autoname_accept_header(header);
+
             metadata_loader_valid = false;
             metadata_payload_known = false;
             metadata_tc_pending = false;
@@ -873,10 +919,26 @@ static void autoname_take_decoder_event(void)
             {
                 metadata_loader_valid = metadata_loader_from_copier(
                     copier_profile, &metadata_loader_mode);
+                uint8_t canonical[128];
+                if(mz_loader_profile_recognize_ic(header,canonical,&copier_profile)) {
+                    record_autoname_accept_header(canonical);
+                    program.source=PROGRAM_LOADER_EMBEDDED;
+                    program.recorded_loader_mode=metadata_loader_mode;
+                    program.valid|=PROGRAM_RECORDED_MODE;
+                    publish_program();
+                }
                 metadata_start_payload(metadata_read_le16(header + 0x1AU));
             }
             else if (mz_loader_profile_recognize_tc_header(header))
             {
+                uint32_t previous_record=program.record;
+                program_metadata_reset(&program,program.format);
+                program.record=previous_record;
+                program.protocol=PROGRAM_SHARP;
+                program.confidence=PROGRAM_LOADER_ONLY;
+                program.source=PROGRAM_LOADER_EMBEDDED;
+                program.chain_stage=1;
+                publish_program();
                 metadata_tc_pending = true;
                 mz_tape_decoder_start_data(MZ_TC_LOADER_BYTES);
             }
@@ -887,6 +949,10 @@ static void autoname_take_decoder_event(void)
                     mz_tape_decoder_get_header_long_high_x8(),
                     event.leader_pulses);
                 metadata_loader_valid = true;
+                record_autoname_accept_header(header);
+                program.recorded_loader_mode=metadata_loader_mode;
+                program.valid|=PROGRAM_RECORDED_MODE;
+                publish_program();
                 metadata_start_payload(metadata_read_le16(header + 0x12U));
             }
         }
@@ -910,8 +976,10 @@ static void autoname_take_decoder_event(void)
             {
                 uint32_t received = event.byte_index + 1UL;
                 metadata_payload_received =
-                    (received > metadata_payload_bytes) ?
-                        metadata_payload_bytes : received;
+                    (received > metadata_payload_bytes) ? metadata_payload_bytes : received;
+                uint32_t before=program.declared_size ? program.received_bytes*100/program.declared_size:0;
+                program.received_bytes=metadata_payload_received;
+                if(program.declared_size && program.received_bytes*100/program.declared_size!=before)publish_program();
             }
         }
         else if (event.type == MZ_TAPE_DECODER_EVENT_BLOCK_VALID)
@@ -930,18 +998,33 @@ static void autoname_take_decoder_event(void)
                 {
                     metadata_loader_valid = metadata_loader_from_copier(
                         copier_profile, &metadata_loader_mode);
-                    metadata_start_payload(metadata_read_le16(
-                        metadata_tc_loader + 0x4DU));
+                    uint8_t canonical[128];
+                    if(mz_loader_profile_normalize_tc(header,metadata_tc_loader,canonical,&copier_profile)) {
+                        record_autoname_accept_header(canonical);
+                        program.source=PROGRAM_LOADER_EMBEDDED;
+                        program.recorded_loader_mode=metadata_loader_mode;
+                        program.valid|=PROGRAM_RECORDED_MODE;
+                        publish_program();
+                    }
+                    metadata_start_payload(metadata_read_le16(metadata_tc_loader + 0x4DU));
                 }
                 else
                 {
                     metadata_loader_valid = false;
                     metadata_payload_known = false;
+                    program.confidence=PROGRAM_INVALID;
+                    program.valid=0;
+                    publish_program();
+                    mz_tape_decoder_begin_header();
                 }
             }
             else if (metadata_payload_known)
             {
                 metadata_payload_received = metadata_payload_bytes;
+                program.received_bytes=metadata_payload_bytes;
+                program.confidence=PROGRAM_PAYLOAD_VALID;
+                publish_program();
+                mz_tape_decoder_begin_header();
             }
         }
         else if (event.type == MZ_TAPE_DECODER_EVENT_BLOCK_INVALID)
@@ -951,12 +1034,20 @@ static void autoname_take_decoder_event(void)
                 metadata_tc_pending = false;
                 metadata_loader_valid = false;
                 metadata_payload_known = false;
+                program.confidence=PROGRAM_INVALID;
+                program.valid=0;
+                publish_program();
+                mz_tape_decoder_begin_header();
             }
             else if (metadata_payload_known)
             {
                 /* The physical payload reached its declared end even when
                    its checksum did not validate. */
                 metadata_payload_received = metadata_payload_bytes;
+                program.confidence=PROGRAM_INVALID;
+                publish_program();
+                if(program.source==PROGRAM_LOADER_EMBEDDED)mz_tape_decoder_begin_header();
+                else mz_tape_decoder_start_recovery_data(metadata_payload_bytes);
             }
         }
     }
@@ -1001,7 +1092,8 @@ static void autoname_mz_fast_probe_feed(uint16_t duration_units, uint8_t level)
     }
 
     difference = metadata_difference_u16(pulse_x8, mz_fast_reference_x8);
-    tolerance = (uint16_t)(mz_fast_reference_x8 / 4U); /* +/-25 % */
+    tolerance = (uint16_t)(mz_fast_reference_x8 / 4U);
+    /* +/-25 % */
     if (tolerance < 8U) tolerance = 8U;
 
     if (difference > tolerance)
@@ -1098,8 +1190,11 @@ void autoname_feed_packed_interval(uint16_t duration_units, uint8_t level)
 void record_autoname_begin(bool enabled, file_format_t format,
                            uint32_t wav_sample_rate)
 {
+    program_metadata_reset(&program,format);
+    publish_program();
     autoname_enabled = enabled;
     autoname_found = false;
+    filename_name[0]=0;
     autoname_sample_active = false;
     autoname_sample_level = 0U;
     autoname_sample_run = 0U;
@@ -1143,6 +1238,13 @@ void record_autoname_break_signal(void)
     autoname_sample_active = false;
     autoname_sample_run = 0U;
     mz_tape_decoder_break_signal();
+    if(program.confidence==PROGRAM_PAYLOAD_VALID || program.confidence==PROGRAM_INVALID){
+        metadata_payload_known=false;
+        metadata_aux_profile=RECORD_AUTONAME_AUX_PROFILE_NONE;
+        mz_tape_decoder_begin_header();
+        autoname_aux_reset_probe();
+        autoname_mz_fast_probe_reset();
+    }
     if (autoname_aux.state != AUTONAME_AUX_LOCKED)
     {
         autoname_aux_reset_probe();
@@ -1245,7 +1347,7 @@ bool record_autoname_has_name(void)
 
 const char *record_autoname_get_name(void)
 {
-    return record_autoname_has_name() ? autoname_name : NULL;
+    return record_autoname_has_name() ? filename_name : NULL;
 }
 
 bool record_autoname_get_detected_loader_mode(loader_mode_t *loader_mode)
@@ -1281,3 +1383,10 @@ bool record_autoname_get_payload_progress_percent(uint8_t *percent)
     return true;
 }
 
+
+uint32_t record_autoname_metadata_revision(void){return __atomic_load_n(&program_store.seq,__ATOMIC_ACQUIRE);
+}
+
+void record_autoname_end_metadata(void){if(program.confidence==PROGRAM_WAITING){program.confidence=PROGRAM_UNKNOWN;
+publish_program();
+}}

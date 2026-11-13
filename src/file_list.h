@@ -2,7 +2,7 @@
 
 #include <stdbool.h>
 
-#define FILE_LIST_VIEW_ROWS 7
+#define FILE_LIST_VIEW_ROWS 6
 
 typedef enum {
     FILE_ITEM_NONE = 0,
@@ -46,3 +46,5 @@ bool file_list_is_visible_selected(int row);
 typedef bool (*file_list_cancel_fn)(void *context);
 void file_list_set_scan_control(file_list_cancel_fn cancel,void *context);
 const char *file_list_last_error(void);
+
+bool file_list_error_requires_reinit(void);

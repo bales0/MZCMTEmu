@@ -17,6 +17,8 @@ idf_component_register(
         "drivers/sdcard.c"
         "drivers/buttons.c"
         "ui/ui.c"
+        "ui/view.c"
+        "ui/policy.c"
         "audio/raw_timer.c"
         ${cmt_tx_source}
         "audio/wav_reader.c"
@@ -26,6 +28,8 @@ idf_component_register(
         "audio/tap_stream.c"
         "audio/sharp_stream.c"
         "formats/quickdisk.c"
+        "formats/program_metadata.c"
+        "formats/tape_metadata.c"
         "formats/file_format.c"
         "formats/mz_tape_profiles.c"
         "formats/mz_loader_profiles.c"
@@ -47,10 +51,12 @@ idf_component_register(
         "gpio_raw.c"
         "audio/wav_writer.c"
         "audio/edge_writer.c"
+        "audio/edge_guard.c"
         ${cmt_capture_source}
         "audio/edge_capture_rmt.c"
         "audio/raw_capture.c"
 
+    PRIV_REQUIRES esp_driver_pcnt
     INCLUDE_DIRS
         "."
         "drivers"

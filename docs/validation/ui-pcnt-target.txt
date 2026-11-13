@@ -1,0 +1,3 @@
+HEAD d3f67c4 + working changes; 2026-11-13
+ESP32-S3 GCC15.2 / ESP-IDF6.0.1: PCNT-on guard compiled with current target compile_commands flags plus -DCONFIG_MZ_RX_PCNT_GUARD=1. Actual esp_driver_pcnt dependency/includes from CMake. Isolated object .tmp/edge_guard_pcnt.o; default firmware remains PCNT-off. This is an object compile, not a PCNT-on full-image or HW test.
+{"stdout":"","stderr":""}

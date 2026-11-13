@@ -273,6 +273,12 @@ static bool prepare_record(const char *path,loader_mode_t requested,sharp_stream
     (void)mz_title_decode_display(header+1,17,details.title,sizeof(details.title));
     details.payload_bytes=declared_length;
     details.effective=sidecar_resolve(path,details.record,requested,&details.sidecar);
+    /* Snapshot original source before the generated transport loader patches it. */
+    program_metadata_reset(&details.metadata,details.format);
+    details.metadata.record=details.record;details.metadata.records=details.records;
+    uint8_t first_payload[90];size_t first_count=declared_length<sizeof(first_payload) ? declared_length:sizeof(first_payload);
+    if(!source_seek(payload_start) || source_read(first_payload,(uint16_t)first_count)!=(int16_t)first_count)return fail();
+    (void)program_metadata_source_sharp(&details.metadata,header,first_payload,first_count);
     mzf_loader_set_source_io(source_seek,source_read);
     bool active=mzf_loader_prepare(FILE_FORMAT_MZF,details.effective,header,payload_end,payload_start);
     bool native=details.effective==LOADER_MODE_NORMAL_1_1 || details.effective==LOADER_MODE_NORMAL_1_2 ||
@@ -292,6 +298,7 @@ static bool prepare_record(const char *path,loader_mode_t requested,sharp_stream
             if(!loader_length) goto bad;
         }
     }
+    details.metadata.transfer_loader_mode=details.effective;details.metadata.valid|=PROGRAM_TRANSFER_MODE;
     details.ultrafast=mzf_loader_is_ul_active();
     begin_stage(HEADER);
     /* Dry-run the bounded foreground codec; no GPIO or timer changes. */

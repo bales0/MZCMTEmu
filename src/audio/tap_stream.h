@@ -35,3 +35,7 @@ bool tap_stream_has_error(void);
 typedef bool (*tap_stream_cancel_fn)(void *context);
 void tap_stream_set_scan_control(tap_stream_cancel_fn fn,void *context);
 bool tap_stream_analysis_cancelled(void);
+
+#include "formats/program_metadata.h"
+void tap_stream_metadata(program_metadata_t *out);
+uint32_t tap_stream_metadata_revision(void);

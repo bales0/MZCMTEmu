@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <dirent.h>
+#include <sys/types.h>
 #include <sys/stat.h>
 #ifdef ESP_PLATFORM
 typedef struct cmt_file cmt_file_t;

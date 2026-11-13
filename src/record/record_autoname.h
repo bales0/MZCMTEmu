@@ -63,3 +63,10 @@ bool record_autoname_get_payload_progress_percent(uint8_t *percent);
 bool record_autoname_apply(char *path, size_t capacity);
 
 #endif
+
+#include "formats/program_metadata.h"
+void record_autoname_metadata(program_metadata_t *out);
+
+uint32_t record_autoname_metadata_revision(void);
+
+void record_autoname_end_metadata(void);

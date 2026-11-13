@@ -27,7 +27,8 @@ int main(void) {
  }
  o=cmt_bus_outputs(false,false,false,PLAYER_STATE_PLAYING,RECORDER_STATE_FINISHED,true);
  assert(o.sense_high && !o.monitor_enabled);
- route_switch_t s={0};assert(route_switch_update(&s,false,0)==ROUTE_EXTERNAL && s.external);
+ route_switch_t s={0};
+ assert(route_switch_update(&s,false,0)==ROUTE_EXTERNAL && s.external);
  assert(route_switch_update(&s,true,1)==ROUTE_UNCHANGED && s.external);
  assert(route_switch_update(&s,false,30000)==ROUTE_UNCHANGED && s.external);
  assert(route_switch_update(&s,true,40000)==ROUTE_UNCHANGED && s.external);
@@ -38,5 +39,6 @@ int main(void) {
  assert(route_switch_update(&s,false,140000)==ROUTE_EXTERNAL && s.external);
  assert(route_switch_update(&s,false,999999)==ROUTE_UNCHANGED);
  assert(route_switch_update(NULL,true,0)==ROUTE_UNCHANGED);
- puts("PASS physical CMT route: safe initial external state, bounce rejection, 40 ms transitions, no repeated event");return 0;
+ puts("PASS physical CMT route: safe initial external state, bounce rejection, 40 ms transitions, no repeated event");
+ return 0;
 }

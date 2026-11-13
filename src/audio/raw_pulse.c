@@ -44,6 +44,7 @@ static volatile bool s_finish_requested = false;
 
 /* Completion time, published with a 32-bit sequence to avoid non-lock-free
  * 64-bit atomics inside the ISR. Reset only while the timer is stopped. */
+static uint32_t source_bytes;
 static uint32_t s_time_seq, s_completed_low, s_completed_high;
 static volatile uint32_t s_pulses_per_second = 0U;
 static volatile uint32_t s_pps_window_us = 0U;
@@ -121,6 +122,7 @@ static inline void IRAM_ATTR raw_pulse_account_completed(const raw_pulse_t *puls
     }
     __atomic_store_n(&s_time_seq, seq + 2U, __ATOMIC_RELEASE);
 
+    if(pulse->count_pulse & RAW_PULSE_SOURCE_BYTE)__atomic_fetch_add(&source_bytes,1,__ATOMIC_RELAXED);
     s_pps_window_us += pulse->duration_us;
     if ((pulse->count_pulse & RAW_PULSE_COUNT) != 0U) {
         s_pps_window_pulses++;
@@ -296,6 +298,7 @@ void raw_pulse_init(void)
 
     raw_pulse_stop_timer();
     raw_pulse_wait_isr_idle();
+    __atomic_store_n(&source_bytes,0,__ATOMIC_RELAXED);
 
     __atomic_store_n(&s_head, 0U, __ATOMIC_RELAXED);
     __atomic_store_n(&s_tail, 0U, __ATOMIC_RELAXED);
@@ -569,3 +572,9 @@ size_t raw_pulse_write_ticks16(const raw_pulse_t *events,const uint32_t *ticks,s
 }
 
 bool raw_pulse_monitor_active(void) {return s_running && !s_paused && s_active_valid && !(s_active_pulse.count_pulse & RAW_PULSE_MONITOR_MUTE);}
+
+void raw_pulse_status(raw_pulse_status_t *out){
+ *out=(raw_pulse_status_t){.fifo_used=(uint32_t)raw_pulse_level(),.fifo_capacity=RAW_PULSE_FIFO_SIZE-1,
+ .time_valid=false,.running=s_running,.paused=s_paused,.underrun=s_underrun};
+}
+uint32_t raw_pulse_completed_source_bytes(void){return __atomic_load_n(&source_bytes,__ATOMIC_ACQUIRE);}

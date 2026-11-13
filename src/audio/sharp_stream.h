@@ -3,7 +3,9 @@
 #include <stdint.h>
 #include "play/loader_mode.h"
 #include "formats/file_format.h"
+#include "formats/program_metadata.h"
 typedef struct {
+    program_metadata_t metadata;
     file_format_t format;
     uint16_t record, records;
     char title[22];

@@ -57,3 +57,10 @@ bool recorder_get_autoname(void);
 bool recorder_metadata_warning(void);
 
 void recorder_media_removed(void);
+
+#include "formats/program_metadata.h"
+void recorder_metadata(program_metadata_t *out);
+
+#include "audio/edge_capture.h"
+void recorder_capture_status(edge_capture_status_t *out);
+const char *recorder_capture_error(void);

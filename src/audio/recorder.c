@@ -29,6 +29,16 @@
 #endif
 #define RECORDINGS_MAX_INDEX                     9999U
 
+static edge_capture_status_t capture_status;
+void recorder_capture_status(edge_capture_status_t *out){*out=capture_status;
+}
+const char *recorder_capture_error(void){
+ switch(capture_status.fault){case EDGE_CAPTURE_FIFO_OVERFLOW:return "RX OVERRUN";
+ case EDGE_CAPTURE_EDGE_LOSS:return "EDGE LOSS";
+ case EDGE_CAPTURE_GUARD_ERROR:return "CAPTURE ERROR";
+ default:return "";
+ }
+}
 static recorder_state_t s_state = RECORDER_STATE_IDLE;
 static recorder_format_t s_format = RECORDER_FORMAT_WAV;
 static uint32_t s_sample_rate = RECORDER_DEFAULT_SAMPLE_RATE;
@@ -41,12 +51,14 @@ static uint32_t s_elapsed_final_ms;
 static bool s_auto_signal_enabled;
 static bool s_autoname_enabled;
 static bool s_metadata_warning;
-bool recorder_metadata_warning(void) { return s_metadata_warning; }
+bool recorder_metadata_warning(void) { return s_metadata_warning;
+}
 void recorder_set_autoname(bool enabled) {
     if(s_state==RECORDER_STATE_FINALIZING)return;
     s_autoname_enabled=enabled;
 }
-bool recorder_get_autoname(void) { return s_autoname_enabled; }
+bool recorder_get_autoname(void) { return s_autoname_enabled;
+}
 static bool s_waiting_signal;
 static bool s_signal_detected;
 static TickType_t s_last_pulse_tick;
@@ -179,7 +191,9 @@ static void recorder_generate_target_path(const char *current_dir)
 {
     (void)current_dir;
     uint32_t sequence=recorder_next_sequence();
-    if(!sequence) { s_path[0]=0;return; }
+    if(!sequence) { s_path[0]=0;
+    return;
+    }
     snprintf(s_path,sizeof(s_path),recorder_path_pattern(),(unsigned long)sequence);
 }
 
@@ -283,7 +297,7 @@ static bool recorder_process_event(const edge_capture_event_t *event)
 
     /* Metadata sees original edges, before lossy LEP/WAV quantization. The
      * portable decoder's input is L16; each physical interval rounds alone. */
-    if(s_autoname_enabled && s_format!=RECORDER_FORMAT_MZF) {
+    if(s_format!=RECORDER_FORMAT_MZF) {
         uint64_t n=((uint64_t)event->units+8)/16;
         if(!n || n>1024) record_autoname_break_signal();
         else record_autoname_feed_level_interval((uint16_t)n,event->level);
@@ -377,7 +391,7 @@ static void recorder_start_now(void)
     }
 
     s_metadata_warning=false;
-    record_autoname_begin(s_autoname_enabled,s_format==RECORDER_FORMAT_MZF ? FILE_FORMAT_MZF:FILE_FORMAT_L16,0);
+    record_autoname_begin(true,s_format==RECORDER_FORMAT_MZF ? FILE_FORMAT_MZF:FILE_FORMAT_L16,0);
     if (!recorder_open_writer()) {
         s_state = RECORDER_STATE_ERROR;
         return;
@@ -389,6 +403,7 @@ static void recorder_start_now(void)
     /* Actual edges only: no fixed window, no RMT RX, no clock GPIO. */
     edge_capture_init(RECORDER_CAPTURE_UNIT_US);
     edge_capture_start();
+    edge_capture_status(&capture_status);
     if (!edge_capture_is_running() || edge_capture_is_overrun()) {
         printf("recorder: edge capture start fail\n");
         mzf_writer_abort_delete();
@@ -450,18 +465,23 @@ static bool recorder_resume_common(recorder_state_t expected_state, bool motor_h
 /* The capture is quiescent before this job is queued. The UI owns s_state,
  * s_path and cancellation; the storage worker owns writers and its result.
  * Only the release/acquire completion flag crosses those ownership domains. */
-static struct { bool done,ok,warning,mfi; char path[sizeof(s_path)]; } final_job;
+static struct { bool done,ok,warning,mfi;
+char path[sizeof(s_path)];
+} final_job;
 static unsigned final_cancel;
 static void recorder_finalize_job(void *context) {
     (void)context;
-    final_job.ok=!edge_capture_is_overrun() && recorder_flush_all();edge_capture_stop();
+    final_job.ok=!edge_capture_is_overrun() && recorder_flush_all();
+    edge_capture_stop();
     if(final_job.ok) {
         if(s_format==RECORDER_FORMAT_MZF && mzf_writer_complete())
             record_autoname_accept_header(mzf_writer_header());
         final_job.ok=recorder_finalize_writer();
     }
     if(!final_job.ok) {
-        mzf_writer_abort_delete();wav_writer_abort_delete();edge_writer_abort_delete();
+        mzf_writer_abort_delete();
+        wav_writer_abort_delete();
+        edge_writer_abort_delete();
     } else {
         if(s_autoname_enabled && record_autoname_has_name() && !record_autoname_apply(final_job.path,sizeof(final_job.path)))
             final_job.warning=true;
@@ -475,29 +495,42 @@ static void recorder_finalize_job(void *context) {
 }
 static void recorder_publish_finalized(void) {
     if(!__atomic_load_n(&final_job.done,__ATOMIC_ACQUIRE))return;
-    snprintf(s_path,sizeof(s_path),"%s",final_job.path);s_metadata_warning=final_job.warning;
+    snprintf(s_path,sizeof(s_path),"%s",final_job.path);
+    s_metadata_warning=final_job.warning;
     if(final_cancel) {
         if(final_job.ok) {
             (void)cmt_remove(s_path);
             if(final_job.mfi) {
-                char path[sizeof(s_path)];snprintf(path,sizeof(path),"%s",s_path);
-                char *ext=strrchr(path,'.');if(ext){strcpy(ext,".MFI");(void)cmt_remove(path);}
+                char path[sizeof(s_path)];
+                snprintf(path,sizeof(path),"%s",s_path);
+                char *ext=strrchr(path,'.');
+                if(ext){strcpy(ext,".MFI");
+                (void)cmt_remove(path);
+                }
             }
         }
         s_state=final_cancel==2 ? RECORDER_STATE_ERROR:RECORDER_STATE_DELETED;
     } else s_state=final_job.ok ? RECORDER_STATE_FINISHED:RECORDER_STATE_ERROR;
 }
 static void recorder_finish_success(void) {
-    recorder_add_elapsed_if_running();edge_capture_pause();
-    s_elapsed_final_ms=s_elapsed_before_pause_ms;s_waiting_signal=false;
-    final_job.ok=final_job.warning=final_job.mfi=false;final_cancel=0;
+    recorder_add_elapsed_if_running();
+    edge_capture_pause();
+    edge_capture_status(&capture_status);
+    s_elapsed_final_ms=s_elapsed_before_pause_ms;
+    s_waiting_signal=false;
+    final_job.ok=final_job.warning=final_job.mfi=false;
+    final_cancel=0;
     snprintf(final_job.path,sizeof(final_job.path),"%s",s_path);
     __atomic_store_n(&final_job.done,false,__ATOMIC_RELAXED);
     s_state=RECORDER_STATE_FINALIZING;
     if(!cmt_storage_execute_async(recorder_finalize_job,NULL)) {
-        edge_capture_stop();mzf_writer_abort_delete();wav_writer_abort_delete();edge_writer_abort_delete();
+        edge_capture_stop();
+        mzf_writer_abort_delete();
+        wav_writer_abort_delete();
+        edge_writer_abort_delete();
         s_state=RECORDER_STATE_ERROR;
-    } else recorder_publish_finalized(); /* Immediate completion in host libc tests. */
+    } else recorder_publish_finalized();
+    /* Immediate completion in host libc tests. */
 }
 
 static void recorder_abort_delete(void)
@@ -634,13 +667,16 @@ bool recorder_has_valid_signal(void)
 
 void recorder_service(void)
 {
-    if(s_state==RECORDER_STATE_FINALIZING) {recorder_publish_finalized();return;}
+    if(s_state==RECORDER_STATE_FINALIZING) {recorder_publish_finalized();
+    return;
+    }
     if (s_state != RECORDER_STATE_RECORDING &&
         s_state != RECORDER_STATE_PAUSED_USER &&
         s_state != RECORDER_STATE_PAUSED_MOTOR) {
         return;
     }
 
+    edge_capture_status(&capture_status);
     if (edge_capture_is_overrun()) {
         recorder_abort_to_error();
         return;
@@ -657,6 +693,7 @@ void recorder_service(void)
 
 void recorder_handle_rec(const char *current_dir, bool motor_high)
 {
+    if(s_state==RECORDER_STATE_IDLE)capture_status=(edge_capture_status_t){.free_percent=100,.min_free_percent=100};
     if (s_state != RECORDER_STATE_IDLE) {
         return;
     }
@@ -729,7 +766,9 @@ void recorder_handle_stop(void)
 
 void recorder_handle_abort(void)
 {
-    if(s_state==RECORDER_STATE_FINALIZING) {if(final_cancel!=2)final_cancel=1;return;}
+    if(s_state==RECORDER_STATE_FINALIZING) {if(final_cancel!=2)final_cancel=1;
+    return;
+    }
     if (s_state != RECORDER_STATE_IDLE &&
         s_state != RECORDER_STATE_FINISHED &&
         s_state != RECORDER_STATE_DELETED &&
@@ -756,8 +795,16 @@ void recorder_service_motor(bool motor_high)
 }
 
 void recorder_media_removed(void) {
-    if(s_state==RECORDER_STATE_FINALIZING) {final_cancel=2;return;}
+    if(s_state==RECORDER_STATE_FINALIZING) {final_cancel=2;
+    return;
+    }
     if(s_state==RECORDER_STATE_WAIT_MOTOR || s_state==RECORDER_STATE_RECORDING ||
        s_state==RECORDER_STATE_PAUSED_USER || s_state==RECORDER_STATE_PAUSED_MOTOR)
         recorder_abort_to_error();
+}
+
+void recorder_metadata(program_metadata_t *out){
+ if(s_format==RECORDER_FORMAT_MZF)mzf_writer_metadata(out);
+ else record_autoname_metadata(out);
+ out->format=s_format==RECORDER_FORMAT_WAV ? FILE_FORMAT_WAV:s_format==RECORDER_FORMAT_LEP ? FILE_FORMAT_LEP:s_format==RECORDER_FORMAT_L16 ? FILE_FORMAT_L16:FILE_FORMAT_MZF;
 }

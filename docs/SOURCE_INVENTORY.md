@@ -174,3 +174,7 @@ Tabulky výše jsou historickou inventurou počátečního stavu, nikoli dnešn�
 - tests/host má 20 samostatných sad. compare_quickdisk_reference.py izolovaně kompiluje původní QD validační funkce a porovnává fixture s portem; referenční soubory nemění.
 
 Přesný stupeň důkazu a HW omezení viz aktuální PARITY_MATRIX/TEST_REPORT. Reference i MZTools zůstaly read-only; nové generátory zapisují jen vlastní fixture nebo do .tmp.
+
+## Rozšíření UI / metadata / PCNT (13. 11. 2026)
+
+Nové GPL-3.0-only moduly: formats/program_metadata pro provenienci/validitu a kanonické Sharp/ZX údaje; formats/tape_metadata pro pasivní adaptér existujícího AutoName decoderu; audio/edge_guard pro volitelné PCNT epochy; ui/policy a ui/view pro grafiku/overlay/headroom/marquee; drivers/font3x5 pro čitelný malý font. Existující Sharp/IC/TC algoritmy a atribuce zůstaly zachované. Žádná nová transportní knihovna ani druhý64KiB payload buffer. Rozsah změn/testů a aktuální HEAD viz [TEST_REPORT](TEST_REPORT.md).

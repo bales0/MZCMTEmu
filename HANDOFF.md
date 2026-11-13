@@ -1,26 +1,21 @@
-# Předání portu ESP32-S3 – 13. 11. 2026
+# Předání UI / RECORD / PLAY / metadata / PCNT — 13. 11. 2026
 
-Uživatel autorizoval pracovní změny a žádá pokračovat do dokončení. **Bez samostatného souhlasu žádný commit, staging, push, PR ani nové větve.** Checkout zůstává main, HEAD 25246a327ed2187cd24e7d11b4cbf7c511555a1d. V tomto pokračování neproběhla žádná uvedená Git operace. Referenční MZ-SD2CMT2-Reborn600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb (2.0.3) a MZTools jsou read-only.
+Uživatel autorizoval změny dle specification/MZCMTEmu_Codex_zadani_UI_RECORD_PLAY_METADATA_PCNT.md. **Bez samostatného souhlasu žádný staging, commit, push, PR ani nové větve.** Checkout main, HEAD d3f67c4a978a38dad23e49c918b145182046452b. Práce zůstává necommitnutá. Uživatelské odstranění starého zadání a nové zadání jsou zachované. Reference600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb a MZTools nejsou upravovány.
 
-## Aktuální výsledek
+## Výsledek
 
-Implementované funkce a architekturu popisuje [README](README.md), podrobně [PARITY_MATRIX](docs/PARITY_MATRIX.md) a [TIMING_PORT](docs/TIMING_PORT.md). Port má všech 17 Sharp režimů/loadery/UL, MZT/QD selektor a MZT návaznost, sidecary/AUTO, TAP4rychlosti, společný WAV/edge/TAP/Sharp RMT DMA, MCPWM HW capture, MZF/WAV/LEP/L16 RECORD, AutoName Sharp/Sinclair/CPM, jednorázové PSRAM pooly, SD actor/cache, asynchronní finalize, systémové menu/NVSv2 a odrušená tlačítka s prioritou STOP.
+Grafické OLED nad jediným framebufferem: šest řádků browseru, inverzní výběr, marquee od změny kontextu, pravdivé RX FIFO/min/sticky alarmy a TX odhad časové rezervy včetně current/encoded intervalu, oddělený průběh. Overlay má priority/expiry/latch a retry dirty pages po I²C chybě. KEYMAP opravený. Browser po cancel/failed child obnoví původní adresář/výběr bez další2MiB kopie; CANCEL neshazuje SD, d_type omezuje stat.
 
-Při poslední kontrole prošlo 20 host sad a cílový build ESP-IDF6.0.1, Espressif32@7.0.1. RAM153372 B, aplikace454617 B, image16MB. Přesný rozsah a logy viz [TEST_REPORT](docs/TEST_REPORT.md). Všech92 uživatelských binárních fixture mělo před/po testu stejné SHA256. .gitignore zpřístupňuje pouze tests/host, binární fixture zůstávají ignorované.
+Sdílený80B model programu/provenience/validity: původní Sharp source před generováním transportního loaderu, kanonické IC, TC až po validním prvním loader payloadu, MZT/QD změny. Pasivní WAV/LEP/L16 nad již produkovanými PLAY intervaly sdílí existující decoder s AutoName, TAP vlastní striktní ZX/XOR. Aktuální titul může přejít na další program, filename zůstane první. Neznámá pole --; ZX BASIC má AUTO LINE, nikdy vymyšlený EXEC. IC rychlý WAV44k nemusí validovat payload checksum; ověřený embedded header zůstává HEADER_VALID.
 
-## Co ještě není akceptované
+Volitelný CONFIG_MZ_RX_PCNT_GUARD default n; obě hrany GPIO5, SDK accum_count ±30000, žádná app ISR na každou hranu. Epochy mají explicitní hranicovou nejistotu, potvrzená ztráta EDGE LOSS, nespolehlivé počty CAPTURE ERROR. Shodný součet není garance timing/lossless. MCPWM časování zachováno; actual capture init call-chain je z CPU1. S1 mechanický, GPIO21 INPUT LOW=EXT/40ms: PLAY/UL stop, RECORD/SAVING abort, INTERNAL bez automatického restartu.
 
-- Žádná deska nebyla flashována a nebyl proveden HW test. Uživatel potvrdil **neinvertující U1/U2**; jejich typy a elektrické parametry nejsou potvrzené. Uživatel 13. 11. potvrdil, že HW zatím není připojený. Podle zadání nejprve změřit napětí, DIR/reset/power-off a safe idle. Pak teprve testovat Sharp LOAD/SAVE a UL.
-- RMT source-clock pause musí prokázat retenci rozpracovaného symbolu/DMA na S3; host mock to předpokládá a ověřuje protokol kolem tohoto předpokladu. Retired-slot clock je konzervativní wall-time odhad (+10 µs guard), ne hardwarový start timestamp. HW musí potvrdit kontinuitu a zátěžové rezervy.
-- MCPWM první hrana, pause tail, cache stalls a nemožnost tiché ztráty hran vyžadují analyzátor. Skutečný FreeRTOS souběh, FAT removal/retry, OLED layout/latence a hodinový heap/stack/PSRAM stress jsou otevřené.
-- QuickDisk přijal5 ze14 obrazů. Nový compare_quickdisk_reference.py nezávisle zkompiloval původní validační funkce a doložil shodu všech 14 výsledků včetně9 odmítnutí; u přijatých porovnal každou kanonickou hlavičku a payload. To ověřuje parserové jádro, nikoli AVR duration cache/playback nebo reálný LOAD. Log quickdisk-reference.txt.
-- Windows MinGW MAX_PATH omezuje skutečné long-path host fixture;1024 B FAT cesty ověřit na desce. Host sanitizery nejsou dostupné. Žádný z těchto bodů nezakrývat tvrzením HW-TESTED nebo hotovou akceptací.
+## Ověření
 
-## Prostředí a příkazy
+23 sad (původních20 + UI policy, metadata, PCNT) v Debianu GCC14.2 s ASan/UBSan, včetně skutečných generovaných audio souborů a dodaných TAP/QD/MZQ; kompletní [log](docs/validation/ui-metadata-host-linux.txt). Cílový build ESP-IDF6.0.1/espressif32@7.0.1/GCC15.2 prošel: RAM154348 B, aplikace461513 B, image461936 B,16MB flash header a octal PSRAM config. PCNT-on guard navíc přeložen jako samostatný target objekt; celý PCNT-on image/HW tím testovaný není. Všech92 fixture má původní SHA256. Historické port-* logy zůstávají výsledkem předchozího portu.
 
-Windows; standardní shell runner dříve selhával740, funguje child_process.execFile přes mcp__node_repl__js. CWD C:/Dokumenty/GitHub/MZCMTEmu. Python/pio v C:/Users/alesb/.platformio/penv/Scripts, host GCC v packages/toolchain-gccmingw32/bin/gcc.exe (5.1), SDK XtensaGCC15.2. Běžný incremental build kolem7–23 s, regenerace celého SDK několik minut; používat -j1. Jednou -j2 selhalo interní chybou SDK kompilátoru, sériový retry prošel. Nikdy nepouštět dva buildy současně.
+Windows nový test_program_metadata.exe i po uživatelem potvrzeném povolení COMODO vrací WinError5. Nastavení ochrany se neměnilo; Linux sanitizer běh je alternativní důkaz. MinGW5.1 sanitizéry nemá. [Metodika/test report](docs/TEST_REPORT.md), [parita](docs/PARITY_MATRIX.md), [časování](docs/TIMING_PORT.md), [pinmap/S1](docs/HARDWARE.md), [souhrn/hash](docs/validation/ui-metadata-summary.json), [OLED náhledy](docs/validation/ui/record.png).
 
-    pio run -e MZCMTEmu -j 1
-    python tests/host/run_tests.py --cc C:/Users/alesb/.platformio/packages/toolchain-gccmingw32/bin/gcc.exe --tap-fixtures tests/TAP --qd-fixtures tests/QD --qd-fixtures tests/MZQ
+## Zbývá skutečný HW — NEPROVEDENO
 
-Host testy jsou samostatné překladové jednotky. Periferie/RTOS jsou mockované; test_storage navíc kompiluje skutečnou ESP_PLATFORM větev actoru se statickou simulovanou frontou a test_recorder má explicitně odložený finalize. Surové výsledky v docs/validation/port-*. Starší soubory validation a počáteční inventura jsou historické, nikoli aktuální stav.
+HW není připojený, žádný flash. U1/U2 jsou neinvertující podle uživatele, přesné typy/napájení/reset/power-off nezměřené. Ověřit mechanický S1 kontakty/polohy, boot N16R8/PSRAM a OLED. Sharp LOAD/SAVE všech17 módů a ZX TAP4, analyzátor READ/WRITE/MOTOR/SENSE, PCNT/MCPWM s generátorem za SD/OLED/cache zátěže včetně timestamp jitteru. RMT source-clock pause potřebuje důkaz retence rozpracovaného symbolu/DMA; host mock tento předpoklad pouze simuluje. SD removal/reinsert/full/readonly a S1 během všech transportních/finalize stavů. 30–60min heap minima/largest block, task stack high-water, PSRAM, SD latency a FIFO watermark stress. Statický footprint ani shodné PCNT počty tyto důkazy nenahrazují.

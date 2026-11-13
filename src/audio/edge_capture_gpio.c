@@ -313,3 +313,9 @@ void edge_capture_clear_overrun(void)
 {
     s_overrun = false;
 }
+
+void edge_capture_status(edge_capture_status_t *out){
+ *out=(edge_capture_status_t){0};
+ out->free_percent=(uint8_t)(edge_capture_free()*100/(EDGE_CAPTURE_FIFO_SIZE-1));out->min_free_percent=out->free_percent;
+ out->fault=s_overrun ? EDGE_CAPTURE_FIFO_OVERFLOW:EDGE_CAPTURE_OK;
+}

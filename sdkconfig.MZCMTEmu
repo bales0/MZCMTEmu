@@ -985,6 +985,8 @@ CONFIG_PARTITION_TABLE_MD5=y
 # CONFIG_MZ_CAPTURE_GPIO_FALLBACK is not set
 # default:
 # CONFIG_MZ_TX_GPTIMER_FALLBACK is not set
+# default:
+# CONFIG_MZ_RX_PCNT_GUARD is not set
 # end of MZ CMT transport
 
 #
@@ -1298,10 +1300,8 @@ CONFIG_MCPWM_OBJ_CACHE_SAFE=y
 #
 # ESP-Driver:PCNT Configurations
 #
-# default:
-# CONFIG_PCNT_CTRL_FUNC_IN_IRAM is not set
-# default:
-# CONFIG_PCNT_ISR_IRAM_SAFE is not set
+CONFIG_PCNT_CTRL_FUNC_IN_IRAM=y
+CONFIG_PCNT_ISR_IRAM_SAFE=y
 # default:
 # CONFIG_PCNT_ENABLE_DEBUG_LOG is not set
 # end of ESP-Driver:PCNT Configurations

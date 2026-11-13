@@ -32,6 +32,8 @@
 #include "sdkconfig.h"
 #include "app/route_switch.h"
 #include "app/cmt_bus_policy.h"
+#include "ui/view.h"
+#include "ui/policy.h"
 #include "esp_timer.h"
 
 static ui_model_t ui_model = {
@@ -56,24 +58,10 @@ static ui_model_t ui_model = {
 
 static char ui_header[UI_BUFFER_SIZE];
 static char ui_path[UI_BUFFER_SIZE];
-static char ui_items[FILE_LIST_VIEW_ROWS][UI_BUFFER_SIZE];
 
 // playback screen buffers
-static char ui_play_file[UI_BUFFER_SIZE];
-static char ui_play_bar[UI_BUFFER_SIZE];
-static char ui_play_time[UI_WORK_BUFFER_SIZE];
-static char ui_play_rate[UI_BUFFER_SIZE];
-static char ui_play_dir[UI_BUFFER_SIZE];
-static char ui_play_footer[UI_BUFFER_SIZE];
 
 // record screen buffers
-static char ui_rec_file[UI_BUFFER_SIZE];
-static char ui_rec_signal[UI_BUFFER_SIZE];
-static char ui_rec_buffer[UI_BUFFER_SIZE];
-static char ui_rec_time[UI_WORK_BUFFER_SIZE];
-static char ui_rec_rate[UI_BUFFER_SIZE];
-static char ui_rec_dir[UI_BUFFER_SIZE];
-static char ui_rec_footer[UI_BUFFER_SIZE];
 
 // menu screen buffers
 static char ui_menu_item0[UI_BUFFER_SIZE];
@@ -90,14 +78,7 @@ static char ui_menu_item10[UI_BUFFER_SIZE],ui_menu_item11[UI_BUFFER_SIZE];
 static char ui_no_sd_line0[UI_BUFFER_SIZE];
 static char ui_no_sd_line1[UI_BUFFER_SIZE];
 
-static void format_pause_header(char *dst, size_t dst_size, const char *text, char source)
-{
-    if (dst == NULL || dst_size == 0) {
-        return;
-    }
 
-    snprintf(dst, dst_size, "%-*s%c", UI_TEXT_WIDTH - 1, text, source);
-}
 
 #define APP_TASK_DELAY_MS 5
 #define WRAP_REPEAT_DELAY_MS 320
@@ -149,8 +130,8 @@ static int s_menu_selected = 0;
 static bool s_menu_pre_wrap_next = false;
 static bool s_menu_pre_wrap_prev = false;
 
-static const char *ui_overlay_status = NULL;
-static TickType_t ui_overlay_until = 0;
+
+
 
 // true = uživatel zmáčkl PLAY při MOTOR LOW a čekáme na MOTOR HIGH.
 static bool play_wait_motor = false;
@@ -175,9 +156,6 @@ static bool s_sd_present_last_raw = false;
 static int s_sd_debounce_count = 0;
 static bool s_sd_ready = false;
 static TickType_t s_sd_next_mount_retry = 0;
-static bool s_rec_buffer_display_valid = false;
-static uint8_t s_rec_buffer_display_ok = 100;
-static TickType_t s_rec_buffer_display_last = 0;
 
 // jen příprava logiky pro SWITCH:
 // false = interní režim
@@ -196,26 +174,7 @@ static bool player_screen_active(player_state_t st)
            st == PLAYER_STATE_ERROR || st == PLAYER_STATE_READY;
 }
 
-static bool path_is_binary_tape_path(const char *path)
-{
-    const char *ext;
 
-    if (path == NULL) {
-        return false;
-    }
-
-    ext = strrchr(path, '.');
-    if (ext == NULL) {
-        return false;
-    }
-
-    return strcasecmp(ext, ".mzf") == 0 ||
-           strcasecmp(ext, ".mzq") == 0 ||
-           strcasecmp(ext, ".qdf") == 0 ||
-           strcasecmp(ext, ".qd") == 0 ||
-           strcasecmp(ext, ".mzt") == 0 ||
-           strcasecmp(ext, ".m12") == 0;
-}
 
 static bool motor_signal_is_high(void)
 {
@@ -257,23 +216,13 @@ static void service_monitor_output(void)
     gpio_set_level(MONITOR_GPIO,bus_outputs().monitor_enabled);
 }
 
-static void ui_show_overlay(const char *text, uint32_t duration_ms)
+static void ui_show_overlay(const char *text,uint32_t duration_ms)
 {
-    ui_overlay_status = text;
-
-    // duration_ms == 0 => overlay je latched a zmizí jen přes ui_clear_overlay()
-    if (duration_ms == 0) {
-        ui_overlay_until = 0;
-    } else {
-        ui_overlay_until = xTaskGetTickCount() + pdMS_TO_TICKS(duration_ms);
-    }
+    unsigned priority=strstr(text,"ERROR") || strstr(text,"LOSS") || strstr(text,"OVERRUN") ? 3:
+        strstr(text,"EXTERNAL") || strstr(text,"NO SD") ? 2:1;
+    ui_overlay_show(text,duration_ms,priority);
 }
-
-static void ui_clear_overlay(void)
-{
-    ui_overlay_status = NULL;
-    ui_overlay_until = 0;
-}
+static void ui_clear_overlay(void){ui_overlay_clear(false);}
 
 static void play_wait_motor_clear(void)
 {
@@ -324,48 +273,12 @@ static void build_play_preview_for_selected(void)
     s_play_preview_valid = true;
 }
 
-static size_t ui_get_scroll_offset(const char *text, size_t visible_chars)
+static size_t ui_get_scroll_offset(const char *text,size_t visible_chars)
 {
-    if (text == NULL || visible_chars == 0) {
-        return 0;
-    }
-
-    size_t len = strlen(text);
-    if (len <= visible_chars) {
-        return 0;
-    }
-
-    size_t max_offset = len - visible_chars;
-    TickType_t now = xTaskGetTickCount();
-
-    uint32_t hold_ticks = pdMS_TO_TICKS(UI_SCROLL_HOLD_MS);
-    uint32_t step_ticks = pdMS_TO_TICKS(UI_SCROLL_STEP_MS);
-    if (step_ticks == 0) {
-        step_ticks = 1;
-    }
-
-    // na začátku chvíli stoj
-    if ((uint32_t)now < hold_ticks) {
-        return 0;
-    }
-
-    uint32_t scrolled_ticks = (uint32_t)now - hold_ticks;
-    uint32_t step_index = scrolled_ticks / step_ticks;
-
-    // délka cyklu = rozsah posunu + krátká mezera před návratem
-    size_t cycle = max_offset + UI_SCROLL_GAP_CHARS + 1;
-    if (cycle == 0) {
-        return 0;
-    }
-
-    size_t phase = step_index % cycle;
-
-    // v "gap" části skoč zpět na začátek
-    if (phase > max_offset) {
-        return 0;
-    }
-
-    return phase;
+    static ui_marquee_t scrolling;
+    if(!text)return 0;
+    return ui_marquee_offset(&scrolling,text,visible_chars,
+        (uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS),(uint32_t)file_list_get_selected_index());
 }
 
 static void ui_copy_scroll_text(char *dst, size_t dst_size, const char *src)
@@ -448,69 +361,7 @@ static void ui_copy_path_text(char *dst, size_t dst_size, const char *path)
     }
 }
 
-static void ui_build_browser_line(int row, char *dst, size_t dst_size)
-{
-    if (dst == NULL || dst_size == 0) {
-        return;
-    }
 
-    dst[0] = '\0';
-
-    const char *name = file_list_get_visible_name(row);
-    file_item_type_t type = file_list_get_visible_type(row);
-    bool selected = file_list_is_visible_selected(row);
-
-    if (name == NULL || name[0] == '\0') {
-        return;
-    }
-
-    size_t pos = 0;
-
-    if (pos < (dst_size - 1)) {
-        dst[pos++] = ' ';
-    }
-
-    // zvýraznění výběru
-    if (pos < (dst_size - 1)) {
-        dst[pos++] = selected ? '}' : ' ';
-    }
-    // parent položka
-    if (type == FILE_ITEM_PARENT) {
-        const char *parent_text = "..";
-        size_t i = 0;
-        while (parent_text[i] != '\0' && pos < (dst_size - 1)) {
-            dst[pos++] = parent_text[i++];
-        }
-        dst[pos] = '\0';
-        return;
-    }
-
-    // kolik znaků zbývá na jméno
-    size_t max_name_len = (dst_size - 1) - pos;
-    if (type == FILE_ITEM_DIR && max_name_len > 0) {
-        max_name_len--;   // rezervuj místo pro '/'
-    }
-
-    size_t name_len = strlen(name);
-    size_t start = 0;
-
-    // scrolluj jen vybraný řádek a jen pokud se text nevejde
-    if (selected && name_len > max_name_len) {
-        start = ui_get_scroll_offset(name, max_name_len);
-    }
-
-    size_t i = 0;
-    while (name[start + i] != '\0' && i < max_name_len && pos < (dst_size - 1)) {
-        dst[pos++] = name[start + i];
-        i++;
-    }
-
-    if (type == FILE_ITEM_DIR && pos < (dst_size - 1)) {
-        dst[pos++] = '/';
-    }
-
-    dst[pos] = '\0';
-}
 
 static const char *basename_ptr(const char *path)
 {
@@ -526,69 +377,11 @@ static const char *basename_ptr(const char *path)
     return slash + 1;
 }
 
-static void dirname_copy(char *dst, size_t dst_size, const char *path)
-{
-    if (dst == NULL || dst_size == 0) {
-        return;
-    }
 
-    dst[0] = '\0';
 
-    if (path == NULL || path[0] == '\0') {
-        return;
-    }
 
-    const char *slash = strrchr(path, '/');
-    if (slash == NULL) {
-        return;
-    }
 
-    size_t len = (size_t)(slash - path);
-    if (len >= dst_size) {
-        len = dst_size - 1;
-    }
 
-    memcpy(dst, path, len);
-    dst[len] = '\0';
-}
-
-static void format_mmss(char *dst, size_t dst_size, uint32_t seconds)
-{
-    if (dst == NULL || dst_size == 0) {
-        return;
-    }
-
-    uint32_t mm = seconds / 60U;
-    uint32_t ss = seconds % 60U;
-    snprintf(dst, dst_size, "%02lu:%02lu",
-             (unsigned long)mm,
-             (unsigned long)ss);
-}
-
-static void build_progress_bar(char *dst, size_t dst_size, uint8_t percent)
-{
-    if (dst == NULL || dst_size == 0) {
-        return;
-    }
-
-    const int inner = 19;   // [###################]
-    int filled = (percent * inner) / 100;
-
-    int pos = 0;
-    if (pos < (int)(dst_size - 1)) {
-        dst[pos++] = '[';
-    }
-
-    for (int i = 0; i < inner && pos < (int)(dst_size - 1); i++) {
-        dst[pos++] = (i < filled) ? '#' : '-';
-    }
-
-    if (pos < (int)(dst_size - 1)) {
-        dst[pos++] = ']';
-    }
-
-    dst[pos] = '\0';
-}
 
 // --------------------------------------------------------
 // SD runtime helpers
@@ -893,11 +686,12 @@ static void menu_activate_selected(void)
 
 static void ui_build_info_model(void)
 {
+    ui_use_text_view();
     static const char *const keys[4][8]={
       {"BROWSER KEYS","PLAY: OPEN / START","STOP: PARENT","HOLD STOP: MENU","NEXT/PREV: SELECT","REC: START RECORD","NEXT/PREV: MORE","STOP: BACK"},
       {"PLAY KEYS","PLAY: USER PAUSE","PLAY: RESUME","STOP: END / SELECT","HOLD STOP: END","MOTOR: AUTO PAUSE","NEXT/PREV: MORE","STOP: BACK"},
       {"RECORD KEYS","REC: START / ARM","PLAY: PAUSE/RESUME","STOP: SAVE","HOLD STOP: DELETE","AUTO: IDLE STOP 5s","NEXT/PREV: MORE","STOP: BACK"},
-      {"IMAGE SELECTOR KEYS","NEXT/PREV: RECORD","REC: RECORD PROFILE","PLAY: START RECORD","STOP: cmt_file_t BROWSER","MZT: AUTO CONTINUE","NEXT/PREV: MORE","STOP: BACK"}};
+      {"IMAGE SELECTOR KEYS","NEXT/PREV: RECORD","REC: RECORD PROFILE","PLAY: START RECORD","STOP: BACK TO BROWSER","MZT: AUTO CONTINUE","NEXT/PREV: MORE","STOP: BACK"}};
     if(s_menu_info_page>=2) {
         for(unsigned row=0;row<8;++row)ui_model.line[row]=keys[s_menu_info_page-2][row];
         return;
@@ -912,12 +706,17 @@ static void ui_build_info_model(void)
 #ifdef CONFIG_MZ_CAPTURE_GPIO_FALLBACK
     ui_model.line[6]="RX GPIO FALLBACK";
 #else
+#if CONFIG_MZ_RX_PCNT_GUARD
+    ui_model.line[6]="RX MCPWM + PCNT";
+#else
     ui_model.line[6]="RX MCPWM CAPTURE";
+#endif
 #endif
     ui_model.line[7]="STOP BACK / NEXT MORE";
 }
 static void ui_build_menu_model(void)
 {
+    ui_use_text_view();
     if(s_menu_info_page) {ui_build_info_model();return;}
     snprintf(ui_header, sizeof(ui_header), "MENU");
 
@@ -978,6 +777,7 @@ static bool ui_should_show_no_sd_screen(void)
 
 static void ui_build_no_sd_model(void)
 {
+    ui_use_text_view();
     snprintf(ui_no_sd_line0, sizeof(ui_no_sd_line0), "NO SD CARD");
     snprintf(ui_no_sd_line1, sizeof(ui_no_sd_line1), "INSERT CARD");
 
@@ -1002,152 +802,27 @@ static bool ui_should_show_record_screen(void)
 
 static void ui_build_record_model(void)
 {
-    const char *path = recorder_get_path();
-    const char *file_name = basename_ptr(path);
-    char time_text[16];
-    recorder_state_t st = recorder_get_state();
-
-    // řádek 0: header
-    switch (st) {
-        case RECORDER_STATE_WAIT_MOTOR:
-            format_pause_header(ui_header, sizeof(ui_header), "RECORD PAUSED", 'M');
-            break;
-
-        case RECORDER_STATE_RECORDING:
-            if (recorder_is_waiting_signal()) {
-                snprintf(ui_header, sizeof(ui_header), "RECORDING READY");
-            } else {
-                snprintf(ui_header, sizeof(ui_header), "RECORDING");
-            }
-            break;
-
-        case RECORDER_STATE_PAUSED_USER:
-            format_pause_header(ui_header, sizeof(ui_header), "RECORD PAUSED", 'U');
-            break;
-
-        case RECORDER_STATE_PAUSED_MOTOR:
-            format_pause_header(ui_header, sizeof(ui_header), "RECORD PAUSED", 'M');
-            break;
-
-        case RECORDER_STATE_FINALIZING:
-            snprintf(ui_header,sizeof(ui_header),"SAVING RECORD");
-            break;
-        case RECORDER_STATE_FINISHED:
-            snprintf(ui_header, sizeof(ui_header), "RECORD SAVED");
-            break;
-
-        case RECORDER_STATE_DELETED:
-            snprintf(ui_header, sizeof(ui_header), "RECORD DELETED");
-            break;
-
-        case RECORDER_STATE_ERROR:
-            snprintf(ui_header, sizeof(ui_header), "RECORD ERROR");
-            break;
-
-        default:
-            snprintf(ui_header, sizeof(ui_header), "RECORD");
-            break;
+    ui_transport_view_t view={0};recorder_state_t state=recorder_get_state();
+    recorder_metadata(&view.program);view.filename=basename_ptr(recorder_get_path());
+    view.session=(uint32_t)recorder_get_format();view.seconds=recorder_get_elapsed_seconds();view.sample_rate=recorder_get_sample_rate();
+    edge_capture_status_t capture;recorder_capture_status(&capture);
+    view.rx_free=capture.free_percent;view.rx_min=capture.min_free_percent;
+    view.record_active=state==RECORDER_STATE_RECORDING;
+    switch(state){
+    case RECORDER_STATE_WAIT_MOTOR:view.status="WAIT MOTOR";break;
+    case RECORDER_STATE_PAUSED_USER:view.status="PAUSE USER";break;
+    case RECORDER_STATE_PAUSED_MOTOR:view.status="PAUSE MOTOR";break;
+    case RECORDER_STATE_FINALIZING:view.status="SAVING";break;
+    case RECORDER_STATE_FINISHED:view.status="SAVED";break;
+    case RECORDER_STATE_DELETED:view.status="CANCELLED";break;
+    case RECORDER_STATE_ERROR:view.status="ERROR";break;
+    default:view.status=recorder_is_waiting_signal() ? "WAIT SIGNAL":"REC";break;
     }
-
-    // řádek 1: cesta / adresář
-    dirname_copy(ui_rec_dir, sizeof(ui_rec_dir), path);
-    ui_copy_path_text(ui_path, sizeof(ui_path), ui_rec_dir);
-
-    // řádek 2: název souboru
-    ui_copy_scroll_text(ui_rec_file, sizeof(ui_rec_file), file_name);
-
-    // řádek 3: signálový stav pod názvem souboru
-    ui_rec_signal[0] = '\0';
-    if (recorder_get_auto_signal()) {
-        if (st == RECORDER_STATE_WAIT_MOTOR) {
-            snprintf(ui_rec_signal, sizeof(ui_rec_signal), "AUTO SIGNAL ON");
-        } else if (recorder_is_waiting_signal()) {
-            snprintf(ui_rec_signal, sizeof(ui_rec_signal), "WAITING SIGNAL");
-        } else if (recorder_has_valid_signal()) {
-            snprintf(ui_rec_signal, sizeof(ui_rec_signal), "VALID SIGNAL");
-        }
-    }
-
-    ui_rec_buffer[0] = '\0';
-    if (st == RECORDER_STATE_WAIT_MOTOR ||
-        st == RECORDER_STATE_RECORDING ||
-        st == RECORDER_STATE_PAUSED_USER ||
-        st == RECORDER_STATE_PAUSED_MOTOR) {
-        uint8_t buffer_ok = recorder_get_buffer_ok_percent();
-        TickType_t now = xTaskGetTickCount();
-
-        if (!s_rec_buffer_display_valid || buffer_ok == 0U) {
-            s_rec_buffer_display_ok = buffer_ok;
-            s_rec_buffer_display_valid = true;
-            s_rec_buffer_display_last = now;
-        } else if ((uint32_t)(now - s_rec_buffer_display_last) >= pdMS_TO_TICKS(500)) {
-            if (buffer_ok > s_rec_buffer_display_ok) {
-                uint8_t step = buffer_ok - s_rec_buffer_display_ok;
-                s_rec_buffer_display_ok += (step > 4U) ? 4U : step;
-            } else if (buffer_ok < s_rec_buffer_display_ok) {
-                uint8_t step = s_rec_buffer_display_ok - buffer_ok;
-                s_rec_buffer_display_ok -= (step > 8U) ? 8U : step;
-            }
-            s_rec_buffer_display_last = now;
-        }
-
-        buffer_ok = s_rec_buffer_display_ok;
-        snprintf(ui_rec_buffer, sizeof(ui_rec_buffer), "BUF %3u%% %s",
-                 buffer_ok,
-                 (buffer_ok == 0U) ? "BAD" : "OK");
-    } else {
-        s_rec_buffer_display_valid = false;
-        s_rec_buffer_display_ok = 100U;
-    }
-
-    // řádek 5: čas záznamu
-    format_mmss(time_text, sizeof(time_text), recorder_get_elapsed_seconds());
-    snprintf(ui_rec_time, sizeof(ui_rec_time), "%s", time_text);
-
-    // řádek 6: zvolený záznamový formát
-    if(st==RECORDER_STATE_FINALIZING) {
-        snprintf(ui_rec_rate,sizeof(ui_rec_rate),"SD FLUSH / CLOSE");
-    } else if (recorder_get_format() == RECORDER_FORMAT_LEP) {
-        snprintf(ui_rec_rate, sizeof(ui_rec_rate), "LEP 50us");
-    } else if (recorder_get_format() == RECORDER_FORMAT_L16) {
-        snprintf(ui_rec_rate, sizeof(ui_rec_rate), "L16 16us");
-    } else if (recorder_get_format() == RECORDER_FORMAT_MZF) {
-        loader_mode_t detected;
-        if(st!=RECORDER_STATE_WAIT_MOTOR && mzf_writer_profile(&detected))
-            snprintf(ui_rec_rate,sizeof(ui_rec_rate),"MZF %s",loader_mode_name(detected));
-        else snprintf(ui_rec_rate,sizeof(ui_rec_rate),"MZF WAIT HEADER");
-        if(st!=RECORDER_STATE_WAIT_MOTOR)
-            snprintf(ui_rec_signal,sizeof(ui_rec_signal),"DATA %u%%",mzf_writer_progress());
-    } else {
-        snprintf(ui_rec_rate, sizeof(ui_rec_rate), "RATE %lu",
-                 (unsigned long)recorder_get_sample_rate());
-    }
-
-    // řádek 7: footer
-    ui_rec_footer[0] = '\0';
-    if(st==RECORDER_STATE_ERROR && recorder_get_format()==RECORDER_FORMAT_MZF)
-        snprintf(ui_rec_footer,sizeof(ui_rec_footer),"%s",mzf_writer_error());
-
-    if(recorder_metadata_warning()) snprintf(ui_rec_footer,sizeof(ui_rec_footer),"METADATA ERROR");
-    if(st!=RECORDER_STATE_FINALIZING && !recorder_metadata_warning() && st!=RECORDER_STATE_ERROR && recorder_get_autoname() && record_autoname_has_name())
-        snprintf(ui_rec_footer,sizeof(ui_rec_footer),"%s",record_autoname_get_name());
-    if(st!=RECORDER_STATE_FINALIZING && recorder_get_format()!=RECORDER_FORMAT_MZF && recorder_get_autoname()) {
-        loader_mode_t mode;record_autoname_aux_profile_t aux;uint8_t progress;
-        if(record_autoname_get_detected_loader_mode(&mode))
-            snprintf(ui_rec_signal,sizeof(ui_rec_signal),"%s",loader_mode_name(mode));
-        else if(record_autoname_get_detected_aux_profile(&aux))
-            snprintf(ui_rec_signal,sizeof(ui_rec_signal),"%s 1:%u",aux<=4 ? "SINCLAIR":"CP/M",aux<=4 ? aux:aux-4);
-        if(record_autoname_get_payload_progress_percent(&progress))
-            snprintf(ui_rec_time,sizeof(ui_rec_time),"%s DATA %u%%",time_text,progress);
-    }
-    ui_model.line[0] = ui_header;
-    ui_model.line[1] = ui_rec_footer;
-    ui_model.line[2] = ui_path;
-    ui_model.line[3] = ui_rec_file;
-    ui_model.line[4] = ui_rec_signal;
-    ui_model.line[5] = ui_rec_buffer;
-    ui_model.line[6] = ui_rec_time;
-    ui_model.line[7] = ui_rec_rate;
+    view.warning=recorder_capture_error();
+    if(!view.warning[0] && capture.guard.suspected)view.warning="EDGE CHECK SUSPECT";
+    if(!view.warning[0] && recorder_metadata_warning())view.warning="METADATA ERROR";
+    if(state==RECORDER_STATE_ERROR && !view.warning[0] && recorder_get_format()==RECORDER_FORMAT_MZF)view.warning=mzf_writer_error();
+    ui_set_transport_view(true,&view);snprintf(ui_header,sizeof(ui_header),"%s",view.status);ui_model.line[0]=ui_header;
 }
 
 // --------------------------------------------------------
@@ -1159,147 +834,36 @@ static bool ui_should_show_playback_screen(void)
 
 static void ui_build_playback_model(void)
 {
-    const char *path = NULL;
-    const char *file_name;
-    char time_pos[16];
-    char time_total[16];
-    uint32_t shown_pos_seconds = 0;
-    uint32_t shown_total_seconds = 0;
-    uint32_t shown_sample_rate = 0;
-    uint8_t shown_progress = 0;
-    player_state_t st = player_get_state();
-    player_pause_reason_t reason = player_get_pause_reason();
-    bool edge_playback = false;
-    bool binary_playback = false;
-    bool tap_playback = false;
-
-    if (play_wait_motor) {
-        path = file_list_get_path();
-    }
-
-    if (path == NULL || path[0] == '\0') {
-        path = player_get_current_path();
-    }
-
-    file_name = basename_ptr(path);
-    edge_playback = (play_wait_motor && edge_stream_is_edge_path(path)) ||
-                    (!play_wait_motor && player_is_edge_tape());
-    binary_playback = path_is_binary_tape_path(path) ||
-                      (!play_wait_motor && player_is_binary_tape());
-
-    tap_playback = (play_wait_motor && tap_stream_is_tap_path(path)) ||
-                   (!play_wait_motor && player_is_tap());
-
-    // řádek 0: stav
-    if (st == PLAYER_STATE_READY) {
-        const sharp_stream_info_t *info=player_sharp_details();
-        snprintf(ui_header,sizeof(ui_header),"RECORD %u/%u",(unsigned)info->record,(unsigned)info->records);
-    } else if (st == PLAYER_STATE_EOF) {
-        snprintf(ui_header, sizeof(ui_header), "PLAY FINISHED");
-    } else if (st == PLAYER_STATE_UNDERRUN) {
-        snprintf(ui_header, sizeof(ui_header), "PLAY BUF!");
-    } else if (st == PLAYER_STATE_ERROR) {
-        snprintf(ui_header, sizeof(ui_header), "PLAY ERROR");
-    } else if (play_wait_motor) {
-        format_pause_header(ui_header, sizeof(ui_header), "PLAY PAUSED", 'M');
-    } else if (st == PLAYER_STATE_PAUSED && reason == PLAYER_PAUSE_MOTOR) {
-        format_pause_header(ui_header, sizeof(ui_header), "PLAY PAUSED", 'M');
-    } else if (st == PLAYER_STATE_PAUSED) {
-        format_pause_header(ui_header, sizeof(ui_header), "PLAY PAUSED", 'U');
-    } else {
-        snprintf(ui_header, sizeof(ui_header), "PLAYING");
-    }
-
-    // waiting playback screen používá preview metadata,
-    // běžící playback používá player_get_*()
-    if (play_wait_motor) {
-        shown_pos_seconds = 0;
-        shown_progress = 0;
-
-        if (s_play_preview_valid &&
-            path != NULL &&
-            strcmp(path, s_play_preview_path) == 0) {
-            shown_total_seconds = s_play_preview_total_seconds;
-            shown_sample_rate = s_play_preview_sample_rate;
-        } else {
-            shown_total_seconds = 0;
-            shown_sample_rate = 0;
-        }
-    } else {
-        shown_pos_seconds = player_get_position_seconds();
-        shown_total_seconds = player_get_total_seconds();
-        shown_sample_rate = player_get_sample_rate();
-        shown_progress = player_get_progress_percent();
-    }
-
-    // řádek 1: cesta / adresář (scroll)
-    dirname_copy(ui_play_dir, sizeof(ui_play_dir), path);
-    ui_copy_path_text(ui_path, sizeof(ui_path), ui_play_dir);
-
-    // řádek 2: název souboru (scroll)
-    ui_copy_scroll_text(ui_play_file, sizeof(ui_play_file), file_name);
-
-    if (st==PLAYER_STATE_READY) {
-        const sharp_stream_info_t *info=player_sharp_details();
-        shown_pos_seconds=0; shown_progress=0;
-        shown_total_seconds=(uint32_t)(info->total_ticks/16000000ULL);
-        ui_copy_scroll_text(ui_play_file,sizeof(ui_play_file),info->title);
-    }
-
-    // řádek 4: progress bar
-    build_progress_bar(ui_play_bar, sizeof(ui_play_bar), shown_progress);
-
-    // řádek 5: čas mm:ss / mm:ss
-    if (edge_playback) {
-        ui_play_time[0] = '\0';
-    } else {
-        format_mmss(time_pos, sizeof(time_pos), shown_pos_seconds);
-        format_mmss(time_total, sizeof(time_total), shown_total_seconds);
-        snprintf(ui_play_time, sizeof(ui_play_time), "%s / %s", time_pos, time_total);
-    }
-
-    // řádek 6: rate/baud
-    if (edge_playback) {
-        uint32_t pps = player_get_pulses_per_second();
-        snprintf(ui_play_rate, sizeof(ui_play_rate), "p/s %lu",
-                 (unsigned long)pps);
-    } else if (tap_playback) {
-        uint16_t baud = play_wait_motor ? tap_stream_speed_baud(player_get_tap_speed()) :
-                                        (uint16_t)player_get_baud_rate();
-        snprintf(ui_play_rate, sizeof(ui_play_rate), "TAP %u Bd", (unsigned)baud);
-    } else if (binary_playback) {
-        const sharp_stream_info_t *info=player_sharp_details();
-        snprintf(ui_play_rate,sizeof(ui_play_rate),"%s%s%s",info->sidecar ? "I " : "",
-                 loader_mode_name(info->effective),info->fallback ? " !" : "");
-        if(info->ultrafast) snprintf(ui_play_time,sizeof(ui_play_time),"%lu / --:--",(unsigned long)shown_pos_seconds);
-    } else {
-        snprintf(ui_play_rate, sizeof(ui_play_rate), "RATE %lu",
-                 (unsigned long)shown_sample_rate);
-    }
-
-    // řádek 7: footer
-    ui_play_footer[0] = '\0';
-
-    ui_model.line[0] = ui_header;
-    ui_model.line[1] = "";
-    ui_model.line[2] = ui_path;
-    ui_model.line[3] = ui_play_file;
-    ui_model.line[4] = "";
-    ui_model.line[5] = ui_play_bar;
-    ui_model.line[6] = ui_play_time;
-    ui_model.line[7] = ui_play_rate;
+    ui_transport_view_t view={0};player_state_t state=player_get_state();
+    const char *path=play_wait_motor ? file_list_get_path():player_get_current_path();
+    player_metadata(&view.program);if(play_wait_motor)program_metadata_reset(&view.program,file_format_detect_from_name(path));
+    view.filename=basename_ptr(path);
+    view.seconds=player_get_position_seconds();view.progress=player_get_progress_percent();
+    view.sample_rate=player_get_sample_rate();view.playback_baud=player_is_tap() ? (uint16_t)player_get_baud_rate():0;
+    raw_pulse_status(&view.tx);view.tx_expected=state==PLAYER_STATE_PLAYING && view.tx.running && !view.tx.paused && !player_is_ultrafast_active();
+    view.session=(uint32_t)view.program.format;
+    if(play_wait_motor)view.status="WAIT MOTOR";
+    else if(state==PLAYER_STATE_READY)view.status="SELECT RECORD";
+    else if(state==PLAYER_STATE_PAUSED)view.status=player_get_pause_reason()==PLAYER_PAUSE_MOTOR ? "PAUSE MOTOR":"PAUSE USER";
+    else if(state==PLAYER_STATE_ERROR)view.status="ERROR";
+    else if(state==PLAYER_STATE_UNDERRUN)view.status="UNDERRUN";
+    else if(state==PLAYER_STATE_EOF)view.status="FINISHED";
+    else if(player_is_ultrafast_active())view.status="UL HANDSHAKE";
+    else if(!view.tx.running)view.status="BETWEEN BLOCKS";
+    else view.status="PLAY";
+    ui_set_transport_view(false,&view);snprintf(ui_header,sizeof(ui_header),"%s",view.status);ui_model.line[0]=ui_header;
 }
 
 static void ui_build_browser_model(void)
 {
-    ui_copy_path_text(ui_path, sizeof(ui_path), file_list_get_current_dir());
-
-    ui_model.line[0] = ui_path;
-
-    for (int row = 0; row < FILE_LIST_VIEW_ROWS; row++) {
-        ui_build_browser_line(row, ui_items[row], sizeof(ui_items[row]));
-        ui_model.line[1 + row] = ui_items[row];
+    const char *rows[6];int selected=-1;unsigned directories=0;
+    ui_copy_path_text(ui_path,sizeof(ui_path),file_list_get_current_dir());ui_model.line[0]=ui_path;
+    for(int row=0;row<6;++row){
+        rows[row]=file_list_get_visible_name(row);
+        if(file_list_is_visible_selected(row))selected=row;
+        if(file_list_get_visible_type(row)==FILE_ITEM_DIR || file_list_get_visible_type(row)==FILE_ITEM_PARENT)directories|=1U<<row;
     }
+    ui_set_browser_view(rows,selected,directories,(unsigned)file_list_get_selected_index(),(unsigned)file_list_count());
 }
 
 static void start_selected_file(void)
@@ -1364,9 +928,9 @@ static void service_route_switch(void)
         play_wait_motor_clear();
         player_stop();
         recorder_state_t state=recorder_get_state();
-        if(state==RECORDER_STATE_RECORDING || state==RECORDER_STATE_WAIT_MOTOR ||
+        if(state==RECORDER_STATE_FINALIZING || state==RECORDER_STATE_RECORDING || state==RECORDER_STATE_WAIT_MOTOR ||
            state==RECORDER_STATE_PAUSED_USER || state==RECORDER_STATE_PAUSED_MOTOR)
-            recorder_handle_stop();
+            recorder_handle_abort();
         gpio_set_level(READ_GPIO,0);gpio_set_level(SENSE_GPIO,1);gpio_set_level(MONITOR_GPIO,0);
         ui_show_overlay("EXTERNAL CMT",1200);
     }
@@ -1383,15 +947,18 @@ static void ui_mark_external_route(void)
 static bool cancel_image_analysis(void *context)
 {
     (void)context;
-    static int64_t yielded_at,shown_at;
+    static int64_t yielded_at,shown_at,external_since;
     static unsigned spinner;
     static char status[32];
     btn_event_t event=buttons_poll();
     if(event==BTN_STOP || event==BTN_STOP_LONG || gpio_get_level(GPIO_NUM_47)) return true;
     int64_t now=esp_timer_get_time();
+    if(switch_signal_is_high())external_since=0;
+    else if(!external_since)external_since=now;
+    else if(now-external_since>=40000)return true;
     if(now-shown_at>=100000) {
         shown_at=now;snprintf(status,sizeof(status),"ANALYZING %c","|/-\\"[spinner++%4]);
-        ui_model_t model={{status,"","SD / TAPE PREFLIGHT","","STOP TO CANCEL","","",""}};ui_render(&model);
+        ui_use_text_view();ui_model_t model={{status,"","SD / TAPE PREFLIGHT","","STOP TO CANCEL","","",""}};ui_render(&model);
     }
     if(now-yielded_at>=20000) { yielded_at=now; vTaskDelay(1); }
     return false;
@@ -1416,8 +983,8 @@ static void activate_selected_item(bool motor_high)
         ui_clear_overlay();
 
         if (!file_list_enter_selected()) {
-            ui_show_overlay(file_list_last_error(), 1000);
-            if(strcmp(file_list_last_error(),"CANCELLED")) sd_runtime_request_reinit();
+            ui_show_overlay(sd_detect_card_inserted() ? file_list_last_error():"NO SD",1000);
+            if(sd_detect_card_inserted() && file_list_error_requires_reinit())sd_runtime_request_reinit();
         }
         return;
     }
@@ -1476,6 +1043,7 @@ static void app_task(void *arg)
 
     while (1) {
         btn_event_t e = buttons_poll();
+        if(e==BTN_STOP || e==BTN_STOP_LONG)ui_overlay_clear(true);
 
         service_sd_detect();
         service_route_switch();
@@ -1538,7 +1106,7 @@ static void app_task(void *arg)
                 ui_build_menu_model();
             }
             ui_mark_external_route();
-            ui_render(&ui_model);
+            ui_set_external(switch_ext_mode);ui_render(&ui_model);
 
             TickType_t delay_ticks = pdMS_TO_TICKS(APP_TASK_DELAY_MS);
             if (delay_ticks == 0) {
@@ -1615,7 +1183,7 @@ static void app_task(void *arg)
             if (recorder_is_active()) {
                 bool failed=recorder_get_state()==RECORDER_STATE_ERROR;
                 recorder_handle_stop();
-                if(s_sd_ready && recorder_get_state()!=RECORDER_STATE_FINALIZING && (failed || recorder_get_state()==RECORDER_STATE_ERROR || !file_list_reload_current_dir()))
+                if(s_sd_ready && recorder_get_state()!=RECORDER_STATE_FINALIZING && (failed || recorder_get_state()==RECORDER_STATE_ERROR || (!file_list_reload_current_dir() && file_list_error_requires_reinit())))
                     sd_runtime_request_reinit();
             }
             // playback screen a playback error/finished screen
@@ -1762,7 +1330,7 @@ static void app_task(void *arg)
         }
 
         ui_mark_external_route();
-        ui_render(&ui_model);
+        ui_set_external(switch_ext_mode);ui_render(&ui_model);
 
         TickType_t delay_ticks = pdMS_TO_TICKS(APP_TASK_DELAY_MS);
         if (delay_ticks == 0) {

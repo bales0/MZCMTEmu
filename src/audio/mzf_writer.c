@@ -18,6 +18,10 @@
 #define O_BINARY 0
 #endif
 
+static program_metadata_t program;
+static program_metadata_store_t program_store;
+void mzf_writer_metadata(program_metadata_t *out){program_metadata_snapshot(&program_store,out);}
+static void publish_metadata(void){program_metadata_publish(&program_store,&program);}
 static cmt_file_t *file;
 static char target[256];
 static uint8_t *payload;
@@ -103,7 +107,7 @@ static loader_mode_t profile_from_copier(mz_copier_profile_t profile)
 }
 
 
-static bool fail(const char *message) { error_text=message; return false; }
+static bool fail(const char *message) { error_text=message;program.confidence=PROGRAM_INVALID;publish_metadata();return false; }
 void mzf_writer_init(void) {
     if(!payload) payload=heap_caps_malloc(65535,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
 }
@@ -113,6 +117,7 @@ void mzf_writer_abort_delete(void) {
 }
 bool mzf_writer_open(const char *path) {
     mzf_writer_abort_delete();
+    program_metadata_reset(&program,FILE_FORMAT_MZF);publish_metadata();
     valid_header=valid_block=recovery=tc_pending=false;
     expected=received=0; copier=MZ_COPIER_NONE; detected=LOADER_MODE_NORMAL_1_1;error_text="";
     if(!payload) return fail("MZF PSRAM");
@@ -125,7 +130,10 @@ bool mzf_writer_open(const char *path) {
 }
 static void begin_payload(void) {
     expected=(uint32_t)header[18]|(uint32_t)header[19]<<8;
-    received=0;valid_header=true; mz_tape_decoder_start_data(expected);
+    received=0;valid_header=true;
+    program_metadata_sharp(&program,header,copier==MZ_COPIER_NONE ? PROGRAM_TAPE_DECODE:PROGRAM_LOADER_EMBEDDED);
+    program.valid|=PROGRAM_RECORDED_MODE;program.recorded_loader_mode=detected;publish_metadata();
+    mz_tape_decoder_start_data(expected);
 }
 static bool accept_event(const mz_tape_decoder_event_t *event) {
     switch(event->type) {
@@ -134,6 +142,7 @@ static bool accept_event(const mz_tape_decoder_event_t *event) {
         if(valid_header || tc_pending || !source) return fail("MZF HEADER");
         if(mz_loader_profile_recognize_ic(source,header,&copier)) detected=profile_from_copier(copier);
         else if(mz_loader_profile_recognize_tc_header(source)) {
+            program.confidence=PROGRAM_LOADER_ONLY;program.protocol=PROGRAM_SHARP;program.chain_stage=1;publish_metadata();
             tc_pending=true; mz_tape_decoder_start_data(MZ_TC_LOADER_BYTES); return true;
         } else {
             memcpy(header,source,128);
@@ -150,14 +159,16 @@ static bool accept_event(const mz_tape_decoder_event_t *event) {
         if(!valid_header || event->byte_index>=expected) return fail("MZF SIZE");
         /* A malformed block may reacquire a complete leader. Overwrite by
          * decoder position so a partial first attempt cannot be prepended. */
-        payload[event->byte_index]=event->value;received=event->byte_index+1;return true;
+        payload[event->byte_index]=event->value;received=event->byte_index+1;
+        if(!expected || received*100/expected!=program.received_bytes*100/expected){program.received_bytes=received;publish_metadata();}
+        return true;
     case MZ_TAPE_DECODER_EVENT_BLOCK_VALID:
         if(tc_pending) {
             if(!mz_loader_profile_normalize_tc(mz_tape_decoder_get_header(),tc_loader,header,&copier)) return fail("TC LOADER");
             detected=profile_from_copier(copier);tc_pending=false;begin_payload();return true;
         }
         if(!valid_header || received!=expected) return fail("MZF SIZE");
-        valid_block=true; mz_tape_decoder_stop(); return true;
+        valid_block=true;program.received_bytes=received;program.confidence=PROGRAM_PAYLOAD_VALID;publish_metadata();mz_tape_decoder_stop(); return true;
     case MZ_TAPE_DECODER_EVENT_BLOCK_INVALID:
         if(tc_pending) return fail("TC CHECKSUM");
         if(recovery || copier!=MZ_COPIER_NONE) return fail("MZF CHECKSUM");

@@ -13,3 +13,6 @@ const char *mzf_writer_error(void);
 uint8_t mzf_writer_progress(void);
 bool mzf_writer_profile(loader_mode_t *mode);
 const uint8_t *mzf_writer_header(void);
+
+#include "formats/program_metadata.h"
+void mzf_writer_metadata(program_metadata_t *out);

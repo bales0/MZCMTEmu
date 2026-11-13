@@ -1,0 +1,17 @@
+gcc.exe (i686-posix-dwarf-rev0, Built by MinGW-W64 project) 5.1.0
+RUN test_program_metadata
+
+Traceback (most recent call last):
+  File "C:\Dokumenty\GitHub\MZCMTEmu\tests\host\run_tests.py", line 119, in <module>
+    subprocess.run([str(exe), *extra], cwd=tmp, env=env, check=True)
+  File "C:\Users\alesb\.platformio\python3\Lib\subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\alesb\.platformio\python3\Lib\subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "C:\Users\alesb\.platformio\python3\Lib\subprocess.py", line 1538, in _execute_child
+    hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [WinError 5] P��stup byl odep�en
+
+EXIT 1

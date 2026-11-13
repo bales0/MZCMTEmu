@@ -72,3 +72,5 @@ bool player_set_record_mode(loader_mode_t mode);
 #endif
 
 bool player_monitor_active(void);
+
+void player_metadata(program_metadata_t *out);

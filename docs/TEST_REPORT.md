@@ -1,82 +1,74 @@
-# Ověření portu – 13. 11. 2026
+# Ověření UI, metadat a PCNT — 13. 11. 2026
 
-**20 host sad PASS, cílový firmware build PASS, HW akceptace NEPROVEDENA.** Host testy ani úspěšný build neprokazují kompatibilitu se skutečným Sharpem. Přesný rozsah každé oblasti uvádí [PARITY_MATRIX](PARITY_MATRIX.md).
+**23 host sad s ASan/UBSan, cílový build PASS; HW akceptace NEPROVEDENA.** Výchozí commit main d3f67c4a978a38dad23e49c918b145182046452b plus necommitnuté pracovní změny tohoto zadání. Nebyl proveden staging, commit, vytvoření větve, push ani PR. Reference 2.0.3 / 600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb a MZTools nebyly měněny. Uživatelské odstranění starého zadání je zachováno.
 
-Repozitář při pokračování i po práci: main, HEAD 25246a327ed2187cd24e7d11b4cbf7c511555a1d. Žádný staging/commit/branch/push/PR. Referenční firmware 2.0.3, commit 600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb, zůstal beze změn; kontrola git status je čistá. MZTools a uživatelské binární fixture nebyly upravovány.
+## Reprodukce a důkazy
 
-## Reprodukce
+Debian ve WSL, GCC14.2, Python3.13: produkční moduly samostatně, C11/O2/Wall/Wextra/Werror, ASan+UBSan. Izolované dočasné výstupy v .tmp. Cílový Xtensa GCC15.2, ESP-IDF6.0.1, espressif32@7.0.1.
 
-Windows, Python3.11 PlatformIO, host MinGW GCC5.1, cílový Xtensa GCC15.2, esptool4.11. Platforma je pinována na Espressif32@7.0.1 / ESP-IDF6.0.1.
-
-    python tests/host/run_tests.py --cc C:/Users/alesb/.platformio/packages/toolchain-gccmingw32/bin/gcc.exe --tap-fixtures tests/TAP --qd-fixtures tests/QD --qd-fixtures tests/MZQ
+    python3 tests/host/run_tests.py --cc gcc --sanitize --tap-fixtures tests/TAP --qd-fixtures tests/QD --qd-fixtures tests/MZQ
     pio run -e MZCMTEmu -j 1
-    python C:/Users/alesb/.platformio/packages/tool-esptoolpy/esptool.py --chip esp32s3 image_info .pio/build/MZCMTEmu/firmware.bin
 
-Produkční C moduly se linkují jako samostatné překladové jednotky s -std=c11 -O2 -Wall -Wextra -Werror. Test nevkládá produkční .c přes include. Dočasné soubory jsou v izolovaných podadresářích .tmp, RECORDINGS_DIR je pro test přesměrován. Standardní shell runner měl Windows chybu740; použit child_process.execFile. Výsledky jsou [port-host.txt](validation/port-host.txt) a [port-build.txt](validation/port-build.txt).
+[Úplný host log](validation/ui-metadata-host-linux.txt), [build](validation/ui-metadata-build.txt), [image_info](validation/ui-metadata-image.txt), [symboly](validation/ui-metadata-symbols.txt), [konfigurace](validation/ui-metadata-config.txt), [souhrn](validation/ui-metadata-summary.json). PCNT je v hlavním obrazu vypnuté; samostatný guard byl navíc úspěšně přeložen s PCNT-on proti skutečným aktuálním target flags/SDK, viz [PCNT compile](validation/ui-pcnt-target.txt). Tento důkaz není link celého PCNT-on obrazu ani HW test.
 
-## Host důkazy
+Windows MinGW5.1 nemá ASan/UBSan. I po uživatelem potvrzeném povolení COMODO nový test_program_metadata.exe vrací WinError5 při spuštění; [Windows log](validation/ui-metadata-host-windows.txt). Nastavení ochrany nebylo měněno. Funkčním alternativním důkazem je kompletní Linux běh se sanitizéry, nikoli úspěšný Windows běh.
 
-| Sada | Co skutečně ověřuje |
+## Rozsah automatických testů
+
+Původních 20 sad je zachováno; přibyly test_ui_policy, test_program_metadata a test_capture_pcnt. Formátování starších C testů bylo upraveno pro novější GCC/Werror bez potlačování warningů.
+
+| Sada | Doložený rozsah |
 |---|---|
-| test_buttons | Produkční debounce/repeat/STOP priorita a tick wrap; GPIO a tick jsou mock |
-| test_sdcard | Produkční lifecycle driver včetně všech init/mount/unmount/free selhání a retry; ESP SD API je mock |
-| test_storage | Skutečná ESP_PLATFORM větev actoru, statický queue pump, vlastnictví native deskriptorů, byte cache, seek/ungetc/EOF, exclusive create/pool8, async slot, ISR refusal, read/write/seek/sync/close; skutečné soubory host FS a vložené IO chyby |
-| test_raw_rmt | Produkční RMT encoder,16 MHz, jedno continuous transaction/refilly12000 událostí, long runs/UINT32, mixed level,1 tick, pause/stop/replay/underrun/init failure; mock simuluje DMA a retenci clock gate |
-| test_player_rmt | Skutečný player + produkční RMT:17 Sharp režimů/simulovaný UL peer, TAP4 rychlosti, WAV a L16, přesný active tick total a user-pause precedence |
-| test_capture_mcpwm | Produkční MCPWM driver: latched timestamp nezávislý na IRQ delay, wrap/multi-wrap, pending tail/pause/resume, polarity/overflow errors a init cleanup; mock simuluje hardware latch |
-| test_loader_choice | Všech17 módů a per-family speed memory, validní MZ700/TC rychlosti |
-| test_writer_io | Produkční WAV/LEP/L16/MZF writery; injected write/seek/flush/close chyby, odstranění provisional output, exclusive create, RIFF/FAT overflow, izolovaná MFI chyba |
-| test_file_list |1000+ souborů, řazení, metadata filtr, parent/scroll, cancel/retry a dvě lifetime PSRAM alokace |
-| test_autoname | Referenční Sharp/IC/TC/Sinclair/CPM detektory, čtyři AUX rychlosti, checksum a kolize; limity legacy WAV22k a LEP kvantizace |
-| test_mzf_writer | NORMAL/IC/TC, native/copier normalizace, checksum/duplicate recovery,0/65535 B, incomplete/abort/delete |
-| test_quickdisk | Logical/QDF/HxC/FlashFloppy, všech 16 MFM fází, CRC, bounded payload, špatné offsety/trailer/count a cancellation |
-| test_route_switch |40 ms S1 debounce, safe initial EXT a čistá tabulka SENSE/monitor/UL ownership/pause/READY |
-| test_settings | NVS schema v2/CRC/ranges, v1 migration, namespace, no rewrite unchanged a NVS fault cleanup |
-| test_sharp_stream | Úplné waveform intervaly17 režimů, původní Z80 LOW/HIGH vectors, fallback/overlap, sidecary a UL deadline/bounds |
-| test_player_sharp | Skutečný player s diagnostickým GPTimer HAL,17 režimů/UL, MZT selector/profily/MTI a návaznost včetně UL→UL |
-| test_recorder | Skutečný recorder, quantization/round-trips, WAV fáze/RIFF, MOTOR/user/AUTO, MZF/AutoName, media removal/REC9999 a explicitně odložený finalize/cancel/removal |
-| test_tap_stream |4 rychlosti a všechny intervaly, max65535 B, dlouhý čas, malformed input,2000 deterministických fuzz případů, cancel/retry a všechny dodané TAP |
-| test_player_tap | Skutečný player + GPTimer driver, absolutní časy TAP/WAV4 sample rates, hystereze/invert/pause/EOF/underrun a32bit carry |
+| test_ui_policy | Okamžitý RX pokles, pomalé zotavení, alarmy podle skutečného stavu, marquee a tick wrap |
+| test_program_metadata | 80B model/snapshot, původní Sharp/IC/TC hlavičky a první payload, neznámá/neplatná pole, multi-program a oddělený filename, checksum recovery, přímá PLAY/RECORD intervalová shoda, skutečné generované WAV44k/LEP/L16 přes PLAY čtečky, ZX BASIC/CODE/ARRAY/XOR a více bloků |
+| test_capture_pcnt | Nezávislý mock čítač fyzických hran, pending latch a tail, jedna/dvě ztracené hrany, 60001 hran přes SDK-like akumulaci, fail-closed bezpečnostní limit; společné MCPWM scénáře |
+| test_oled_ui | Skutečný pixelový renderer, inverze browseru, samostatné bary, overlay priority/latch/expiry/tick wrap, dirty pages, 20Hz limit, I²C selhání/retry, jas a clipping |
+| test_buttons | Debounce, STOP priorita, repeat/startup-held, tick wrap |
+| test_sdcard | Init/mount/unmount/free chyby a retry, bez formátování |
+| test_storage | Skutečná ESP větev actoru nad mock queue, native IO pouze worker, pool8/cache/seek/exclusive create, async job, ISR refusal, IO chyby |
+| test_player_rmt | Skutečný player/RMT encoder, 17 Sharp módů včetně simulovaného UL, TAP4 rychlosti, WAV/L16, přesné aktivní ticks a user pause |
+| test_raw_rmt | 12000 událostí/refilly, dlouhé intervaly/64bit rezerva, 1s pulse s 1 FIFO slotem, částečné dokončení a bytes až po odvysílání, pause/stop/replay/underrun/init failure |
+| test_loader_choice | Všech 17 módů, rodiny a zapamatované rychlosti |
+| test_capture_mcpwm | Latch nezávislý na IRQ delay, wrap/multi-wrap, pending/stale IRQ, pause tail/resume, FIFO overflow/polarita a init cleanup; PCNT-off |
+| test_writer_io | WAV/LEP/L16/MZF write/seek/flush/close failure, provisional cleanup, exclusive create, RIFF/FAT overflow, izolovaná MFI chyba |
+| test_file_list | 0/1/7/8/1000/10000 položek, case-insensitive sort/filtry, parent selection/scroll, cancel a neúspěšná podsložka obnoví původní seznam, dlouhé Linux cesty, dvě lifetime PSRAM alokace |
+| test_autoname | Sharp/IC/TC a AUX Sinclair/CPM rychlosti/checksumy, název a progress, kolize bez přepsání, ztrátová WAV/LEP omezení |
+| test_mzf_writer | Všechny native/copier profily, normalizace TC/IC, duplicitní copy recovery, checksum/partial cleanup, 0..65535 B |
+| test_quickdisk | MZQ/QDF CRC, HxC všech16 MFM fází, FlashFloppy, bounds/cancel, dodané obrazy |
+| test_route_switch | LOW=EXT, bezpečný startup, bounce/40ms debounce a jednorázové změny |
+| test_settings | NVS verze/CRC/migrace/ranges, restore/save/failure cleanup |
+| test_player_sharp | Celý transport17 módů, původní metadata před generováním loaderu, MZT metadata při změně rekordu, selector/stop/replay/UL návaznost |
+| test_sharp_stream | Golden intervaly/loadery všech módů, MZF/MZT/M12/QD kontejnerové větve, sidecary/fallback a bounds |
+| test_recorder | MOTOR/MANUAL/AUTO, pause/timeout, dokončení a abort, overrun/removal nesmějí hlásit SAVED, skutečné soubory a AutoName všech RECORD formátů |
+| test_tap_stream | 4 rychlosti a dodané TAP celé průběhy, bloky/pilot/sync/terminator/gap, malformed/empty/maxlen/cancel, 2000 bounded fuzz případů |
+| test_player_tap | Skutečný player/GPTimer/TAP a WAV: všechny intervaly čtyř sample rates, hystereze, 256sample chunks, inverze, physical EOF/progress, MOTOR/user pause a underrun |
 
-Golden loadery vznikly kompilací původních referenčních C++ generátorů přes [generate_loader_golden.py](../tests/host/generate_loader_golden.py) s host access shimem, nikoli přepisem očekávání podle portu. Kontroluje pevný referenční HEAD a čistotu zdrojů. Vektory pokrývají LOW/HIGH umístění, saved stack/relokátory a unsafe loader odmítnutí.
+Modely/mocky neprokazují skutečný FreeRTOS souběh, DMA/cache/IRQ latenci ani retenci RMT při clock-gate. Host OLED náhledy [browser](validation/ui/browser.png), [PLAY](validation/ui/play.png), [RECORD](validation/ui/record.png), [chyba](validation/ui/overlay.png) byly vizuálně zkontrolované; čitelnost skutečného 128×64 OLED zůstává otevřená.
 
-Sanitizery na tomto MinGW nejsou dostupné (-lasan/-lubsan chybí); fuzz PASS je běžný bounded test, ne ASan/UBSan důkaz. Mock fronta neběží v reálném FreeRTOS souběhu. Mock RMT retenci při zastavení zdrojových hodin předpokládá. UI obrazovky v main.c a samotný OLED nejsou celé spouštěné host testem. Windows CRT omezuje skutečné cesty nad MAX_PATH, přestože firmware buffery mají1024 B. Tyto limity zůstávají otevřené pro HW akceptaci.
+IC test z fyzického WAV44,1k vzorkování prokáže kanonickou hlavičku (HEADER_VALID), nikoli checksum rychlého payloadu. Stejný přesný intervalový vstup dosáhne PAYLOAD_VALID; parser nevyrobí jistotu, kterou ztrátové vzorkování nedodá. Živé RECORD AutoName dostává hrany před WAV/LEP kvantizací. Pasivní dekódování nerozšiřuje existující časové tolerance dekodéru. ZX TAP nikdy neprochází Sharp parserem a nemá vymyšlený EXEC.
 
-## Dodané soubory
+Po úplném23sadovém průchodu byla při závěrečném auditu opravena nová PCNT epocha po resume. Doplněný test ztráty hran po pauze a všechny dotčené sady test_capture_pcnt/test_capture_mcpwm/test_recorder znovu prošly ASan/UBSan; [finální cílený log](validation/ui-capture-resume-linux.txt). Následný cílový build a image/symboly odpovídají této opravě.
 
-Všechny dodané TAP prošly celým waveformem ve všech čtyřech rychlostech. Před/po testech bylo shodných SHA256 všech 92 souborů ve složkách MZF/QD/MZQ/WAV/TAP/LEP, viz [manifest](validation/fixture-sha256.json).
+## Dodané soubory a reference
 
-QuickDisk přijal barbarian2.qd a barbarian2.qdf (každý 3 rekordy), FF_Flappy_UL800.qd a Flappy.qd (každý 1), qdtestbas.mzq (1). Odmítl FF_Blank.qd, FF_Blank_MZ_Formated.qd, FF_Blank_MZ_Formated_TC122.qd, hxc_Blank.QD, hxc_Blank_MZ_Formated.QD, hxc_Blank_MZ_Formated_TC122.QD, hxc_MarioMZ1500.qd, hxc_MarioMZ1500_MZ_Formatedandloaded.qd a mzfloader.mzq. Všech14 výsledků nyní souhlasí s původními validačními funkcemi reference. [compare_quickdisk_reference.py](../tests/host/compare_quickdisk_reference.py) vyjme nezměněné původní C++ funkce pro MFM decode, CRC/frame/count, logical parser a převod hlavičky, nahradí pouze SD přístup/cancel a porovná akceptaci i všechny kanonické hlavičky a payloady přijatých rekordů s portem. Kontroluje referenční HEAD a čistotu src. Physical/QDF cold-scan orchestrace je host harness podle reference; duration cache, AVR playback, UI a RTOS předmětem tohoto porovnání nejsou.
+SHA256 všech 92 souborů v původním [manifestu](validation/fixture-sha256.json) zůstalo shodných. Dodané TAP/QD/MZQ jsou pouze čteny. Historický [QuickDisk reference log](validation/quickdisk-reference.txt) dokládá shodu 14 výsledků (5 přijatých, 9 shodně odmítnutých) s původním parserovým jádrem; není novým HW důkazem. Generované testovací soubory nejsou uživatelské fixture. Starší port-*.txt a port-summary.json dokumentují předchozí port, nikoli aktuální HEAD/footprint.
 
-[Referenční výstup](validation/quickdisk-reference.txt): FF_Blank a FF_Blank_MZ_Formated i hxc_Blank_MZ_Formated mají nulový count; hxc_Blank nemá validní count/CRC; oba TC122 a oba Mario obrazy neprojdou frame/CRC/length validací; mzfloader.mzq neprojde logical hlavičkou. **Tato odmítnutí odpovídají validačním algoritmům reference, neznamenají obecně poškozený obraz pro jiný formát/přehrávač.**
+## Paměť a časová náročnost
 
-Reprodukce nezávislého QD porovnání:
+Finální výchozí build: **RAM154348 B/327680 B (47,1 %), aplikace461513 B/1048576 B (44,0 %), image461936 B, flash16 MB, octal PSRAM konfigurace**. Statická čísla neobsahují minima runtime heapu, SDK DMA alokace ani skutečné high-water task stacků. Boot N16R8 nebyl změřen. IRAM encoder/capture callbacky a interní DRAM FIFO32768/65536 B potvrzuje výpis symbolů; nedošlo k duplikaci TX FIFO.
 
-    python tests/host/compare_quickdisk_reference.py --cc C:/Users/alesb/.platformio/packages/toolchain-gccmingw32/bin/gcc.exe --cxx C:/Users/alesb/.platformio/packages/toolchain-gccmingw32/bin/g++.exe tests/QD tests/MZQ
+program_metadata_t má80 B, store84 B; omezená4událostní timeline synchronizuje zobrazení s dokončeným transportním časem místo prefetch. Pasivní analyzátor sdílí existující AutoName/Sharp decoder a nedostává další64KiB payload buffer. Filename18 B a ZX header19 B jsou samostatné pevné položky. OLED má jediný1024B framebuffer,128B page scratch na stacku a byteové dirty porovnání; žádná alokace v render smyčce. Nejvýše20 renderů/s, jen změněné stránky přes I²C. Metadata se kopírují při změně revize; TX reserve snapshot je O(1), bez scanu FIFO.
 
-## Cílový build a paměť
+MCPWM ISR přidává minimum volných slotů a čítač úspěšně vložených fyzických hran, bez decoderu/FS/I²C/heapu. Call-chain recorder_start_now → edge_capture_init → register_event_callbacks běží z app_task CPU1; IDF alokuje IRQ na volajícím jádře. Priorita3/IRAM jsou konfigurací a map doložené, runtime core a latence dosud neměřené. PCNT-off nemá čítačové prostředky; PCNT-on používá SDK přerušení po30000 hranách, nikoli app ISR na každou hranu.
 
-Finální build prošel s aktivním Werror. Statická RAM153372 B/327680 B (46,8 %), aplikace454617 B/1048576 B (43,4 %). PIO generický board popis uvádí N8; override i výsledný flash-size nibble4 znamenají16 MB. Octal PSRAM je zapnuta v sdkconfig; fyzický boot/velikost PSRAM nebyly ověřeny. Checksum a validation hash obrazu jsou validní: [image_info](validation/port-image.txt).
+Browser zachovává dvě lifetime PSRAM alokace; rollback znovu načte původní adresář bez druhé2MiB areny. Známé d_type omezí stat RPC; DT_UNKNOWN zůstává bezpečný fallback. Po neobnovitelném návratu explicitní DIRECTORY RECOVERY. Test10000 položek měří host chování, nikoli rychlost SD/FAT; qsort/SD latency a plný limit65535 čekají na HW.
 
-[Symboly](validation/port-symbols.txt) potvrzují encode/half_symbol/event_ticks/transmitted/on_capture v IRAM, RMT FIFO32768 B a MCPWM FIFO65536 B v interní DRAM. Storage cache pool8512 B, jeho stack8192 B a WAV render4096 B jsou interní. Staré raw_timer/raw_capture velké buffery ve výsledných aktivních symbolech nejsou. Runtime heap, SDK DMA buffery, task stacks a PSRAM pooly nejsou samotným PIO RAM procentem změřené. [Konfigurace cache-safe/backendů](validation/port-config.txt).
+## PCNT a pravdivá telemetrie
 
-Při vývoji jednou paralelní -j2 kompilace SDK skončila interní chybou kompilátoru; sériové -j1 sestavení prošlo. Při finálním překladu byly opraveny dvě misleading-indentation chyby nového kódu; žádné warningy nebyly potlačovány. Starší logy v validation jsou historické a nejsou výsledkem této verze.
+RX minimum je skutečné ISR minimum, sticky fault se nesmaže po vyprázdnění FIFO. Filtr zpomaluje pouze zotavení; alarm vychází ze skutečného vzorku. Diagnostický GPIO fallback nemá přesné historické ISR minimum ani PCNT důkaz. TX reserve zahrnuje rozpracovaný interval i encoded DMA pomocí existujícího konzervativního aktivního wall-time (+10µs guard); jde o odhad, nikoli měřený DMA timestamp. GPTimer fallback ukazuje pouze SW FIFO. UL/mezery nejsou underrun.
 
-## HW akceptace, která dosud neproběhla
+PCNT obě hrany GPIO5, bez glitch filtru, accum_count a watchpoints ±30000. A/B ohraničují enable MCPWM, C/D disable + pending latch/tail; skutečně enqueued fyzických N se porovná s [C−B,D−A]. Mimo interval: EDGE LOSS a chyba/odstranění záznamu. Uvnitř nenulového intervalu: EDGE CHECK SUSPECT, bez falešné jistoty i bez automatického smazání jen kvůli běžné hranici. Šířka>64 hran, neplatné/nesouvislé počty nebo count≥0x20000000: nespolehlivá kontrola, CAPTURE ERROR (fail closed). Syntetický tail se nepočítá. Počty neodhalí časový jitter a nepotvrzují absolutní bezeztrátovost; více neobsloužených HW overflow může překročit možnosti SDK akumulace.
 
-1. Uživatel potvrdil neinvertující U1/U2. Změřit napětí, DIR, napájení/power-off, idle/reset READ LOW/SENSE HIGH/MONITOR LOW a fyzickou trasu S1. Typy převodníků nejsou doloženy. Bez elektrického ověření nepřipojovat Sharp.
-2. Boot N16R8, skutečná8 MiB PSRAM, OLED layout/jas/keymap a NVS restart. Reálné debounce/chords, krátký/dlouhý STOP a držená klávesa při změně obrazovky.
-3. Analyzátor na READ/WRITE/MOTOR/SENSE: všech 13 timing profilů,17 režimů a4 TAP rychlostí. Dlouhé leader/runy, přesná polarita, loadery/checksum, hranice MZT/QD, DMA refill bez idle/glitch.
-4. Pauza RMT uprostřed symbolu,5 s držení a resume; STOP/UL převzetí GPIO. Ověřit clock-gate retenci a konzervativní uvolňování source slotů proti skutečnému času. Monitor mute hranice a latenci změřit zvlášť.
-5. MCPWM first edge, pending edge + pause tail, obě polarity, dlouhý idle/wrap, cache stalls a přetížení. Prokázat nulové tiché ztráty hran a správné overflow errors.
-6. Sharp MZ-700/MZ-800 LOAD/SAVE ve všech režimech, UL handshake a timeouty. Záznam/playback round-trip s SD2CMT2 a MZTools, více generací LEP/L16, WAV22/44k a MZF native/copier.
-7. Vyjmutí SD při PLAY/RECORD/SAVING, write failure, readonly/full disk, reinsert/retry a jiná karta. Ověřit zavření handle, žádný falešný SAVED, manual recovery selektoru a zachování existujících souborů.
-8. Hodinový souběh SD/OLED, rychlé1:4 a navazující hlavičky: RX/TX watermarks, SD worst latency, internal heap minimum/largest block, PSRAM a stack high-water; žádný restart, glitch, silent drop ani rostoucí fragmentace.
+## HW akceptace — NEPROVEDENO
 
-Teprve po doplnění těchto měření může být časově kritická oblast HW-TESTED a celé zadání akceptované.
-
-## OLED audit 13. 11. 2026
-
-Nový test_oled_ui linkuje skutečné ui.c a oled.c. Ověřuje page mode, adresovací/data pakety, limit 20 Hz, dirty pages,21znakový výřez, jas a retry po command/data failure. Missing OLED ukončí frame prvním 10 ms timeoutem. UI cache se aktualizuje jen pro skutečně odeslané stránky, takže chyba I²C neztrácí další pokus. Oprava sjednocuje inicializaci20h/02h s B0h/column příkazy: viz výrobní [SSD1306 datasheet Solomon Systech, §9/10.1.3 a10.1.13](https://tropratik.fr/wp-content/uploads/2021/03/SSD1306-SolomonSystech.pdf#page=33). Vizuální vzhled a skutečné I²C časování stále nejsou HW-TESTED.
-
-Uživatel potvrdil13. 11. 2026, že HW zatím není připojený. Žádný flash ani fyzický test proto nebyl proveden.
+Uživatel potvrdil neinvertující U1/U2 a nepřipojený HW. Žádný flash. Zbývá elektrické napájení/DIR/reset/power-off a mechanický S1; boot N16R8/PSRAM/OLED; Sharp MZ-700/800 LOAD/SAVE všech17 módů a TAP4; READ/WRITE/MOTOR/SENSE analyzátorem; PCNT versus generátor při SD/OLED/CPU zátěži včetně skutečného IRQ/core/cache jitteru; RMT pause/resume uprostřed symbolu a DMA kontinuita; SD removal/reinsert/full/readonly; S1 během PLAY/RECORD/UL/SAVING; 30–60min stress s heap minima, stack high-water, SD latency a FIFO watermarks. Teprve měření dovolí HW-TESTED/úplnou HW akceptaci.

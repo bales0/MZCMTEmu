@@ -2,9 +2,24 @@
 
 Stav 13. 11. 2026 vůči [SD2CMT2-Reborn 2.0.3 / 600a788](https://github.com/bales0/MZ-SD2CMT2-Reborn/tree/600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb). DONE znamená implementováno; TESTED znamená konkrétní host test s mock periferií/RTOS; HW-TESTED vyžaduje skutečné měření. **Žádná oblast zatím není HW-TESTED a úplná akceptace zadání není splněna.**
 
+
+## Rozšíření tohoto zadání (HEAD d3f67c4 + pracovní změny)
+
+| Oblast | Stav SW / důkaz | Zbývá na HW |
+|---|---|---|
+| Grafické PLAY/REC/browser | TESTED: test_oled_ui + test_ui_policy, host PNG, overlay/dirty retry, okamžitý RX pokles | Čitelnost a I²C/CPU latence |
+| Shared metadata/provenience | TESTED:80B model, původní Sharp/IC/TC a TC první payload, multi-record, oddělený filename, ZX/XOR | Reálné nahrávky všech loaderů |
+| WAV/LEP/L16 pasivní metadata | TESTED: stejné intervaly jako RECORD + skutečné generované soubory přes PLAY čtečky; IC WAV44k pouze HEADER_VALID | Ztrátové/zašuměné signály, neznámé loadery |
+| TX časová rezerva | TESTED: O(1), encoded/current interval, long-pulse/64bit/pause, bytes až po dokončení; odhad wall-time | DMA timestamp/drain odhad a RMT retence |
+| RX headroom/min/sticky fault | TESTED MCPWM ISR + UI policy; diagnostický GPIO fallback má omezené minimum | Worst-case SD/cache/IRQ zátěž |
+| Volitelný PCNT guard | TESTED host PCNT-on/off; target PCNT-on object compile; výchozí obraz off. Potvrzená ztráta / hranicová nejistota / nespolehlivé počty oddělené | Generátor, epochy/overflow/IRQ latence, skutečný PCNT-on image |
+| S1 přechod | Policy/debounce TESTED; main abortuje rozpracovaný RECORD i SAVING, INTERNAL bez auto restartu; mechanika zachována | Kontinuita/polarita a všechny stavy skutečného přepínače |
+
+Celkem23 sad, GCC14.2 ASan+UBSan; [aktuální log](validation/ui-metadata-host-linux.txt), [build](validation/ui-metadata-build.txt). HW stále NEPROVEDENO.
+
 | Oblast | Implementace | Stav SW / důkaz | Zbývající akceptace |
 |---|---|---|---|
-| Browser a PSRAM index | file_list.c | TESTED: test_file_list, 1000+ souborů, sort, parent/scroll, dvě lifetime alokace, cancel/retry | FAT long paths, plný limit a OLED při velkém adresáři |
+| Browser a PSRAM index | file_list.c | TESTED: test_file_list, 0/1/7/8/1000/10000 položek, sort, parent/scroll, dvě lifetime alokace, cancel/failed-child rollback | FAT long paths, plný limit a OLED při velkém adresáři |
 | MZF playback | sharp_stream.c, mzf_stream.c | TESTED: test_sharp_stream, test_player_sharp, test_player_rmt; celé intervaly všech 17 režimů | LOAD na MZ-700/800 a analyzátor |
 | MZT selektor/profily | player.c, sharp_stream.c, main.c | TESTED transport: individuální profily/MTI, navigace, STOP/replay; UI DONE | OLED a STOP/RETURN včetně jediného rekordu na HW |
 | MZT návaznost | sharp_stream_continue_mzt, player.c | TESTED: native/turbo a smíšené UL; UL→UL stop podle reference | Dlouhá sekvence se skutečným MOTOR |
@@ -28,9 +43,9 @@ Stav 13. 11. 2026 vůči [SD2CMT2-Reborn 2.0.3 / 600a788](https://github.com/bal
 | SD lifecycle | drivers/sdcard.c, main.c | TESTED driver: init/mount/unmount/free failure/retry bez ztráty resource handle; UI recovery DONE | Vyjmutí při skutečné operaci, opětovné vložení, jiná karta |
 | SD jediný vlastník | storage/fs.c | TESTED skutečná ESP větev se simulovanou frontou: native IO pouze worker,8 slotů/1 KiB cache, seek patch v RAM, pool exhaustion, ISR refusal, faults | Reálný scheduler, blokující SD latency a stack/heap maxima |
 | NVS / menu | settings_codec.c, nvs_settings.c, loader_choice.h, main.c | TESTED core: CRC/version/ranges, migracev1→v2, no rewrite,17 módů a remembered speed; SYSTEM/ABOUT/KEYMAP/brightness DONE | Restart/recovery po výpadku a OLED vizuální QA |
-| OLED | ui.c, oled.c, main.c | TESTED driver/UI: page addressing,20 Hz dirty refresh,10 ms I²C timeout, retry po chybě, clipping a jas; obrazovky DONE | Bez screenshotu/měření na připojeném OLED; latence za zátěže |
+| OLED | ui.c, oled.c, main.c | TESTED pixelový renderer: šest inverzních řádků, metadata/bary, overlay priority/expiry, marquee,20 Hz dirty refresh,10 ms timeout/retry; host PNG viz TEST_REPORT | Host náhledy existují; skutečná čitelnost a měření na OLED chybí; latence za zátěže |
 | RMT TX DMA | audio/raw_pulse_rmt.c | TESTED produkční encoder:12000 intervalů/refill, jediná transakce, native ticks, long runs, clock pause, stop/error/replay, no start allocation; target build | Retence při clock gate a bezspárovost DMA musí projít analyzátorem |
 | MCPWM HW RX | audio/edge_capture.c | TESTED produkční driver: latch/IRQ delay, wrap/multi-wrap idle, stale IRQ, pending pause tail, overflow, init failure, no start allocation; target build | First edge, cache stalls, zatížení a detekce ztráty hran na HW |
-| N16R8 / footprint | platformio.ini, sdkconfig | TESTED build/image:16MB header, octal PSRAM config; RAM153372 B, aplikace454617 B; callbacky IRAM/FIFO DRAM | Boot, skutečná PSRAM a hodinový heap/stack/fragmentace stress |
+| N16R8 / footprint | platformio.ini, sdkconfig | TESTED build/image:16MB header, octal PSRAM config; RAM154348 B, aplikace461513 B; callbacky IRAM/FIFO DRAM | Boot, skutečná PSRAM a hodinový heap/stack/fragmentace stress |
 
-Aktuální logy jsou [port-host](validation/port-host.txt), [port-build](validation/port-build.txt), [port-image](validation/port-image.txt) a [kontrolní součty fixture](validation/fixture-sha256.json). Metodika a omezení jsou v [TEST_REPORT](TEST_REPORT.md); historické reporty TAP/počátečního rekordéru nejsou aktuální inventurou chybějících funkcí.
+Aktuální logy jsou [ui-metadata-host-linux](validation/ui-metadata-host-linux.txt), [ui-metadata-build](validation/ui-metadata-build.txt), [ui-metadata-image](validation/ui-metadata-image.txt) a [kontrolní součty fixture](validation/fixture-sha256.json). Metodika a omezení jsou v [TEST_REPORT](TEST_REPORT.md); historické reporty TAP/počátečního rekordéru nejsou aktuální inventurou chybějících funkcí.

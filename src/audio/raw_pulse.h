@@ -68,3 +68,8 @@ size_t raw_pulse_write_ticks16(const raw_pulse_t *events,const uint32_t *ticks,s
 
 /* Audible current interval, independent of queued future data. */
 bool raw_pulse_monitor_active(void);
+
+typedef struct {uint32_t fifo_used,fifo_capacity;uint64_t reserve_us;bool time_valid,running,paused,underrun;} raw_pulse_status_t;
+void raw_pulse_status(raw_pulse_status_t *out);
+uint32_t raw_pulse_completed_source_bytes(void);
+#define RAW_PULSE_SOURCE_BYTE 4U

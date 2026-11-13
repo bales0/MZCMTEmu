@@ -81,9 +81,10 @@ static void reveal_selected(void) {
     clamp_scroll_bounds();
 }
 static bool load(const char *select_name) {
-    clear_items();error_text="";
+    error_text="";
     DIR *directory=cmt_opendir(s_current_dir);
-    if(!directory)return fail("DIRECTORY ERROR");
+    if(!directory){error_text="DIRECTORY ERROR";return false;}
+    clear_items();
     bool ok=true;unsigned polled=0;
     if(!is_at_root() && !add_item("..",FILE_ITEM_PARENT))ok=false;
     struct dirent *entry;
@@ -95,8 +96,15 @@ static bool load(const char *select_name) {
         if(!name[0] || name[0]=='.')continue;
         char path[PATH_BYTES];struct stat st;
         if(!join_path(path,sizeof(path),s_current_dir,name)) {error_text="PATH TOO LONG";ok=false;break;}
-        if(cmt_stat(path,&st)) {error_text="DIRECTORY READ";ok=false;break;}
-        file_item_type_t type=S_ISDIR(st.st_mode) ? FILE_ITEM_DIR:S_ISREG(st.st_mode) ? playable(name):FILE_ITEM_NONE;
+        file_item_type_t type=FILE_ITEM_NONE;bool known=false;
+#if defined(DT_DIR) && defined(DT_REG) && (defined(ESP_PLATFORM) || defined(_DIRENT_HAVE_D_TYPE))
+        if(entry->d_type==DT_DIR){type=FILE_ITEM_DIR;known=true;}
+        else if(entry->d_type==DT_REG){type=playable(name);known=true;}
+#endif
+        if(!known){
+            if(cmt_stat(path,&st)){error_text="DIRECTORY READ";ok=false;break;}
+            type=S_ISDIR(st.st_mode) ? FILE_ITEM_DIR:S_ISREG(st.st_mode) ? playable(name):FILE_ITEM_NONE;
+        }
         if(type!=FILE_ITEM_NONE && !add_item(name,type)) {error_text="DIRECTORY TOO LARGE";ok=false;break;}
     }
     if(cmt_closedir(directory)) {error_text="DIRECTORY CLOSE";ok=false;}
@@ -115,10 +123,11 @@ bool file_list_init(const char *root) {
     while(n>1 && s_root_dir[n-1]=='/')s_root_dir[--n]=0;
     snprintf(s_current_dir,sizeof(s_current_dir),"%s",s_root_dir);return load(NULL);
 }
+static bool navigate(const char *,const char *);
 bool file_list_reload_current_dir(void) {
     char selected[256];snprintf(selected,sizeof(selected),"%s",s_count ? s_items[s_selected].name:"");
     int index=s_selected,top=s_scroll_top;
-    if(!load(selected))return false;
+    if(!navigate(s_current_dir,selected))return false;
     if(s_count && strcmp(s_items[s_selected].name,selected))s_selected=index;
     s_scroll_top=top;clamp_scroll_bounds();reveal_selected();return true;
 }
@@ -215,10 +224,23 @@ const char *file_list_get_path(void) {
     return join_path(selected_path,sizeof(selected_path),s_current_dir,s_items[s_selected].name) ? selected_path:NULL;
 }
 static bool navigate(const char *target,const char *select_name) {
-    char previous[PATH_BYTES];snprintf(previous,sizeof(previous),"%s",s_current_dir);
-    snprintf(s_current_dir,sizeof(s_current_dir),"%s",target);
+    char previous[PATH_BYTES],selected[256];
+    snprintf(previous,sizeof(previous),"%s",s_current_dir);
+    snprintf(selected,sizeof(selected),"%s",s_count ? s_items[s_selected].name:"");
+    int index=s_selected,top=s_scroll_top;
+    if(strcmp(s_current_dir,target))snprintf(s_current_dir,sizeof(s_current_dir),"%s",target);
     if(load(select_name))return true;
-    snprintf(s_current_dir,sizeof(s_current_dir),"%s",previous);return false;
+    const char *original_error=error_text;
+    snprintf(s_current_dir,sizeof(s_current_dir),"%s",previous);
+    /* One lifetime arena: rebuild old index without cancellation rather than
+     * duplicating 2.5MiB or exposing a partial directory after a failed scan. */
+    file_list_cancel_fn saved_cancel=cancel_fn;cancel_fn=NULL;
+    bool restored=load(selected);cancel_fn=saved_cancel;
+    if(restored){
+        if(s_count && strcmp(s_items[s_selected].name,selected))s_selected=index;
+        s_scroll_top=top;clamp_scroll_bounds();reveal_selected();error_text=original_error;
+    } else (void)fail("DIRECTORY RECOVERY");
+    return false;
 }
 bool file_list_go_parent(void) {
     char target[PATH_BYTES],leaving[256];
@@ -226,7 +248,7 @@ bool file_list_go_parent(void) {
     const char *slash=strrchr(s_current_dir,'/');
     const char *name=slash ? slash+1:s_current_dir;
     size_t length=strlen(name);
-    if(length>=sizeof(leaving))return fail("NAME TOO LONG");
+    if(length>=sizeof(leaving)){error_text="NAME TOO LONG";return false;}
     memcpy(leaving,name,length+1);
     return navigate(target,leaving);
 }
@@ -234,7 +256,7 @@ bool file_list_enter_selected(void) {
     if(file_list_get_type()==FILE_ITEM_PARENT)return file_list_go_parent();
     if(file_list_get_type()!=FILE_ITEM_DIR)return false;
     char target[PATH_BYTES];
-    if(!join_path(target,sizeof(target),s_current_dir,s_items[s_selected].name))return fail("PATH TOO LONG");
+    if(!join_path(target,sizeof(target),s_current_dir,s_items[s_selected].name)){error_text="PATH TOO LONG";return false;}
     return navigate(target,NULL);
 }
 const char *file_list_get_current_dir(void) { return s_current_dir; }
@@ -247,3 +269,5 @@ file_item_type_t file_list_get_visible_type(int row) {
     int i=s_scroll_top+row;return row>=0 && row<FILE_LIST_VIEW_ROWS && i<s_count ? s_items[i].type:FILE_ITEM_NONE;
 }
 bool file_list_is_visible_selected(int row) { return row>=0 && row<FILE_LIST_VIEW_ROWS && s_count && s_scroll_top+row==s_selected; }
+
+bool file_list_error_requires_reinit(void){return !strcmp(error_text,"DIRECTORY READ") || !strcmp(error_text,"DIRECTORY CLOSE") || !strcmp(error_text,"DIRECTORY RECOVERY");}

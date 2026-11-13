@@ -31,3 +31,8 @@ void edge_capture_clear_overrun(void);
 #ifdef __cplusplus
 }
 #endif
+
+#include "audio/edge_guard.h"
+typedef enum {EDGE_CAPTURE_OK,EDGE_CAPTURE_FIFO_OVERFLOW,EDGE_CAPTURE_EDGE_LOSS,EDGE_CAPTURE_GUARD_ERROR} edge_capture_fault_t;
+typedef struct {uint32_t enqueued_edges;uint8_t free_percent,min_free_percent;edge_capture_fault_t fault;edge_guard_status_t guard;} edge_capture_status_t;
+void edge_capture_status(edge_capture_status_t *out);

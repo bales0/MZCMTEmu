@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-13",
+  "branch": "main",
+  "head": "d3f67c4a978a38dad23e49c918b145182046452b",
+  "working_changes": true,
+  "host_suites": 23,
+  "host_pass": true,
+  "sanitizers": "Debian GCC14.2 ASan+UBSan",
+  "hardware_connected": false,
+  "hardware_tested": false,
+  "pcnt_default": false,
+  "pcnt_on_target_object_compile": true,
+  "ram_static_bytes": 154348,
+  "application_bytes": 461513,
+  "image_bytes": 461936,
+  "image_sha256": "dcf8db12716e581f0b7752c5fcc4d9d00b26dbac8c7675e856e80986a0d941dd",
+  "flash_megabytes": 16,
+  "fixture_files": 92,
+  "fixture_files_unchanged": true,
+  "host_seconds": 108.09,
+  "host_exit": 0,
+  "windows_metadata_test_pass": false,
+  "windows_metadata_test_limitation": "WinError5 persists after user reported COMODO allowed",
+  "final_capture_resume_suites_pass": true,
+  "final_capture_resume_suites": [
+    "test_capture_pcnt",
+    "test_capture_mcpwm",
+    "test_recorder"
+  ]
+}
