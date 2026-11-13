@@ -1,11 +1,13 @@
+#include "storage/fs.h"
 #include "audio/wav_writer.h"
+#include "storage/record_file.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
 
-static FILE *s_fp = NULL;
+static cmt_file_t *s_fp = NULL;
 static char s_path[256];
 static uint32_t s_data_bytes = 0;
 static uint32_t s_sample_rate = 0;
@@ -22,25 +24,25 @@ static void wav_writer_reset_state(void)
     s_num_channels = 0;
 }
 
-static bool write_u16_le(FILE *fp, uint16_t v)
+static bool write_u16_le(cmt_file_t *fp, uint16_t v)
 {
     uint8_t b[2];
     b[0] = (uint8_t)(v & 0xFFU);
     b[1] = (uint8_t)((v >> 8) & 0xFFU);
-    return (fwrite(b, 1, 2, fp) == 2);
+    return (cmt_fwrite(b, 1, 2, fp) == 2);
 }
 
-static bool write_u32_le(FILE *fp, uint32_t v)
+static bool write_u32_le(cmt_file_t *fp, uint32_t v)
 {
     uint8_t b[4];
     b[0] = (uint8_t)(v & 0xFFU);
     b[1] = (uint8_t)((v >> 8) & 0xFFU);
     b[2] = (uint8_t)((v >> 16) & 0xFFU);
     b[3] = (uint8_t)((v >> 24) & 0xFFU);
-    return (fwrite(b, 1, 4, fp) == 4);
+    return (cmt_fwrite(b, 1, 4, fp) == 4);
 }
 
-static bool write_header_placeholder(FILE *fp,
+static bool write_header_placeholder(cmt_file_t *fp,
                                      uint32_t sample_rate,
                                      uint16_t bits_per_sample,
                                      uint16_t num_channels)
@@ -48,11 +50,11 @@ static bool write_header_placeholder(FILE *fp,
     uint32_t byte_rate = sample_rate * (uint32_t)num_channels * ((uint32_t)bits_per_sample / 8U);
     uint16_t block_align = (uint16_t)(num_channels * (bits_per_sample / 8U));
 
-    if (fwrite("RIFF", 1, 4, fp) != 4) return false;
+    if (cmt_fwrite("RIFF", 1, 4, fp) != 4) return false;
     if (!write_u32_le(fp, 36U)) return false; // placeholder
-    if (fwrite("WAVE", 1, 4, fp) != 4) return false;
+    if (cmt_fwrite("WAVE", 1, 4, fp) != 4) return false;
 
-    if (fwrite("fmt ", 1, 4, fp) != 4) return false;
+    if (cmt_fwrite("fmt ", 1, 4, fp) != 4) return false;
     if (!write_u32_le(fp, 16U)) return false;      // PCM fmt chunk size
     if (!write_u16_le(fp, 1U)) return false;       // PCM
     if (!write_u16_le(fp, num_channels)) return false;
@@ -61,7 +63,7 @@ static bool write_header_placeholder(FILE *fp,
     if (!write_u16_le(fp, block_align)) return false;
     if (!write_u16_le(fp, bits_per_sample)) return false;
 
-    if (fwrite("data", 1, 4, fp) != 4) return false;
+    if (cmt_fwrite("data", 1, 4, fp) != 4) return false;
     if (!write_u32_le(fp, 0U)) return false;       // placeholder data size
 
     return true;
@@ -69,19 +71,21 @@ static bool write_header_placeholder(FILE *fp,
 
 bool wav_writer_open(const char *path, uint32_t sample_rate, uint16_t bits_per_sample, uint16_t num_channels)
 {
-    if (path == NULL || path[0] == '\0') {
+    if (path == NULL || path[0] == '\0' || strlen(path)>=sizeof(s_path) ||
+        !sample_rate || sample_rate>1000000 || bits_per_sample!=8 || num_channels!=1) {
         return false;
     }
 
     wav_writer_abort_delete();
 
-    FILE *fp = fopen(path, "wb");
+    cmt_file_t *fp = record_file_create(path,sizeof(s_path));
     if (!fp) {
         return false;
     }
 
     if (!write_header_placeholder(fp, sample_rate, bits_per_sample, num_channels)) {
-        fclose(fp);
+        cmt_fclose(fp);
+        cmt_remove(path);
         return false;
     }
 
@@ -100,7 +104,10 @@ size_t wav_writer_write(const uint8_t *data, size_t len)
         return 0;
     }
 
-    size_t n = fwrite(data, 1, len, s_fp);
+    /* FAT32 file size and RIFF fields must include the 44-byte header and
+     * possible word-alignment byte without wrapping either 32-bit bound. */
+    if(len>UINT32_MAX-45U-s_data_bytes) return 0;
+    size_t n = cmt_fwrite(data, 1, len, s_fp);
     s_data_bytes += (uint32_t)n;
     return n;
 }
@@ -111,10 +118,12 @@ bool wav_writer_finalize(void)
         return false;
     }
 
-    uint32_t riff_size = 36U + s_data_bytes;
+    uint32_t padding=s_data_bytes&1U;
+    if(padding && cmt_fputc(0,s_fp)==EOF) { wav_writer_abort_delete();return false; }
+    uint32_t riff_size = 36U + s_data_bytes + padding;
 
     // patch RIFF size
-    if (fseek(s_fp, 4L, SEEK_SET) != 0) {
+    if (cmt_fseek(s_fp, 4L, SEEK_SET) != 0) {
         wav_writer_abort_delete();
         return false;
     }
@@ -124,7 +133,7 @@ bool wav_writer_finalize(void)
     }
 
     // patch data size
-    if (fseek(s_fp, 40L, SEEK_SET) != 0) {
+    if (cmt_fseek(s_fp, 40L, SEEK_SET) != 0) {
         wav_writer_abort_delete();
         return false;
     }
@@ -133,12 +142,14 @@ bool wav_writer_finalize(void)
         return false;
     }
 
-    if (fflush(s_fp) != 0) {
+    if (cmt_fflush(s_fp) != 0) {
         wav_writer_abort_delete();
         return false;
     }
 
-    fclose(s_fp);
+    bool closed=cmt_fclose(s_fp)==0;
+    s_fp=NULL;
+    if(!closed) { cmt_remove(s_path);wav_writer_reset_state();return false; }
 
     // DŮLEŽITÉ:
     // soubor byl validně dokončen, takže už NESMÍ zůstat
@@ -151,7 +162,7 @@ bool wav_writer_finalize(void)
 void wav_writer_close(void)
 {
     if (s_fp) {
-        fclose(s_fp);
+        cmt_fclose(s_fp);
     }
 
     wav_writer_reset_state();
@@ -160,12 +171,12 @@ void wav_writer_close(void)
 void wav_writer_abort_delete(void)
 {
     if (s_fp) {
-        fclose(s_fp);
+        cmt_fclose(s_fp);
         s_fp = NULL;
     }
 
     if (s_path[0] != '\0') {
-        remove(s_path);
+        cmt_remove(s_path);
     }
 
     wav_writer_reset_state();

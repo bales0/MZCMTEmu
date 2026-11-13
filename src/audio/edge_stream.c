@@ -1,3 +1,4 @@
+#include "storage/fs.h"
 #include "audio/edge_stream.h"
 
 #include <stdio.h>
@@ -11,7 +12,7 @@
 #define EDGE_IDLE_TAIL_US 500000U
 #define EDGE_IDLE_CHUNK_US 30000U
 
-static FILE *s_fp = NULL;
+static cmt_file_t *s_fp = NULL;
 static bool s_is_l16 = false;
 static bool s_error = false;
 static bool s_eof = false;
@@ -23,6 +24,7 @@ static uint32_t s_consumed_bytes = 0;
 static uint32_t s_preroll_remaining_us = 0;
 static uint32_t s_tail_remaining_us = 0;
 static bool s_tail_started = false;
+static bool s_monitor_muted;
 
 static bool detect_l16(const char *path, bool *is_l16)
 {
@@ -56,7 +58,7 @@ bool edge_stream_is_edge_path(const char *path)
     return detect_l16(path, &is_l16);
 }
 
-static bool get_file_size(FILE *fp, uint32_t *out)
+static bool get_file_size(cmt_file_t *fp, uint32_t *out)
 {
     long current;
     long end;
@@ -65,21 +67,21 @@ static bool get_file_size(FILE *fp, uint32_t *out)
         return false;
     }
 
-    current = ftell(fp);
+    current = cmt_ftell(fp);
     if (current < 0) {
         return false;
     }
 
-    if (fseek(fp, 0, SEEK_END) != 0) {
+    if (cmt_fseek(fp, 0, SEEK_END) != 0) {
         return false;
     }
 
-    end = ftell(fp);
+    end = cmt_ftell(fp);
     if (end < 0) {
         return false;
     }
 
-    if (fseek(fp, current, SEEK_SET) != 0) {
+    if (cmt_fseek(fp, current, SEEK_SET) != 0) {
         return false;
     }
 
@@ -98,7 +100,7 @@ bool edge_stream_open(const char *path, edge_stream_info_t *info)
         return false;
     }
 
-    s_fp = fopen(path, "rb");
+    s_fp = cmt_fopen(path, "rb");
     if (s_fp == NULL) {
         return false;
     }
@@ -133,7 +135,7 @@ bool edge_stream_open(const char *path, edge_stream_info_t *info)
 void edge_stream_close(void)
 {
     if (s_fp != NULL) {
-        fclose(s_fp);
+        cmt_fclose(s_fp);
         s_fp = NULL;
     }
 
@@ -165,9 +167,9 @@ static bool load_next_slot(void)
         return false;
     }
 
-    c = fgetc(s_fp);
+    c = cmt_fgetc(s_fp);
     if (c == EOF) {
-        if (ferror(s_fp)) {
+        if (cmt_ferror(s_fp)) {
             s_error = true;
         } else {
             s_eof = true;
@@ -254,7 +256,9 @@ bool edge_stream_next_pulse(uint8_t *level, uint32_t *duration_us, bool *count_p
         return false;
     }
 
+    s_monitor_muted=false;
     if (s_preroll_remaining_us > 0) {
+        s_monitor_muted=true;
         uint32_t chunk = (s_preroll_remaining_us > EDGE_IDLE_CHUNK_US) ?
             EDGE_IDLE_CHUNK_US : s_preroll_remaining_us;
 
@@ -272,6 +276,7 @@ bool edge_stream_next_pulse(uint8_t *level, uint32_t *duration_us, bool *count_p
         }
 
         if (s_tail_remaining_us > 0) {
+            s_monitor_muted=true;
             uint32_t chunk = (s_tail_remaining_us > EDGE_IDLE_CHUNK_US) ?
                 EDGE_IDLE_CHUNK_US : s_tail_remaining_us;
 
@@ -293,3 +298,5 @@ bool edge_stream_next_pulse(uint8_t *level, uint32_t *duration_us, bool *count_p
     s_slot_is_pulse = false;
     return true;
 }
+
+bool edge_stream_monitor_muted(void) {return s_monitor_muted;}

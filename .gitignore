@@ -3,4 +3,5 @@
 .vscode/
 .agents/
 build
-tests/
+tests/*
+!tests/host/

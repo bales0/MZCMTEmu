@@ -1,506 +1,128 @@
+#include "storage/fs.h"
 #include "file_list.h"
-
+#include "esp_heap_caps.h"
 #include <dirent.h>
 #include <strings.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <stdbool.h>
+#include <stdint.h>
+#include <errno.h>
 #include <sys/stat.h>
 
-#define FILE_LIST_MAX_ITEMS 512
-
-typedef struct {
-    char *name;
-    char *path;
-    file_item_type_t type;
-} file_item_t;
-
-static file_item_t s_items[FILE_LIST_MAX_ITEMS];
-static int s_count = 0;
-static int s_selected = 0;
-static int s_scroll_top = 0;
-static char *s_root_dir = NULL;
-static char *s_current_dir = NULL;
-
-// --------------------------------------------------------
-// helpers
-// --------------------------------------------------------
-
-static void free_item(file_item_t *item)
-{
-    if (item == NULL) {
-        return;
-    }
-
-    free(item->name);
-    free(item->path);
-    item->name = NULL;
-    item->path = NULL;
-    item->type = FILE_ITEM_NONE;
+#define FILE_LIST_MAX_ITEMS 65535U
+#define FILE_LIST_NAME_BYTES (2U*1024U*1024U)
+#define PATH_BYTES 1024U
+/* A lifetime PSRAM index and name arena. Navigation resets offsets rather
+ * than allocating/freeing every filename and full path. ISR never reads it. */
+typedef struct { const char *name;file_item_type_t type; } file_item_t;
+static file_item_t *s_items;
+static char *names;
+static size_t names_used;
+static int s_count,s_selected,s_scroll_top;
+static char s_root_dir[PATH_BYTES],s_current_dir[PATH_BYTES],selected_path[PATH_BYTES];
+static const char *error_text="";
+static file_list_cancel_fn cancel_fn;
+static void *cancel_context;
+void file_list_set_scan_control(file_list_cancel_fn cancel,void *context) { cancel_fn=cancel;cancel_context=context; }
+const char *file_list_last_error(void) { return error_text; }
+static void clear_items(void) { s_count=s_selected=s_scroll_top=0;names_used=0; }
+static bool fail(const char *message) { clear_items();error_text=message;return false; }
+static bool is_at_root(void) { return !strcmp(s_root_dir,s_current_dir); }
+static bool join_path(char *out,size_t capacity,const char *directory,const char *name) {
+    size_t n=strlen(directory);int length=snprintf(out,capacity,"%s%s%s",directory,n && directory[n-1]=='/' ? "":"/",name);
+    return length>=0 && (size_t)length<capacity;
 }
-
-static void clear_items(void)
-{
-    for (int i = 0; i < s_count; i++) {
-        free_item(&s_items[i]);
-    }
-
-    s_count = 0;
-    s_selected = 0;
-    s_scroll_top = 0;
-}
-
-static char *dup_string(const char *src)
-{
-    if (src == NULL) {
-        return NULL;
-    }
-
-    size_t len = strlen(src);
-    char *dst = (char *)malloc(len + 1);
-    if (dst == NULL) {
-        return NULL;
-    }
-
-    memcpy(dst, src, len + 1);
-    return dst;
-}
-
-static char *normalize_path(const char *path)
-{
-    if (path == NULL) {
-        return NULL;
-    }
-
-    size_t len = strlen(path);
-    while (len > 1 && path[len - 1] == '/') {
-        len--;
-    }
-
-    char *out = (char *)malloc(len + 1);
-    if (out == NULL) {
-        return NULL;
-    }
-
-    memcpy(out, path, len);
-    out[len] = '\0';
-    return out;
-}
-
-static char *join_path(const char *dir, const char *name)
-{
-    if (dir == NULL || name == NULL) {
-        return NULL;
-    }
-
-    size_t dir_len = strlen(dir);
-    size_t name_len = strlen(name);
-    bool has_slash = (dir_len > 0 && dir[dir_len - 1] == '/');
-
-    size_t total = dir_len + (has_slash ? 0 : 1) + name_len + 1;
-    char *out = (char *)malloc(total);
-    if (out == NULL) {
-        return NULL;
-    }
-
-    memcpy(out, dir, dir_len);
-    size_t pos = dir_len;
-
-    if (!has_slash) {
-        out[pos++] = '/';
-    }
-
-    memcpy(&out[pos], name, name_len + 1);
-    return out;
-}
-
-static bool has_wav_extension(const char *name)
-{
-    if (name == NULL) {
-        return false;
-    }
-
-    size_t len = strlen(name);
-    if (len < 4) {
-        return false;
-    }
-
-    const char *ext = name + len - 4;
-    return (strcasecmp(ext, ".wav") == 0);
-}
-
-static bool has_tape_extension(const char *name)
-{
-    if (name == NULL) {
-        return false;
-    }
-
-    size_t len = strlen(name);
-    if (len < 4) {
-        return false;
-    }
-
-    const char *ext = name + len - 4;
-    return (strcasecmp(ext, ".mzf") == 0) ||
-           (strcasecmp(ext, ".mzt") == 0) ||
-           (strcasecmp(ext, ".m12") == 0) ||
-           (strcasecmp(ext, ".lep") == 0) ||
-           (strcasecmp(ext, ".l16") == 0) ||
-           (strcasecmp(ext, ".tap") == 0);
-}
-
-static bool is_at_root(void)
-{
-    if (s_root_dir == NULL || s_current_dir == NULL) {
-        return true;
-    }
-
-    return (strcmp(s_root_dir, s_current_dir) == 0);
-}
-
-static int item_sort_rank(file_item_type_t type)
-{
-    switch (type) {
-        case FILE_ITEM_PARENT: return 0;
-        case FILE_ITEM_DIR: return 1;
-        case FILE_ITEM_WAV:
-        case FILE_ITEM_TAPE: return 2;
-        case FILE_ITEM_NONE:
-        default: return 3;
-    }
-}
-
-static const char *extension_ptr(const char *name)
-{
-    const char *dot;
-
-    if (name == NULL) {
-        return NULL;
-    }
-
-    dot = strrchr(name, '.');
-    if (dot == NULL || dot == name) {
-        return name + strlen(name);
-    }
-
-    return dot;
-}
-
-static int strncasecmp_len(const char *a, size_t a_len,
-                           const char *b, size_t b_len)
-{
-    size_t min_len = (a_len < b_len) ? a_len : b_len;
-    int cmp = strncasecmp(a, b, min_len);
-
-    if (cmp != 0) {
-        return cmp;
-    }
-    if (a_len < b_len) {
-        return -1;
-    }
-    if (a_len > b_len) {
-        return 1;
-    }
-    return 0;
-}
-
-static char *make_parent_path(const char *path)
-{
-    if (path == NULL) {
-        return NULL;
-    }
-
-    if (s_root_dir != NULL && strcmp(path, s_root_dir) == 0) {
-        return dup_string(s_root_dir);
-    }
-
-    char *tmp = dup_string(path);
-    if (tmp == NULL) {
-        return NULL;
-    }
-
-    char *slash = strrchr(tmp, '/');
-    if (slash == NULL) {
-        return tmp;
-    }
-
-    // "/" necháme být
-    if (slash == tmp) {
-        slash[1] = '\0';
-        return tmp;
-    }
-
-    *slash = '\0';
-
-    // nepustit nad root
-    if (s_root_dir != NULL && strncmp(tmp, s_root_dir, strlen(s_root_dir)) != 0) {
-        free(tmp);
-        return dup_string(s_root_dir);
-    }
-
-    return tmp;
-}
-
-static int item_cmp(const void *a, const void *b)
-{
-    const file_item_t *ia = (const file_item_t *)a;
-    const file_item_t *ib = (const file_item_t *)b;
-
-    int rank_a = item_sort_rank(ia->type);
-    int rank_b = item_sort_rank(ib->type);
-
-    // pořadí: parent -> dir -> soubory; soubory pak název -> koncovka
-    if (rank_a != rank_b) {
-        return rank_a - rank_b;
-    }
-
-    if (ia->name == NULL && ib->name == NULL) {
-        return 0;
-    }
-
-    if (ia->name == NULL) {
-        return -1;
-    }
-
-    if (ib->name == NULL) {
-        return 1;
-    }
-
-    if (rank_a == 2) {
-        const char *ext_a = extension_ptr(ia->name);
-        const char *ext_b = extension_ptr(ib->name);
-        size_t stem_a_len = (size_t)(ext_a - ia->name);
-        size_t stem_b_len = (size_t)(ext_b - ib->name);
-        int stem_cmp = strncasecmp_len(ia->name, stem_a_len,
-                                       ib->name, stem_b_len);
-
-        if (stem_cmp != 0) {
-            return stem_cmp;
-        }
-
-        return strcasecmp(ext_a, ext_b);
-    }
-
-    return strcasecmp(ia->name, ib->name);
-}
-
-static void clamp_scroll_bounds(void)
-{
-    if (s_selected < 0) {
-        s_selected = 0;
-    }
-
-    if (s_count <= 0) {
-        s_selected = 0;
-        s_scroll_top = 0;
-        return;
-    }
-
-    if (s_selected >= s_count) {
-        s_selected = s_count - 1;
-    }
-
-    if (s_scroll_top < 0) {
-        s_scroll_top = 0;
-    }
-
-    int max_scroll = s_count - FILE_LIST_VIEW_ROWS;
-    if (max_scroll < 0) {
-        max_scroll = 0;
-    }
-
-    if (s_scroll_top > max_scroll) {
-        s_scroll_top = max_scroll;
-    }
-}
-
-static void reveal_selected(void)
-{
-    if (s_selected < s_scroll_top) {
-        s_scroll_top = s_selected;
-    } else if (s_selected >= (s_scroll_top + FILE_LIST_VIEW_ROWS)) {
-        s_scroll_top = s_selected - FILE_LIST_VIEW_ROWS + 1;
-    }
-
-    clamp_scroll_bounds();
-}
-
-static const char *basename_ptr_local(const char *path)
-{
-    const char *slash;
-
-    if (path == NULL) {
-        return "";
-    }
-
-    slash = strrchr(path, '/');
-    return (slash == NULL) ? path : slash + 1;
-}
-
-static void select_item_by_name(const char *name)
-{
-    if (name == NULL || name[0] == '\0') {
-        return;
-    }
-
-    for (int i = 0; i < s_count; i++) {
-        if (s_items[i].name != NULL && strcmp(s_items[i].name, name) == 0) {
-            s_selected = i;
-            reveal_selected();
-            return;
-        }
-    }
-}
-
-static bool add_item(const char *name, const char *path, file_item_type_t type)
-{
-    if (s_count >= FILE_LIST_MAX_ITEMS) {
-        return false;
-    }
-
-    char *name_copy = dup_string(name);
-    char *path_copy = dup_string(path);
-    if (name_copy == NULL || path_copy == NULL) {
-        free(name_copy);
-        free(path_copy);
-        return false;
-    }
-
-    s_items[s_count].name = name_copy;
-    s_items[s_count].path = path_copy;
-    s_items[s_count].type = type;
-    s_count++;
+static bool parent_path(char out[PATH_BYTES]) {
+    if(is_at_root()) return false;
+    snprintf(out,PATH_BYTES,"%s",s_current_dir);char *slash=strrchr(out,'/');
+    if(!slash) return false;
+    if(slash==out) slash[1]=0;else *slash=0;
+    size_t root_length=strlen(s_root_dir);
+    if(strncmp(out,s_root_dir,root_length) || (root_length>1 && out[root_length] && out[root_length]!='/'))
+        snprintf(out,PATH_BYTES,"%s",s_root_dir);
     return true;
 }
-
-static bool reload_current_dir_internal(const char *select_name)
-{
-    clear_items();
-
-    if (s_current_dir == NULL) {
-        return false;
-    }
-
-    if (!is_at_root()) {
-        char *parent = make_parent_path(s_current_dir);
-        if (parent == NULL) {
-            return false;
-        }
-
-        if (!add_item("..", parent, FILE_ITEM_PARENT)) {
-            free(parent);
-            return false;
-        }
-
-        free(parent);
-    }
-
-    DIR *dir = opendir(s_current_dir);
-    if (dir == NULL) {
-        clear_items();
-        return false;
-    }
-
-    struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL) {
-        if (s_count >= FILE_LIST_MAX_ITEMS) {
-            break;
-        }
-
-        const char *name = ent->d_name;
-        if (name == NULL || name[0] == '\0') {
-            continue;
-        }
-
-        if (name[0] == '.') {
-            continue;
-        }
-
-        char *full_path = join_path(s_current_dir, name);
-        if (full_path == NULL) {
-            continue;
-        }
-
-        struct stat st;
-        if (stat(full_path, &st) != 0) {
-            free(full_path);
-            continue;
-        }
-
-        file_item_type_t type = FILE_ITEM_NONE;
-        if (S_ISDIR(st.st_mode)) {
-            type = FILE_ITEM_DIR;
-        } else if (S_ISREG(st.st_mode) && has_wav_extension(name)) {
-            type = FILE_ITEM_WAV;
-        } else if (S_ISREG(st.st_mode) && has_tape_extension(name)) {
-            type = FILE_ITEM_TAPE;
-        } else {
-            free(full_path);
-            continue;
-        }
-
-        if (!add_item(name, full_path, type)) {
-            free(full_path);
-            break;
-        }
-
-        free(full_path);
-    }
-
-    closedir(dir);
-
-    if (s_count > 1) {
-        qsort(s_items, s_count, sizeof(s_items[0]), item_cmp);
-    }
-
+static bool add_item(const char *name,file_item_type_t type) {
+    size_t n=strlen(name)+1;
+    if((unsigned)s_count==FILE_LIST_MAX_ITEMS || n>FILE_LIST_NAME_BYTES-names_used) return false;
+    memcpy(names+names_used,name,n);s_items[s_count++]=(file_item_t){names+names_used,type};names_used+=n;return true;
+}
+static int rank(file_item_type_t type) { return type==FILE_ITEM_PARENT ? 0:type==FILE_ITEM_DIR ? 1:2; }
+static const char *extension(const char *name) { const char *dot=strrchr(name,'.');return dot && dot!=name ? dot:name+strlen(name); }
+static int item_cmp(const void *left,const void *right) {
+    const file_item_t *a=left,*b=right;int ar=rank(a->type),br=rank(b->type);
+    if(ar!=br) return ar-br;
+    if(ar!=2) return strcasecmp(a->name,b->name);
+    const char *ae=extension(a->name),*be=extension(b->name);size_t an=(size_t)(ae-a->name),bn=(size_t)(be-b->name);
+    int result=strncasecmp(a->name,b->name,an<bn ? an:bn);
+    if(result) return result;
+    if(an!=bn) return an<bn ? -1:1;
+    return strcasecmp(ae,be);
+}
+static file_item_type_t playable(const char *name) {
+    const char *ext=extension(name);
+    if(!strcasecmp(ext,".wav")) return FILE_ITEM_WAV;
+    static const char *const types[]={".mzf",".mzt",".m12",".mzq",".qdf",".qd",".lep",".l16",".tap"};
+    for(unsigned i=0;i<sizeof(types)/sizeof(types[0]);++i)if(!strcasecmp(ext,types[i]))return FILE_ITEM_TAPE;
+    return FILE_ITEM_NONE;
+}
+static void clamp_scroll_bounds(void) {
+    if(!s_count) {s_selected=s_scroll_top=0;return;}
+    if(s_selected<0)s_selected=0;
+    if(s_selected>=s_count)s_selected=s_count-1;
+    int maximum=s_count>FILE_LIST_VIEW_ROWS ? s_count-FILE_LIST_VIEW_ROWS:0;
+    if(s_scroll_top<0)s_scroll_top=0;
+    if(s_scroll_top>maximum)s_scroll_top=maximum;
+}
+static void reveal_selected(void) {
+    if(s_selected<s_scroll_top)s_scroll_top=s_selected;
+    if(s_selected>=s_scroll_top+FILE_LIST_VIEW_ROWS)s_scroll_top=s_selected-FILE_LIST_VIEW_ROWS+1;
     clamp_scroll_bounds();
-    select_item_by_name(select_name);
-    return true;
 }
-
-// --------------------------------------------------------
-// public API
-// --------------------------------------------------------
-
-bool file_list_reload_current_dir(void)
-{
-    return reload_current_dir_internal(NULL);
-}
-
-bool file_list_init(const char *root_path)
-{
-    clear_items();
-
-    free(s_root_dir);
-    free(s_current_dir);
-    s_root_dir = NULL;
-    s_current_dir = NULL;
-
-    if (root_path == NULL) {
-        return false;
+static bool load(const char *select_name) {
+    clear_items();error_text="";
+    DIR *directory=cmt_opendir(s_current_dir);
+    if(!directory)return fail("DIRECTORY ERROR");
+    bool ok=true;unsigned polled=0;
+    if(!is_at_root() && !add_item("..",FILE_ITEM_PARENT))ok=false;
+    struct dirent *entry;
+    while(ok) {
+        errno=0;entry=cmt_readdir(directory);
+        if(!entry) { if(errno) {error_text="DIRECTORY READ";ok=false;} break; }
+        if((polled++&31U)==0 && cancel_fn && cancel_fn(cancel_context)) {error_text="CANCELLED";ok=false;break;}
+        const char *name=entry->d_name;
+        if(!name[0] || name[0]=='.')continue;
+        char path[PATH_BYTES];struct stat st;
+        if(!join_path(path,sizeof(path),s_current_dir,name)) {error_text="PATH TOO LONG";ok=false;break;}
+        if(cmt_stat(path,&st)) {error_text="DIRECTORY READ";ok=false;break;}
+        file_item_type_t type=S_ISDIR(st.st_mode) ? FILE_ITEM_DIR:S_ISREG(st.st_mode) ? playable(name):FILE_ITEM_NONE;
+        if(type!=FILE_ITEM_NONE && !add_item(name,type)) {error_text="DIRECTORY TOO LARGE";ok=false;break;}
     }
-
-    s_root_dir = normalize_path(root_path);
-    if (s_root_dir == NULL) {
-        return false;
-    }
-
-    s_current_dir = dup_string(s_root_dir);
-    if (s_current_dir == NULL) {
-        free(s_root_dir);
-        s_root_dir = NULL;
-        return false;
-    }
-
-    return reload_current_dir_internal(NULL);
+    if(cmt_closedir(directory)) {error_text="DIRECTORY CLOSE";ok=false;}
+    if(!ok)return fail(error_text[0] ? error_text:"DIRECTORY TOO LARGE");
+    if(s_count>1)qsort(s_items,(size_t)s_count,sizeof(*s_items),item_cmp);
+    if(select_name)for(int i=0;i<s_count;++i)if(!strcmp(s_items[i].name,select_name)) {s_selected=i;break;}
+    reveal_selected();return true;
 }
-
-int file_list_count(void)
-{
-    return s_count;
+bool file_list_init(const char *root) {
+    clear_items();error_text="";
+    if(!s_items)s_items=heap_caps_malloc(FILE_LIST_MAX_ITEMS*sizeof(*s_items),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!names)names=heap_caps_malloc(FILE_LIST_NAME_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!s_items || !names)return fail("BROWSER PSRAM");
+    if(!root || !root[0] || strlen(root)>=PATH_BYTES)return fail("BROWSER PATH");
+    snprintf(s_root_dir,sizeof(s_root_dir),"%s",root);size_t n=strlen(s_root_dir);
+    while(n>1 && s_root_dir[n-1]=='/')s_root_dir[--n]=0;
+    snprintf(s_current_dir,sizeof(s_current_dir),"%s",s_root_dir);return load(NULL);
 }
-
+bool file_list_reload_current_dir(void) {
+    char selected[256];snprintf(selected,sizeof(selected),"%s",s_count ? s_items[s_selected].name:"");
+    int index=s_selected,top=s_scroll_top;
+    if(!load(selected))return false;
+    if(s_count && strcmp(s_items[s_selected].name,selected))s_selected=index;
+    s_scroll_top=top;clamp_scroll_bounds();reveal_selected();return true;
+}
+int file_list_count(void) { return s_count; }
 bool file_list_next(void)
 {
     if (s_count <= 0) {
@@ -585,143 +207,43 @@ bool file_list_prev(void)
     return true;
 }
 
-const char *file_list_get_name(void)
-{
-    if (s_count <= 0) {
-        return "<empty>";
-    }
-
-    return s_items[s_selected].name;
+const char *file_list_get_name(void) { return s_count ? s_items[s_selected].name:"<empty>"; }
+file_item_type_t file_list_get_type(void) { return s_count ? s_items[s_selected].type:FILE_ITEM_NONE; }
+const char *file_list_get_path(void) {
+    file_item_type_t type=file_list_get_type();
+    if(type!=FILE_ITEM_WAV && type!=FILE_ITEM_TAPE)return NULL;
+    return join_path(selected_path,sizeof(selected_path),s_current_dir,s_items[s_selected].name) ? selected_path:NULL;
 }
-
-const char *file_list_get_path(void)
-{
-    if (s_count <= 0) {
-        return NULL;
-    }
-
-    // pro současný PLAY flow vracej path jen když je vybraný přehratelný soubor
-    if (s_items[s_selected].type != FILE_ITEM_WAV &&
-        s_items[s_selected].type != FILE_ITEM_TAPE) {
-        return NULL;
-    }
-
-    return s_items[s_selected].path;
+static bool navigate(const char *target,const char *select_name) {
+    char previous[PATH_BYTES];snprintf(previous,sizeof(previous),"%s",s_current_dir);
+    snprintf(s_current_dir,sizeof(s_current_dir),"%s",target);
+    if(load(select_name))return true;
+    snprintf(s_current_dir,sizeof(s_current_dir),"%s",previous);return false;
 }
-
-file_item_type_t file_list_get_type(void)
-{
-    if (s_count <= 0) {
-        return FILE_ITEM_NONE;
-    }
-
-    return s_items[s_selected].type;
+bool file_list_go_parent(void) {
+    char target[PATH_BYTES],leaving[256];
+    if(!parent_path(target))return false;
+    const char *slash=strrchr(s_current_dir,'/');
+    const char *name=slash ? slash+1:s_current_dir;
+    size_t length=strlen(name);
+    if(length>=sizeof(leaving))return fail("NAME TOO LONG");
+    memcpy(leaving,name,length+1);
+    return navigate(target,leaving);
 }
-
-bool file_list_enter_selected(void)
-{
-    if (s_count <= 0) {
-        return false;
-    }
-
-    file_item_type_t type = s_items[s_selected].type;
-    if (type != FILE_ITEM_DIR && type != FILE_ITEM_PARENT) {
-        return false;
-    }
-
-    const char *select_name = NULL;
-    char leaving_name[256];
-    leaving_name[0] = '\0';
-
-    if (type == FILE_ITEM_PARENT) {
-        snprintf(leaving_name, sizeof(leaving_name), "%s",
-                 basename_ptr_local(s_current_dir));
-        select_name = leaving_name;
-    }
-
-    char *next_dir = dup_string(s_items[s_selected].path);
-    if (next_dir == NULL) {
-        return false;
-    }
-
-    free(s_current_dir);
-    s_current_dir = next_dir;
-    return reload_current_dir_internal(select_name);
+bool file_list_enter_selected(void) {
+    if(file_list_get_type()==FILE_ITEM_PARENT)return file_list_go_parent();
+    if(file_list_get_type()!=FILE_ITEM_DIR)return false;
+    char target[PATH_BYTES];
+    if(!join_path(target,sizeof(target),s_current_dir,s_items[s_selected].name))return fail("PATH TOO LONG");
+    return navigate(target,NULL);
 }
-
-bool file_list_go_parent(void)
-{
-    if (is_at_root()) {
-        return false;
-    }
-
-    char leaving_name[256];
-    snprintf(leaving_name, sizeof(leaving_name), "%s",
-             basename_ptr_local(s_current_dir));
-
-    char *parent = make_parent_path(s_current_dir);
-    if (parent == NULL) {
-        return false;
-    }
-
-    free(s_current_dir);
-    s_current_dir = parent;
-    return reload_current_dir_internal(leaving_name);
+const char *file_list_get_current_dir(void) { return s_current_dir; }
+int file_list_get_scroll_top(void) { return s_scroll_top; }
+int file_list_get_selected_index(void) { return s_selected; }
+const char *file_list_get_visible_name(int row) {
+    int i=s_scroll_top+row;return row>=0 && row<FILE_LIST_VIEW_ROWS && i<s_count ? s_items[i].name:"";
 }
-
-const char *file_list_get_current_dir(void)
-{
-    if (s_current_dir == NULL) {
-        return "";
-    }
-
-    return s_current_dir;
+file_item_type_t file_list_get_visible_type(int row) {
+    int i=s_scroll_top+row;return row>=0 && row<FILE_LIST_VIEW_ROWS && i<s_count ? s_items[i].type:FILE_ITEM_NONE;
 }
-
-int file_list_get_scroll_top(void)
-{
-    return s_scroll_top;
-}
-
-int file_list_get_selected_index(void)
-{
-    return s_selected;
-}
-
-const char *file_list_get_visible_name(int row)
-{
-    if (row < 0 || row >= FILE_LIST_VIEW_ROWS) {
-        return "";
-    }
-
-    int index = s_scroll_top + row;
-    if (index < 0 || index >= s_count) {
-        return "";
-    }
-
-    return s_items[index].name;
-}
-
-file_item_type_t file_list_get_visible_type(int row)
-{
-    if (row < 0 || row >= FILE_LIST_VIEW_ROWS) {
-        return FILE_ITEM_NONE;
-    }
-
-    int index = s_scroll_top + row;
-    if (index < 0 || index >= s_count) {
-        return FILE_ITEM_NONE;
-    }
-
-    return s_items[index].type;
-}
-
-bool file_list_is_visible_selected(int row)
-{
-    if (row < 0 || row >= FILE_LIST_VIEW_ROWS) {
-        return false;
-    }
-
-    int index = s_scroll_top + row;
-    return (index == s_selected);
-}
+bool file_list_is_visible_selected(int row) { return row>=0 && row<FILE_LIST_VIEW_ROWS && s_count && s_scroll_top+row==s_selected; }

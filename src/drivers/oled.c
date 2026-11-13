@@ -8,29 +8,24 @@
 #include "font6x8.h"
 
 #define ADDR 0x3C
+#define OLED_I2C_TIMEOUT_MS 10U
 
 static uint8_t fb[128 * 8];
 
 static void cmd(uint8_t c)
 {
     uint8_t d[2] = {0x00, c};
-    i2c_write_to_device(ADDR, d, 2, 100);
+    i2c_write_to_device(ADDR, d, 2, OLED_I2C_TIMEOUT_MS);
 }
 
-static void oled_update_page(int page)
+static bool oled_update_page(int page)
 {
-    if (page < 0 || page > 7) {
-        return;
-    }
-
-    cmd(0xB0 | page);
-    cmd(0x00);
-    cmd(0x10);
-
-    uint8_t buf[129];
-    buf[0] = 0x40;
-    memcpy(&buf[1], &fb[page * 128], 128);
-    i2c_write_to_device(ADDR, buf, 129, 100);
+    if(page<0 || page>7)return false;
+    /* SSD1306 page mode: one command packet then one 128-byte page. */
+    uint8_t address[]={0x00,(uint8_t)(0xB0|page),0x00,0x10};
+    if(i2c_write_to_device(ADDR,address,sizeof(address),OLED_I2C_TIMEOUT_MS)!=ESP_OK)return false;
+    uint8_t bytes[129];bytes[0]=0x40;memcpy(bytes+1,fb+page*128,128);
+    return i2c_write_to_device(ADDR,bytes,sizeof(bytes),OLED_I2C_TIMEOUT_MS)==ESP_OK;
 }
 
 void oled_reset(void)
@@ -43,7 +38,7 @@ void oled_reset(void)
     cmd(0xD3); cmd(0x00);
     cmd(0x40);
     cmd(0x8D); cmd(0x14);
-    cmd(0x20); cmd(0x00);
+    cmd(0x20); cmd(0x02); // page addressing matches B0/column update commands
     cmd(0xA1);
     cmd(0xC8);
     cmd(0xDA); cmd(0x12);
@@ -69,13 +64,14 @@ void oled_clear(void)
     memset(fb, 0, sizeof(fb));
 }
 
-void oled_update_pages(uint8_t page_mask)
+uint8_t oled_update_pages(uint8_t page_mask)
 {
-    for (int page = 0; page < 8; page++) {
-        if (page_mask & (1u << page)) {
-            oled_update_page(page);
-        }
+    uint8_t completed=0;
+    for(int page=0;page<8;++page)if(page_mask & (1U<<page)) {
+        if(!oled_update_page(page))break; // missing OLED costs one timeout, not eight pages
+        completed|=(uint8_t)(1U<<page);
     }
+    return completed;
 }
 
 void oled_update(void)
@@ -93,7 +89,7 @@ void oled_draw_text(int row, const char *text)
     }
 
     while (*text && x < 122) {
-        char c = *text++;
+        unsigned char c = (unsigned char)*text++;
         if (c < 32 || c > 127) {
             c = ' ';
         }
@@ -104,4 +100,9 @@ void oled_draw_text(int row, const char *text)
             x++;
         }
     }
+}
+bool oled_set_brightness(uint8_t percent) {
+    if(percent<10 || percent>100)return false;
+    uint8_t data[]={0x00,0x81,(uint8_t)(((unsigned)percent*255+50)/100)};
+    return i2c_write_to_device(ADDR,data,sizeof(data),OLED_I2C_TIMEOUT_MS)==ESP_OK;
 }

@@ -122,7 +122,7 @@ static inline void IRAM_ATTR raw_pulse_account_completed(const raw_pulse_t *puls
     __atomic_store_n(&s_time_seq, seq + 2U, __ATOMIC_RELEASE);
 
     s_pps_window_us += pulse->duration_us;
-    if (pulse->count_pulse != 0U) {
+    if ((pulse->count_pulse & RAW_PULSE_COUNT) != 0U) {
         s_pps_window_pulses++;
     }
 
@@ -561,3 +561,11 @@ uint64_t raw_pulse_get_completed_us(void)
             return ((uint64_t)high<<32) | low;
     }
 }
+
+bool raw_pulse_native_ticks16(void) {return false;}
+size_t raw_pulse_write_ticks16(const raw_pulse_t *events,const uint32_t *ticks,size_t count) {
+    /* Capability is false on this diagnostic microsecond backend. */
+    (void)events;(void)ticks;(void)count;return 0;
+}
+
+bool raw_pulse_monitor_active(void) {return s_running && !s_paused && s_active_valid && !(s_active_pulse.count_pulse & RAW_PULSE_MONITOR_MUTE);}

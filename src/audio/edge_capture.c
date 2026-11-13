@@ -1,314 +1,177 @@
 #include "audio/edge_capture.h"
-
 #include "driver/gpio.h"
-#include "driver/gptimer.h"
+#include "driver/mcpwm_cap.h"
 #include "esp_attr.h"
-#include "esp_err.h"
-#include "esp_intr_alloc.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "soc/gpio_reg.h"
-#include "soc/soc.h"
-
-#include <stdbool.h>
 #include <stdint.h>
 
-#define EDGE_CAPTURE_PIN_IN      GPIO_NUM_5
-#define EDGE_CAPTURE_RES_HZ      1000000UL
-#define EDGE_CAPTURE_FIFO_SIZE   8192U
-#define EDGE_CAPTURE_FIFO_MASK   (EDGE_CAPTURE_FIFO_SIZE - 1U)
+#define CAPTURE_GPIO GPIO_NUM_5
+#define FIFO_SIZE 8192U
+#define FIFO_MASK (FIFO_SIZE-1U)
+static DRAM_ATTR edge_capture_event_t fifo[FIFO_SIZE];
+static DRAM_ATTR volatile uint32_t head,tail;
+static DRAM_ATTR portMUX_TYPE lock=portMUX_INITIALIZER_UNLOCKED;
+static mcpwm_cap_timer_handle_t timer;
+static mcpwm_cap_channel_handle_t channel,snapshot;
+static bool initialized,channel_enabled,timer_enabled,timer_started,snapshot_enabled;
+static DRAM_ATTR volatile bool running,paused,overrun;
+static DRAM_ATTR uint32_t ticks_per_us,unit_us=1,last_count,last_hardware;
+static DRAM_ATTR int64_t last_wall_us;
+static DRAM_ATTR uint8_t active_level;
 
-static edge_capture_event_t s_fifo[EDGE_CAPTURE_FIFO_SIZE];
-
-/* Producer: GPIO edge ISR. Consumer: recorder task. */
-static volatile uint32_t s_head = 0U;
-static volatile uint32_t s_tail = 0U;
-
-static gptimer_handle_t s_timer = NULL;
-static bool s_initialized = false;
-static bool s_timer_started = false;
-static bool s_isr_installed = false;
-
-static volatile bool s_running = false;
-static volatile bool s_paused = false;
-static volatile bool s_overrun = false;
-static volatile uint32_t s_isr_depth = 0U;
-static volatile uint8_t s_active_level = 0U;
-static volatile uint64_t s_last_count = 0U;
-static uint32_t s_unit_us = 1U;
-
-static inline uint32_t fifo_level_snapshot(uint32_t head, uint32_t tail)
-{
-    return (head - tail) & EDGE_CAPTURE_FIFO_MASK;
-}
-
-static inline uint8_t IRAM_ATTR edge_capture_pin_level(void)
-{
-    return (REG_READ(GPIO_IN_REG) & (1UL << EDGE_CAPTURE_PIN_IN)) ? 1U : 0U;
-}
-
-static uint32_t IRAM_ATTR edge_capture_elapsed_to_units(uint64_t elapsed_us)
-{
-    uint32_t unit_us = s_unit_us == 0U ? 1U : s_unit_us;
-    uint64_t units = (elapsed_us + (unit_us / 2U)) / unit_us;
-
-    if (units == 0U) {
-        units = 1U;
-    }
-    if (units > UINT32_MAX) {
-        units = UINT32_MAX;
-    }
-    return (uint32_t)units;
-}
-
-static bool IRAM_ATTR edge_capture_push(
-    uint8_t level,
-    uint32_t units,
-    uint8_t rising)
-{
-    const uint32_t head = __atomic_load_n(&s_head, __ATOMIC_RELAXED);
-    const uint32_t tail = __atomic_load_n(&s_tail, __ATOMIC_ACQUIRE);
-    const uint32_t next = (head + 1U) & EDGE_CAPTURE_FIFO_MASK;
-
-    if (next == tail) {
-        s_overrun = true;
-        s_running = false;
-        return false;
-    }
-
-    s_fifo[head].level = level ? 1U : 0U;
-    s_fifo[head].rising = rising ? 1U : 0U;
-    s_fifo[head].units = units == 0U ? 1U : units;
-    __atomic_store_n(&s_head, next, __ATOMIC_RELEASE);
+/* Only the foreground consumer touches tail. Producer is the hardware-edge
+ * callback, or pause with that callback excluded by the same internal lock. */
+static bool IRAM_ATTR push(uint8_t level,uint64_t ticks,bool rising) {
+    uint64_t divisor=(uint64_t)ticks_per_us*unit_us;
+    uint64_t units=(ticks+divisor/2)/divisor;
+    if(!units)units=1;
+    if(units>UINT32_MAX)units=UINT32_MAX;
+    uint32_t h=__atomic_load_n(&head,__ATOMIC_RELAXED),t=__atomic_load_n(&tail,__ATOMIC_ACQUIRE);
+    uint32_t next=(h+1)&FIFO_MASK;
+    if(next==t) {overrun=true;running=false;return false;}
+    fifo[h]=(edge_capture_event_t){level,rising,(uint32_t)units};
+    __atomic_store_n(&head,next,__ATOMIC_RELEASE);
     return true;
 }
-
-/* Must be called with the GPIO interrupt disabled or from that ISR. */
-static void IRAM_ATTR edge_capture_close_interval(bool from_edge, uint8_t new_level)
-{
-    uint64_t now = 0U;
-    uint64_t elapsed;
-    const uint8_t old_level = s_active_level ? 1U : 0U;
-
-    if (!s_initialized || s_timer == NULL || !s_running) {
-        return;
-    }
-
-    if (gptimer_get_raw_count(s_timer, &now) != ESP_OK) {
-        return;
-    }
-
-    elapsed = now >= s_last_count ? now - s_last_count : 0U;
-    if (elapsed != 0U) {
-        if (!edge_capture_push(old_level,
-                               edge_capture_elapsed_to_units(elapsed),
-                               from_edge && old_level == 0U && new_level != 0U)) {
-            return;
-        }
-    }
-
-    s_last_count = now;
-    s_active_level = new_level ? 1U : 0U;
+/* The 32-bit latch wraps about every 53.7 s at 80 MHz. Wall time chooses
+ * only the wrap count; every sub-wrap interval comes from the hardware latch.
+ * ISR scheduling latency therefore cannot change the captured pulse width. */
+static uint64_t IRAM_ATTR elapsed_ticks(uint32_t count,int64_t wall) {
+    uint64_t delta=(uint32_t)(count-last_count);
+    uint64_t elapsed=wall>=last_wall_us ? (uint64_t)(wall-last_wall_us):0;
+    uint64_t estimate=elapsed*ticks_per_us;
+    if(estimate>delta+0x80000000ULL)
+        delta+=((estimate-delta+0x80000000ULL)>>32)<<32;
+    return delta;
 }
-
-static void IRAM_ATTR edge_capture_gpio_isr(void *arg)
-{
-    const uint8_t level = edge_capture_pin_level();
-
-    (void)arg;
-    __atomic_fetch_add(&s_isr_depth, 1U, __ATOMIC_RELAXED);
-
-    if (s_running && !s_paused && !s_overrun && level != s_active_level) {
-        edge_capture_close_interval(true, level);
-    }
-
-    __atomic_fetch_sub(&s_isr_depth, 1U, __ATOMIC_RELEASE);
+static void IRAM_ATTR accept_capture(uint32_t count,uint8_t new_level,int64_t wall) {
+    uint64_t ticks=elapsed_ticks(count,wall);
+    /* Discard a latched interrupt from before start/resume. A live capture
+     * cannot be >10ms in the future relative to the independent wall clock. */
+    uint64_t elapsed=wall>=last_wall_us ? (uint64_t)(wall-last_wall_us):0;
+    if(ticks>((elapsed+10000ULL)*ticks_per_us))return;
+    if(!ticks)return;
+    if(new_level==active_level) {overrun=true;running=false;return;}
+    if(!push(active_level,ticks,!active_level && new_level))return;
+    last_count=last_hardware=count;last_wall_us=wall;active_level=new_level;
 }
-
-static void edge_capture_wait_isr_idle(void)
-{
-    while (__atomic_load_n(&s_isr_depth, __ATOMIC_ACQUIRE) != 0U) {
-        vTaskDelay(1);
-    }
+static bool IRAM_ATTR on_capture(mcpwm_cap_channel_handle_t handle,const mcpwm_capture_event_data_t *event,void *context) {
+    (void)handle;(void)context;
+    portENTER_CRITICAL_ISR(&lock);
+    if(running && !paused && !overrun)
+        accept_capture(event->cap_value,event->cap_edge==MCPWM_CAP_EDGE_POS ? 1:0,esp_timer_get_time());
+    portEXIT_CRITICAL_ISR(&lock);
+    return false;
 }
-
-void edge_capture_init(uint32_t unit_us)
-{
-    gpio_config_t input_cfg = {
-        .pin_bit_mask = (1ULL << EDGE_CAPTURE_PIN_IN),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
-        .intr_type = GPIO_INTR_ANYEDGE,
-    };
-
-    (void)gpio_config(&input_cfg);
-    (void)gpio_intr_disable(EDGE_CAPTURE_PIN_IN);
-
-    s_unit_us = unit_us == 0U ? 1U : unit_us;
-
-    if (!s_initialized) {
-        gptimer_config_t config = {
-            .clk_src = GPTIMER_CLK_SRC_DEFAULT,
-            .direction = GPTIMER_COUNT_UP,
-            .resolution_hz = EDGE_CAPTURE_RES_HZ,
-            .intr_priority = 3,
-        };
-
-        if (gptimer_new_timer(&config, &s_timer) != ESP_OK ||
-            gptimer_enable(s_timer) != ESP_OK) {
-            s_timer = NULL;
-            s_initialized = false;
-            s_overrun = true;
-            return;
-        }
-        s_initialized = true;
+static bool clock_snapshot(uint32_t *count) {
+    return mcpwm_capture_channel_trigger_soft_catch(snapshot)==ESP_OK &&
+        mcpwm_capture_get_latched_value(snapshot,count)==ESP_OK;
+}
+static void discard_partial_initialization(void) {
+    if(snapshot_enabled)mcpwm_capture_channel_disable(snapshot);
+    if(timer_started)mcpwm_capture_timer_stop(timer);
+    if(timer_enabled)mcpwm_capture_timer_disable(timer);
+    if(snapshot)mcpwm_del_capture_channel(snapshot);
+    if(channel)mcpwm_del_capture_channel(channel);
+    if(timer)mcpwm_del_capture_timer(timer);
+    timer=NULL;channel=snapshot=NULL;
+    snapshot_enabled=timer_started=timer_enabled=initialized=false;
+}
+void edge_capture_init(uint32_t units) {
+    edge_capture_stop();
+    if(channel_enabled) {overrun=true;return;}
+    unit_us=units ? units:1;
+    if(!initialized) {
+        gpio_config_t input={.pin_bit_mask=1ULL<<CAPTURE_GPIO,.mode=GPIO_MODE_INPUT,
+            .pull_up_en=GPIO_PULLUP_DISABLE,.pull_down_en=GPIO_PULLDOWN_ENABLE,.intr_type=GPIO_INTR_DISABLE};
+        mcpwm_capture_timer_config_t config={.group_id=0,.clk_src=MCPWM_CAPTURE_CLK_SRC_DEFAULT};
+        mcpwm_capture_channel_config_t input_channel={.gpio_num=CAPTURE_GPIO,.prescale=1,.intr_priority=3,
+            .flags.pos_edge=1,.flags.neg_edge=1};
+        /* Separate software-only channel: snapshots never masquerade as WRITE
+         * transitions and never trigger the real edge callback. */
+        mcpwm_capture_channel_config_t snapshot_channel={.gpio_num=-1,.prescale=1};
+        mcpwm_capture_event_callbacks_t callbacks={.on_cap=on_capture};uint32_t resolution;
+        if(gpio_config(&input)!=ESP_OK || mcpwm_new_capture_timer(&config,&timer)!=ESP_OK ||
+           mcpwm_capture_timer_get_resolution(timer,&resolution)!=ESP_OK || resolution<1000000 || resolution%1000000 ||
+           mcpwm_new_capture_channel(timer,&input_channel,&channel)!=ESP_OK ||
+           mcpwm_new_capture_channel(timer,&snapshot_channel,&snapshot)!=ESP_OK ||
+           mcpwm_capture_channel_register_event_callbacks(channel,&callbacks,NULL)!=ESP_OK)goto failed;
+        ticks_per_us=resolution/1000000;
+        if(mcpwm_capture_timer_enable(timer)!=ESP_OK)goto failed;
+        timer_enabled=true;
+        if(mcpwm_capture_timer_start(timer)!=ESP_OK)goto failed;
+        timer_started=true;
+        if(mcpwm_capture_channel_enable(snapshot)!=ESP_OK)goto failed;
+        snapshot_enabled=true;initialized=true;
     }
-
-    if (!s_isr_installed) {
-        const esp_err_t err = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-        if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
-            s_isr_installed = true;
-        }
+    __atomic_store_n(&head,0,__ATOMIC_RELAXED);__atomic_store_n(&tail,0,__ATOMIC_RELAXED);
+    running=paused=overrun=false;return;
+failed:
+    discard_partial_initialization();overrun=true;
+}
+void edge_capture_start(void) {
+    if(!initialized || channel_enabled) {overrun=true;return;}
+    uint32_t count,previous;
+    if(!clock_snapshot(&count) || mcpwm_capture_get_latched_value(channel,&previous)!=ESP_OK) {overrun=true;return;}
+    portENTER_CRITICAL(&lock);
+    __atomic_store_n(&head,0,__ATOMIC_RELAXED);__atomic_store_n(&tail,0,__ATOMIC_RELAXED);
+    last_count=count;last_hardware=previous;last_wall_us=esp_timer_get_time();
+    active_level=(uint8_t)(gpio_get_level(CAPTURE_GPIO)!=0);overrun=paused=false;running=true;
+    portEXIT_CRITICAL(&lock);
+    if(mcpwm_capture_channel_enable(channel)!=ESP_OK) {running=false;overrun=true;return;}
+    channel_enabled=true;
+}
+void edge_capture_stop(void) {
+    if(channel_enabled) {
+        if(mcpwm_capture_channel_disable(channel)!=ESP_OK) {overrun=true;return;}
+        channel_enabled=false;
     }
-
-    if (s_isr_installed) {
-        (void)gpio_isr_handler_remove(EDGE_CAPTURE_PIN_IN);
-        if (gpio_isr_handler_add(EDGE_CAPTURE_PIN_IN,
-                                 edge_capture_gpio_isr,
-                                 NULL) != ESP_OK) {
-            s_overrun = true;
-            return;
-        }
+    portENTER_CRITICAL(&lock);running=paused=false;portEXIT_CRITICAL(&lock);
+}
+void edge_capture_pause(void) {
+    if(!initialized || !running || paused)return;
+    if(channel_enabled && mcpwm_capture_channel_disable(channel)!=ESP_OK) {overrun=true;running=false;return;}
+    channel_enabled=false;
+    portENTER_CRITICAL(&lock);
+    /* A captured edge may still await its ISR when disable masks the IRQ.
+     * Flush that latched edge first, then the partial current-level tail. */
+    uint32_t captured,count;
+    if(mcpwm_capture_get_latched_value(channel,&captured)!=ESP_OK || !clock_snapshot(&count)) {
+        overrun=true;running=false;
     } else {
-        s_overrun = true;
-        return;
+        int64_t wall=esp_timer_get_time();
+        if(captured!=last_hardware)accept_capture(captured,(uint8_t)!active_level,wall);
+        uint64_t ticks=elapsed_ticks(count,wall);
+        if(running && ticks)push(active_level,ticks,false);
+        last_count=count;last_wall_us=wall;
     }
-
-    __atomic_store_n(&s_head, 0U, __ATOMIC_RELAXED);
-    __atomic_store_n(&s_tail, 0U, __ATOMIC_RELAXED);
-    s_running = false;
-    s_paused = false;
-    s_overrun = false;
-
-    if (!s_timer_started) {
-        if (gptimer_start(s_timer) != ESP_OK) {
-            s_overrun = true;
-            return;
-        }
-        s_timer_started = true;
-    }
+    paused=true;
+    portEXIT_CRITICAL(&lock);
 }
-
-void edge_capture_start(void)
-{
-    uint64_t now = 0U;
-
-    if (!s_initialized || s_timer == NULL || !s_isr_installed) {
-        s_overrun = true;
-        return;
-    }
-
-    (void)gpio_intr_disable(EDGE_CAPTURE_PIN_IN);
-    edge_capture_wait_isr_idle();
-
-    __atomic_store_n(&s_head, 0U, __ATOMIC_RELAXED);
-    __atomic_store_n(&s_tail, 0U, __ATOMIC_RELAXED);
-
-    (void)gptimer_get_raw_count(s_timer, &now);
-    s_last_count = now;
-    s_active_level = edge_capture_pin_level();
-    s_overrun = false;
-    s_paused = false;
-    s_running = true;
-
-    (void)gpio_intr_enable(EDGE_CAPTURE_PIN_IN);
+void edge_capture_resume(void) {
+    if(!initialized || !running || !paused || overrun)return;
+    uint32_t count,previous;
+    if(!clock_snapshot(&count) || mcpwm_capture_get_latched_value(channel,&previous)!=ESP_OK) {overrun=true;running=false;return;}
+    portENTER_CRITICAL(&lock);
+    last_count=count;last_hardware=previous;last_wall_us=esp_timer_get_time();
+    active_level=(uint8_t)(gpio_get_level(CAPTURE_GPIO)!=0);paused=false;
+    portEXIT_CRITICAL(&lock);
+    if(mcpwm_capture_channel_enable(channel)!=ESP_OK) {running=false;overrun=true;return;}
+    channel_enabled=true;
 }
-
-void edge_capture_stop(void)
-{
-    (void)gpio_intr_disable(EDGE_CAPTURE_PIN_IN);
-    edge_capture_wait_isr_idle();
-    s_running = false;
-    s_paused = false;
-    s_overrun = false;
+size_t edge_capture_read(edge_capture_event_t *out,size_t maximum) {
+    if(!out || !initialized)return 0;
+    uint32_t t=__atomic_load_n(&tail,__ATOMIC_RELAXED),h=__atomic_load_n(&head,__ATOMIC_ACQUIRE);
+    size_t count=0;
+    while(count<maximum && t!=h) {out[count++]=fifo[t];t=(t+1)&FIFO_MASK;}
+    __atomic_store_n(&tail,t,__ATOMIC_RELEASE);return count;
 }
-
-void edge_capture_pause(void)
-{
-    if (!s_initialized || !s_running || s_paused) {
-        return;
-    }
-
-    /* No sample is accepted after this point; preserve the exact pre-pause tail. */
-    (void)gpio_intr_disable(EDGE_CAPTURE_PIN_IN);
-    edge_capture_wait_isr_idle();
-    edge_capture_close_interval(false, s_active_level);
-    s_paused = true;
+size_t edge_capture_level(void) {
+    uint32_t h=__atomic_load_n(&head,__ATOMIC_ACQUIRE),t=__atomic_load_n(&tail,__ATOMIC_ACQUIRE);
+    return (h-t)&FIFO_MASK;
 }
-
-void edge_capture_resume(void)
-{
-    uint64_t now = 0U;
-
-    if (!s_initialized || !s_running || !s_paused || s_overrun) {
-        return;
-    }
-
-    (void)gptimer_get_raw_count(s_timer, &now);
-    s_last_count = now;
-    s_active_level = edge_capture_pin_level();
-    s_paused = false;
-    (void)gpio_intr_enable(EDGE_CAPTURE_PIN_IN);
-}
-
-size_t edge_capture_read(edge_capture_event_t *dst, size_t max_count)
-{
-    uint32_t tail;
-    const uint32_t head = __atomic_load_n(&s_head, __ATOMIC_ACQUIRE);
-    size_t count = 0U;
-
-    if (!s_initialized || dst == NULL || max_count == 0U) {
-        return 0U;
-    }
-
-    tail = __atomic_load_n(&s_tail, __ATOMIC_RELAXED);
-    while (count < max_count && tail != head) {
-        dst[count++] = s_fifo[tail];
-        tail = (tail + 1U) & EDGE_CAPTURE_FIFO_MASK;
-    }
-
-    if (count != 0U) {
-        __atomic_store_n(&s_tail, tail, __ATOMIC_RELEASE);
-    }
-    return count;
-}
-
-size_t edge_capture_free(void)
-{
-    const uint32_t head = __atomic_load_n(&s_head, __ATOMIC_ACQUIRE);
-    const uint32_t tail = __atomic_load_n(&s_tail, __ATOMIC_ACQUIRE);
-    return (EDGE_CAPTURE_FIFO_SIZE - 1U) - fifo_level_snapshot(head, tail);
-}
-
-size_t edge_capture_level(void)
-{
-    const uint32_t head = __atomic_load_n(&s_head, __ATOMIC_ACQUIRE);
-    const uint32_t tail = __atomic_load_n(&s_tail, __ATOMIC_ACQUIRE);
-    return fifo_level_snapshot(head, tail);
-}
-
-bool edge_capture_is_running(void)
-{
-    return s_running;
-}
-
-bool edge_capture_is_overrun(void)
-{
-    return s_overrun;
-}
-
-void edge_capture_clear_overrun(void)
-{
-    s_overrun = false;
-}
+size_t edge_capture_free(void) { return FIFO_SIZE-1-edge_capture_level(); }
+bool edge_capture_is_running(void) { return running; }
+bool edge_capture_is_overrun(void) { return overrun; }
+void edge_capture_clear_overrun(void) { overrun=false; }

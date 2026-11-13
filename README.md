@@ -1,39 +1,51 @@
 # MZCMTEmu
 
-Rozpracovaný emulátor kazetového rozhraní Sharp MZ na ESP32-S3 N16R8 (16 MB flash, 8 MB octal PSRAM), SD SPI a SSD1306 128×64. **Plná parita se SD2CMT2-Reborn 2.0.3 zatím není implementovaná.** Aktuální stav je v [matici parity](docs/PARITY_MATRIX.md), navazující práce v [HANDOFF.md](HANDOFF.md).
+Port kazetového rozhraní Sharp MZ na ESP32-S3 N16R8: 16 MB flash, 8 MB octal PSRAM, SD SPI a SSD1306 128×64. Funkční vzor je [SD2CMT2-Reborn 2.0.3](https://github.com/bales0/MZ-SD2CMT2-Reborn/tree/600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb).
 
-Existující firmware obsahuje základní browser adresářů, PLAY WAV/LEP/L16/MZF/MZT/M12/TAP, RECORD WAV 22,05/44,1 kHz a LEP/L16, motorovou a uživatelskou pauzu, AUTO detekci aktivity záznamu a částečný UL. Tento seznam popisuje existující kód, nikoli ověření kompatibility všech formátů na Sharpu. MZT zatím přehrává posloupnost rekordů bez referenčního selektoru. Chybí QuickDisk, kompletní profily/loadery, metadata MFI/M2I/MTI, MZF record, AutoName, klasifikace a perzistentní nastavení.
+Implementované části prošly 20 hostitelskými sadami a cílovým sestavením. **Port dosud nemá HW akceptaci (HW zatím není připojený):** neproběhl LOAD na Sharpu, měření analyzátorem ani hodinový test SD/PSRAM. Rozsah důkazů a otevřené kontroly jsou v [matici parity](docs/PARITY_MATRIX.md) a [test reportu](docs/TEST_REPORT.md).
 
-ZX Spectrum TAP je připojený do browseru a přehrávače. Menu TAP SPEED nabízí 1400, 1800, 2100 a 2500 Bd (výchozí 1400); PLAY změní rychlost, STOP opustí menu. Aktivní přehrávání si ponechá rychlost zvolenou při startu. Nastavení rychlosti zatím nepřežije restart. Parser kontroluje celý kontejner před PLAY a streamuje jeho bloky bez načtení celého souboru do RAM. Přenáší všechny bajty včetně původního checksumu; stejně jako reference neodmítá soubor podle XOR checksumu obsahu. Golden waveform a host simulace pulzního driveru prošly; přehrání na Sharpu a odezva OLED menu nebyly ověřeny.
+## Funkce
 
-LEP/L16 recorder nyní zaokrouhluje každý fyzický interval nezávisle, bez přenosu chyby do následující úrovně. WAV zachovává absolutní vzorkovací fázi. RMT TX DMA ani HW capture backend zatím nejsou implementované; současné časování používá GPTimer/GPIO ISR. Funkce se jménem RMT nejsou důkazem RMT provozu.
+- PLAY: MZF/MZT/M12, read-only QuickDisk MZQ/QDF/QD, WAV, LEP/L16 a ZX TAP 1400/1800/2100/2500 Bd. Sharp má všech 17 režimů, původní IC/TC/FAST3/UL loadery, MFI/M2I/MTI a AUTO s bezpečným fallbackem.
+- MZT/QD selektor: titul, rekord, individuální profil; návaznost MZT podle reference včetně kombinací UL a běžných rekordů. Po UL→UL se přenos ukončí. STOP za běhu kontejneru vrací selektor, také u jediného rekordu. Po opětovném vložení SD se přerušený kontejner znovu validuje a může obnovit selektor; vyžaduje nové PLAY.
+- RECORD: WAV 22,05/44,1 kHz, LEP, L16 a validovaný MZF. Nezávislé MOTOR/MANUAL/AUTO řízení, uživatelská pauza, AutoName a detekce Sharp/IC/TC/Sinclair/CP/M. MZF kontroluje checksum a normalizuje kopírovací loader; neúplný záznam smaže.
+- Dokončení záznamu běží na úloze SD se stavem SAVING RECORD. AutoName používá _01…_99 při kolizi, nikdy nepřepíše existující soubor. MFI vzniká pod výsledným názvem; chybu metadat OLED ohlásí samostatně.
+- Browser: řazení podle názvu/přípony, scroll, návrat k rodiči, skryté sidecary, zrušitelná analýza. Jednorázový PSRAM index nejvýše 65535 položek a 2 MiB arena jmen; překročení limitu je explicitní chyba. Cesty mají limit 1024 B.
+- Nabídka: rodina loaderu a zapamatovaná rychlost každé rodiny, TAP speed, inverze, PLAY MOTOR, RECORD formát/řízení/AutoName, jas OLED, stav SD/retry, ABOUT a KEYMAP. NVS schéma v2 má CRC a migraci v1; změněné nastavení se ukládá při návratu z menu.
+
+## Transport a paměť
+
+Výchozí PLAY používá jeden kontinuální RMT DMA přenos s rozlišením 16 MHz. Sharp/TAP ticks zůstávají přesné, WAV vychází z absolutní sample osy; LEP/L16 používají uložené šířky. RX používá hardwarově zachycené MCPWM timestampy. ISR neprovádí FS, alokace ani I²C.
+
+Jediná úloha storage vlastní SD deskriptory, adresáře a mount/unmount. Pevný pool osmi souborů má 1 KiB cache; opravy placeholderů uvnitř cache nevyvolávají seek na SD. Nativní souborová cesta nealokuje stdio FILE/buffery. RECORD finalize je asynchronní. PSRAM browser, pool rekordových profilů a MZF payload se alokují jednou při inicializaci.
+
+RMT pauza pozastavuje zdrojové hodiny celé RMT skupiny; CMT musí být jejím jediným uživatelem. Retenci rozpracovaného symbolu je nutné ověřit na ESP32-S3. Diagnostické alternativy CONFIG_MZ_TX_GPTIMER_FALLBACK a CONFIG_MZ_CAPTURE_GPIO_FALLBACK jsou ve výchozím sestavení vypnuté. [Časování a footprint](docs/TIMING_PORT.md).
 
 ## Sestavení a testy
 
-Použijte PlatformIO s ESP-IDF a cílem MZCMTEmu:
+PlatformIO, pinovaná platforma espressif32@7.0.1, ESP-IDF 6.0.1:
 
-    pio run -e MZCMTEmu -j 2
-
-Ověřená lokální sestava: Espressif32 7.0.1, ESP-IDF 6.0.1. Závislosti platformy zatím nejsou pinované; jiné verze nejsou tímto výsledkem ověřené. Výchozí sdkconfig nastavuje 16 MB flash a octal PSRAM; PlatformIO image/upload header je také 16 MB. Jednomegabajtová app partition je odlišná od celkové velikosti flash.
-
-Host test produkčního recorderu, writerů a edge parseru vyžaduje Python 3 a C11 kompilátor:
-
+    pio run -e MZCMTEmu -j 1
     python tests/host/run_tests.py --cc gcc
 
-Na podporovaném GCC/Clang lze přidat --sanitize. Výsledky, konkrétní Windows příkazy a omezení jsou v [TEST_REPORT.md](docs/TEST_REPORT.md). Výchozí testy nepotřebují externí soubory a vytvářejí dočasné výstupy v .tmp. Volitelně lze přidat --tap-fixtures tests/TAP pro read-only kontrolu dodaných TAP souborů; tento příkaz je součástí aktuálního test reportu.
+Volitelně přidejte --tap-fixtures tests/TAP --qd-fixtures tests/QD --qd-fixtures tests/MZQ. Sanitizery vyžadují jejich podporu hostitelským kompilátorem; na ověřeném MinGW dostupné nebyly. Testy vytvářejí dočasné výstupy v .tmp a uživatelské fixture pouze čtou.
 
-## Současné ovládání
+N16R8 override nastavuje image/upload header i sdkconfig na 16 MB a octal PSRAM. PlatformIO úvodní popis generické desky stále uvádí N8; rozhoduje konfigurace a hlavička výsledného obrazu. App partition má 1 MB. [Výsledky sestavení](docs/validation/port-build.txt).
+
+## Ovládání pěti tlačítky
 
 | Kontext | PLAY | STOP krátce | STOP dlouze | NEXT / PREV | REC |
 |---|---|---|---|---|---|
-| Browser | Vstup do složky nebo příprava/start souboru podle MOTOR/módu | Nadřazená složka | Menu | Výběr s repeat | Zahájení/čekání záznamu |
-| PLAY | Pauza/pokračování; pokračování respektuje MOTOR/mód | Ukončení | Ukončení | Mění výběr browseru na pozadí; není seek | Ignorováno při aktivním/čekajícím PLAY |
-| RECORD | Pauza/pokračování při povoleném MOTOR/módu | Uložení; další STOP návrat | Zrušení a odstranění rozpracovaného souboru | Ignorováno | Ignorováno |
-| Menu | Změna vybrané volby | Návrat | Ignorováno | Výběr volby s repeat | Bez akce |
-| Bez SD | Bez startu | Návrat podle stavu | Menu | Bez procházení | Bez startu |
+| Browser | Složka, příprava/start souboru | Rodič | Menu | Výběr + repeat | Začátek/čekání RECORD |
+| MZT/QD selektor | Zvolený rekord | Browser | Ukončení | Rekord | Profil tohoto rekordu |
+| PLAY | Pauza/pokračování dle MOTOR/módu | Stop; kontejner → selektor | Ukončení | Výběr browseru na pozadí, bez seek | Bez akce |
+| RECORD | Pauza/pokračování | Uložit; další STOP návrat | Zrušit a smazat | Bez akce | Bez akce |
+| SAVING | Bez akce | Vyčkat dokončení | Vyžádat smazání po uzavření | Bez akce | Bez akce |
+| Menu | Změnit volbu / otevřít info | Zpět + uložit | Bez akce | Volba; v KEYMAP stránka | Bez akce |
+| Bez SD | Bez startu | Návrat dle stavu | Menu | Bez procházení | Bez startu |
 
-STOP dlouze je 800 ms, NEXT/PREV repeat po 400 ms po 120 ms. Současný 20ms polling není kompletně otestované odrušení tlačítek; STOP se vyhodnocuje krátce až při uvolnění. Plná nová keymap pro selector, PLAY/RECORD/SYSTEM a ochrana emergency STOP zbývají implementovat. Menu nyní obsahuje mód signálu, inverzi, UL, formát záznamu, AUTO aktivitu a TAP SPEED; volby nepřežijí restart. Záznamy směřují do /RECORDINGS na SD.
+Odrušení 30 ms; STOP long 800 ms; repeat po 400 ms, dále po 120 ms. STOP má prioritu v kombinaci tlačítek a blokuje opakování držené navigační klávesy do další obrazovky. Krátký STOP se vyhodnotí při uvolnění. Záznamy směřují do /RECORDINGS.
 
-Pinmap, fyzická cesta přepínače S1 a dosud neověřené 3,3/5V úrovně jsou v [HARDWARE.md](docs/HARDWARE.md). SWITCH zatím není úplná obsluha EXT režimu. Žádný HW test tohoto portu nebyl proveden.
+S1 fyzicky přepíná CMT trasu. EXT po debounce zablokuje PLAY/REC a bezpečně ukončí transport, software nevytváří mux. Uživatel potvrdil neinvertující převodníky U1/U2; elektrické parametry a resetové stavy stále vyžadují měření. [Pinmap a HW kontroly](docs/HARDWARE.md).
 
-Referenční funkční vzor: [SD2CMT2-Reborn](https://github.com/bales0/MZ-SD2CMT2-Reborn/tree/600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb). Inventura obsahuje [všechny zdrojové soubory](docs/SOURCE_INVENTORY.md). Timing fakta v testech pocházejí z referenční tabulky. TAP protokol a jeho rychlosti byly portovány z play/tap_playback.cpp a tap_speed.cpp v uvedeném commitu pod GPLv3, s atribucí ve zdrojovém modulu. AVR ovladače ani loaderové binárky nebyly převzaty. Licenční text projektu zůstává v [LICENSE](LICENSE); při dalších portech zachovat původní GPLv3 licence a atribuce jednotlivých částí.
+Přenesené algoritmy, Z80 loadery a znakové tabulky zachovávají GPLv3 atribuci; AVR periferie se nepoužívají. [Licence](LICENSE), [inventura zdrojů](docs/SOURCE_INVENTORY.md), [předání](HANDOFF.md).

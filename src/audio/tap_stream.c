@@ -1,3 +1,4 @@
+#include "storage/fs.h"
 /* SPDX-License-Identifier: GPL-3.0-only
  * MZCMTEmu ESP32-S3 streaming TAP implementation, 2026-11-12.
  * Protocol state sequence and timings ported from bales0/SD2CMT2-Reborn:
@@ -19,7 +20,7 @@ static const timing_t timings[TAP_SPEED_COUNT] = {
 };
 static const uint16_t bauds[TAP_SPEED_COUNT] = {1400,1800,2100,2500};
 typedef enum { IDLE, PILOT, SYNC_LOW, SYNC_HIGH, DATA, TERMINATOR, GAP, NEXT, END } phase_t;
-static FILE *fp;
+static cmt_file_t *fp;
 static timing_t timing;
 static uint32_t file_size, block_end;
 static uint16_t remaining, pilot_halves;
@@ -27,6 +28,11 @@ static uint8_t flag, current_byte, mask, half;
 static uint32_t gap_ticks;
 static phase_t phase;
 static bool error;
+static bool cancelled;
+static tap_stream_cancel_fn scan_cancel;static void *scan_context;
+void tap_stream_set_scan_control(tap_stream_cancel_fn fn,void *context) {scan_cancel=fn;scan_context=context;}
+bool tap_stream_analysis_cancelled(void) {return cancelled;}
+static bool analysis_cancel(void) {if(scan_cancel && scan_cancel(scan_context)){cancelled=true;return true;}return false;}
 
 uint16_t tap_stream_speed_baud(tap_speed_t speed)
 {
@@ -48,7 +54,7 @@ static bool read_block_header(uint32_t position, uint16_t *length, uint8_t *bloc
 {
     uint8_t bytes[3];
     if (position > file_size || file_size-position < 4U ||
-        fread(bytes,1,sizeof(bytes),fp) != sizeof(bytes)) return fail();
+        cmt_fread(bytes,1,sizeof(bytes),fp) != sizeof(bytes)) return fail();
     *length = (uint16_t)bytes[0] | (uint16_t)((uint16_t)bytes[1]<<8);
     *block_flag = bytes[2];
     if (*length < 2U || (uint32_t)*length > file_size-position-2U ||
@@ -71,6 +77,7 @@ static bool scan(tap_stream_info_t *info)
     uint32_t pos=0;
     uint8_t buffer[256];
     while (pos < file_size) {
+        if(analysis_cancel())return fail();
         uint16_t length;
         uint8_t block_flag;
         if (!read_block_header(pos,&length,&block_flag)) return false;
@@ -79,8 +86,9 @@ static bool scan(tap_stream_info_t *info)
         info->total_ticks += byte_ticks(block_flag);
         uint32_t left = (uint32_t)length-1U;
         while (left) {
+            if(analysis_cancel())return fail();
             size_t n = left < sizeof(buffer) ? left : sizeof(buffer);
-            if (fread(buffer,1,n,fp) != n) return fail();
+            if (cmt_fread(buffer,1,n,fp) != n) return fail();
             for (size_t i=0;i<n;++i) info->total_ticks += byte_ticks(buffer[i]);
             left -= (uint32_t)n;
         }
@@ -88,11 +96,11 @@ static bool scan(tap_stream_info_t *info)
         if (pos < file_size) info->total_ticks += block_gap(block_flag);
         ++info->block_count;
     }
-    return pos == file_size && fseek(fp,0,SEEK_SET) == 0 ? true : fail();
+    return pos == file_size && cmt_fseek(fp,0,SEEK_SET) == 0 ? true : fail();
 }
 static bool begin_block(void)
 {
-    long position = ftell(fp);
+    long position = cmt_ftell(fp);
     uint16_t length;
     if (position < 0 || !read_block_header((uint32_t)position,&length,&flag)) return fail();
     block_end = (uint32_t)position+2U+length;
@@ -103,21 +111,22 @@ static bool begin_block(void)
 }
 void tap_stream_close(void)
 {
-    if (fp) fclose(fp);
+    if (fp) cmt_fclose(fp);
     fp=NULL; phase=IDLE; error=false; file_size=0; block_end=0;
 }
 bool tap_stream_open(const char *path, tap_speed_t speed, tap_stream_info_t *info)
 {
     tap_stream_close();
+    cancelled=false;
     if (info) memset(info,0,sizeof(*info));
     if (!path || (unsigned)speed >= TAP_SPEED_COUNT) return fail();
-    fp=fopen(path,"rb");
+    fp=cmt_fopen(path,"rb");
     if (!fp) return fail();
     timing=timings[speed];
     long end;
     tap_stream_info_t result={0};
-    if (fseek(fp,0,SEEK_END) || (end=ftell(fp)) <= 0 ||
-        (uint64_t)end > UINT32_MAX || fseek(fp,0,SEEK_SET)) goto bad;
+    if (cmt_fseek(fp,0,SEEK_END) || (end=cmt_ftell(fp)) <= 0 ||
+        (uint64_t)end > UINT32_MAX || cmt_fseek(fp,0,SEEK_SET)) goto bad;
     file_size=(uint32_t)end;
     result.total_bytes=file_size; result.baud=bauds[speed];
     if (!scan(&result) || !begin_block()) goto bad;
@@ -151,7 +160,7 @@ bool tap_stream_next_pulse(uint8_t *level, uint32_t *ticks, bool *count_pulse)
                 if (!mask) {
                     if (--remaining == 0) phase=TERMINATOR;
                     else {
-                        int value=fgetc(fp);
+                        int value=cmt_fgetc(fp);
                         if (value == EOF) return fail();
                         current_byte=(uint8_t)value; mask=0x80;
                     }

@@ -28,3 +28,5 @@ bool edge_stream_next_pulse(uint8_t *level, uint32_t *duration_us, bool *count_p
 #ifdef __cplusplus
 }
 #endif
+
+bool edge_stream_monitor_muted(void);

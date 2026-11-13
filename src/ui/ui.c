@@ -1,10 +1,15 @@
 #include "ui.h"
-#include "oled.h"
+#include "drivers/oled.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #define UI_TEXT_WIDTH 21
+#define UI_REFRESH_MS 50U
+static TickType_t last_refresh;
+static bool refresh_started;
 #define UI_CACHE_TEXT_LEN (UI_TEXT_WIDTH + 1)
 #define UI_CLEAR_LINE "                     "   // 21 mezer
 
@@ -37,6 +42,7 @@ void ui_init(void)
     for (int i = 0; i < UI_NUM_LINES; i++) {
         s_last_lines[i][0] = '\0';
     }
+    refresh_started=false;
     s_initialized = true;
 }
 
@@ -50,6 +56,8 @@ void ui_render(const ui_model_t *model)
         ui_init();
     }
 
+    TickType_t now=xTaskGetTickCount();
+    if(refresh_started && (TickType_t)(now-last_refresh)<pdMS_TO_TICKS(UI_REFRESH_MS))return;
     uint32_t dirty_mask = 0;
     char current_lines[UI_NUM_LINES][UI_CACHE_TEXT_LEN];
 
@@ -69,9 +77,12 @@ void ui_render(const ui_model_t *model)
         if (dirty_mask & (1u << i)) {
             oled_draw_text(i, UI_CLEAR_LINE);
             oled_draw_text(i, current_lines[i]);
-            memcpy(s_last_lines[i], current_lines[i], sizeof(s_last_lines[i]));
+
         }
     }
 
-    oled_update_pages((uint8_t)dirty_mask);
+    uint8_t completed=oled_update_pages((uint8_t)dirty_mask);
+    for(int i=0;i<UI_NUM_LINES;++i)if(completed & (1U<<i))
+        memcpy(s_last_lines[i],current_lines[i],sizeof(s_last_lines[i]));
+    last_refresh=now;refresh_started=true;
 }

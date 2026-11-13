@@ -29,3 +29,10 @@ bool sharp_stream_is_eof(void);
 bool sharp_stream_has_error(void);
 
 void sharp_stream_pause_ul(uint64_t now_us,bool pause);
+
+/* Foreground analysis only: callback may yield; true cancels before GPIO ownership. */
+typedef bool (*sharp_analysis_cancel_fn)(void *context);
+void sharp_stream_set_analysis_control(sharp_analysis_cancel_fn cancel,void *context);
+bool sharp_stream_analysis_cancelled(void);
+
+bool sharp_stream_continue_mzt(const char *path,loader_mode_t mode,sharp_stream_info_t *info);

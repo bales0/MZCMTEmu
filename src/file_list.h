@@ -41,3 +41,8 @@ int file_list_get_selected_index(void);
 const char *file_list_get_visible_name(int row);
 file_item_type_t file_list_get_visible_type(int row);
 bool file_list_is_visible_selected(int row);
+
+/* Foreground-only scan hook. true aborts; no partial directory is exposed. */
+typedef bool (*file_list_cancel_fn)(void *context);
+void file_list_set_scan_control(file_list_cancel_fn cancel,void *context);
+const char *file_list_last_error(void);

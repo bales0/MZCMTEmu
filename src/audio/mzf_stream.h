@@ -36,3 +36,7 @@ void mzf_stream_pause_ul(bool pause);
 #ifdef __cplusplus
 }
 #endif
+
+bool mzf_stream_continue_mzt(const char *path,loader_mode_t mode,mzf_stream_info_t *info);
+
+bool mzf_stream_next_ticks16(uint8_t *level,uint32_t *ticks);

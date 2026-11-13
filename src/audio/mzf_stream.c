@@ -22,7 +22,7 @@ static uint32_t ul_sent;
 static int64_t ul_started;
 static uint16_t selected_record=1;
 static loader_mode_t selected_mode;
-static char selected_path[256];
+static char selected_path[1024];
 
 bool mzf_stream_set_loader_mode(loader_mode_t mode) {
     if((unsigned)mode>=LOADER_MODE_COUNT) return false;
@@ -62,6 +62,15 @@ bool mzf_stream_open(const char *path,mzf_stream_info_t *info) {
     }
     return true;
 }
+bool mzf_stream_continue_mzt(const char *path,loader_mode_t mode,mzf_stream_info_t *info) {
+    if(!opened || ul_active || !sharp_stream_continue_mzt(path,mode,&current)) { local_error=true;return false; }
+    selected_record=current.record;selected_mode=mode;snprintf(selected_path,sizeof(selected_path),"%s",path);
+    emitted_ticks=emitted_us=0;ul_sent=0;ul_started=0;
+    uint64_t us=(current.total_ticks+8)/16;
+    if(info) { info->sample_rate=1000000;info->total_seconds=(uint32_t)(us/1000000);
+        info->total_samples=us>UINT32_MAX ? UINT32_MAX:(uint32_t)us;info->baud_rate=1200; }
+    return true;
+}
 static void release_bus(void) {
     if(ul_active) { gpio_set_level(GPIO_NUM_4,0);
         gpio_set_level(GPIO_NUM_7,1);
@@ -76,15 +85,15 @@ void mzf_stream_close(void) {
     local_error=false;
     emitted_ticks=emitted_us=0;
 }
-bool mzf_stream_next_pulse(uint8_t *level,uint32_t *duration_us) {
-    uint32_t ticks;
+bool mzf_stream_next_ticks16(uint8_t *level,uint32_t *ticks) {
     bool count;
-    if(!level || !duration_us || !opened || !sharp_stream_next_pulse(level,&ticks,&count)) return false;
-    emitted_ticks+=ticks;
-    uint64_t end=(emitted_ticks+8)/16;
-    *duration_us=(uint32_t)(end-emitted_us);
-    emitted_us=end;
-    return true;
+    if(!level || !ticks || !opened || !sharp_stream_next_pulse(level,ticks,&count))return false;
+    emitted_ticks+=*ticks;emitted_us=(emitted_ticks+8)/16;return true;
+}
+bool mzf_stream_next_pulse(uint8_t *level,uint32_t *duration_us) {
+    uint32_t ticks;uint64_t before=emitted_us;
+    if(!duration_us || !mzf_stream_next_ticks16(level,&ticks))return false;
+    *duration_us=(uint32_t)(emitted_us-before);return true;
 }
 bool mzf_stream_at_boundary(void) { return sharp_stream_at_boundary();
     }

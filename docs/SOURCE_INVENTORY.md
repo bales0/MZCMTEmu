@@ -157,3 +157,20 @@ This is a complete file-level inventory, not a completed semantic review or proo
 ## Subsequent TAP implementation (uncommitted working changes)
 
 The 98-file reference inventory above remains the initial snapshot. New target modules audio/tap_stream.c/.h port the TAP state sequence and four timing profiles from play/tap_playback.cpp and tap_speed.cpp, with GPLv3 attribution. Integration changes affect player.c/.h, raw_pulse.c/.h, file_list.c, main.c and the component source list. The existing pulse FIFO is reused. Host tests link the actual source and driver translation units, see [current verification](TEST_REPORT.md). No branch, commit or push was created for this continuation.
+
+## Navazující skutečně portované protokolové části (12. 11. 2026)
+
+play/mzf_loader.cpp → play/mzf_loader.c (generátory beze změny protokolu, nativní UL FSM); play/mz700_fast3.cpp → play/mz700_fast3.c; formats/mz_tape_profiles, mz_loader_profiles, mz_tape_decoder a mz_title → stejnojmenné C moduly; record/record_autoname.cpp → record/record_autoname.c (detektory) a record_rename.c (nativní FS). MZF record orchestrace nově audio/mzf_writer.c s jednorázovým PSRAM payloadem. MZF/MZT/QD waveform a parsování odděleny v sharp_stream.c a quickdisk.c. Metadata v sidecar.c. GPL atribuce je ve všech přenesených modulech; znaková mapa zachovává uvedený původ z Philip Smart/zSoft. AVR periferie portovány nebyly. Detaily a skutečný stupeň důkazu viz PARITY_MATRIX.md.
+
+## Současná nativní architektura po pokračování
+
+Tabulky výše jsou historickou inventurou počátečního stavu, nikoli dnešním seznamem chybějících modulů. Aktuální checkout je main / 25246a327ed2187cd24e7d11b4cbf7c511555a1d, pracovní změny bez commitu.
+
+- audio/raw_pulse_rmt.c nahrazuje AVR TX periférie jedním 16MHz RMT DMA encoderem; audio/raw_pulse.c zůstává pouze volitelný diagnostický GPTimer.
+- audio/edge_capture.c používá MCPWM latched capture; starý GPIO/GPTimer je oddělen v edge_capture_gpio.c a ve výchozím buildu vypnutý.
+- audio/wav_pulse_stream.c sjednocuje WAV PLAY se stejným transportem; staré raw_timer/raw_capture fronty se v aktivním ELF neuplatňují.
+- storage/fs.c vlastní native SD deskriptory, statický souborový/cache pool, queue a worker; main ani protokolové moduly přímo nevlastní FAT soubory. Recorder finalize běží asynchronně na této úloze.
+- file_list.c má lifetime PSRAM index/name arena; config/loader_choice.h a settings_codec.c řeší rodiny/rychlosti a NVSv2 migraci. app/cmt_bus_policy.h odděluje ověřitelnou logiku SENSE/monitor/S1, buttons.c obsahuje odrušení a STOP prioritu.
+- tests/host má 20 samostatných sad. compare_quickdisk_reference.py izolovaně kompiluje původní QD validační funkce a porovnává fixture s portem; referenční soubory nemění.
+
+Přesný stupeň důkazu a HW omezení viz aktuální PARITY_MATRIX/TEST_REPORT. Reference i MZTools zůstaly read-only; nové generátory zapisují jen vlastní fixture nebo do .tmp.

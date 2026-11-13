@@ -1,0 +1,14 @@
+menu "MZ CMT transport"
+config MZ_CAPTURE_GPIO_FALLBACK
+    bool "Use diagnostic GPIO/GPTimer capture fallback"
+    default n
+    help
+        Default capture uses MCPWM hardware-latched edge timestamps.
+        Enable only for diagnostics/comparison with the old GPIO ISR path.
+config MZ_TX_GPTIMER_FALLBACK
+    bool "Use diagnostic GPTimer TX fallback"
+    default n
+    help
+        Default TX uses RMT DMA with one continuous encoder transaction.
+        This option retains the older per-interval GPTimer for comparison.
+endmenu

@@ -7,11 +7,12 @@
 #include "audio/recorder.h"
 #define SETTINGS_BYTES 24U
 typedef struct {
-    bool motor_auto, invert, record_auto;
+    bool motor_auto, invert, record_auto, autoname;
     loader_mode_t loader;
     recorder_format_t record_format;
     tap_speed_t tap_speed;
     uint32_t record_rate;
+    uint8_t brightness,loader_speeds,record_control; /* 0 MOTOR,1 MANUAL,2 AUTO */
 } app_settings_t;
 void settings_defaults(app_settings_t *out);
 bool settings_valid(const app_settings_t *settings);

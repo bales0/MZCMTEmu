@@ -1,14 +1,18 @@
+#include "storage/fs.h"
 /* SPDX-License-Identifier: GPL-3.0-only
  * Ported from bales0/MZ-SD2CMT2-Reborn, commit 600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb.
  * https://github.com/bales0/MZ-SD2CMT2-Reborn
  * ESP32-S3: native constant data and foreground algorithms; no AVR peripherals.
  */
 #include "sidecar.h"
+#include "storage/record_file.h"
 #include "file_format.h"
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 static bool fields(const char *type,const char *speed,loader_mode_t *out) {
     if (!strcasecmp(type,"UL")) { *out=LOADER_MODE_UL;
@@ -51,11 +55,11 @@ static bool record_number(const char *s,uint16_t *out) {
     *out=(uint16_t)n;
     return true;
 }
-static bool single(FILE *fp,loader_mode_t *mode) {
+static bool single(cmt_file_t *fp,loader_mode_t *mode) {
     char text[128],type[12]={0},speed[5]={0};
     bool got_type=false,got_speed=false;
-    size_t n=fread(text,1,sizeof(text),fp);
-    if (!n || n>=sizeof(text) || ferror(fp)) return false;
+    size_t n=cmt_fread(text,1,sizeof(text),fp);
+    if (!n || n>=sizeof(text) || cmt_ferror(fp)) return false;
     text[n]=0;
     char *line=text;
     while (*line) {
@@ -78,12 +82,12 @@ static bool single(FILE *fp,loader_mode_t *mode) {
     }
     return fields(type,speed,mode);
 }
-static bool multi(FILE *fp,uint16_t wanted,loader_mode_t *mode) {
+static bool multi(cmt_file_t *fp,uint16_t wanted,loader_mode_t *mode) {
     char line[24],type[12]={0},speed[5]={0};
     unsigned len=0;
     bool overflow=false,active=false;
     for (;;) {
-        int c=fgetc(fp);
+        int c=cmt_fgetc(fp);
         if (c==EOF || c=='\r' || c=='\n') {
             if (overflow && active) return false;
             if (!overflow && len) {
@@ -102,7 +106,7 @@ static bool multi(FILE *fp,uint16_t wanted,loader_mode_t *mode) {
             }
             len=0;
             overflow=false;
-            if(c==EOF) return !ferror(fp) && active && fields(type,speed,mode);
+            if(c==EOF) return !cmt_ferror(fp) && active && fields(type,speed,mode);
         } else if (!overflow) {
             if (len<sizeof(line)-1) line[len++]=(char)c;
             else overflow=true;
@@ -114,19 +118,19 @@ bool sidecar_read(const char *path,uint16_t record,loader_mode_t *mode) {
     file_format_t format=file_format_detect_from_name(path);
     const char *ext=format==FILE_FORMAT_MZF ? "MFI" : format==FILE_FORMAT_M12 ? "M2I" : format==FILE_FORMAT_MZT ? "MTI" : NULL;
     if (!ext) return false;
-    char name[256];
+    char name[1024];
     size_t n=strlen(path);
     if (n<4 || n>=sizeof(name)) return false;
     memcpy(name,path,n+1);
     memcpy(name+n-3,ext,3);
-    FILE *fp=fopen(name,"rb");
+    cmt_file_t *fp=cmt_fopen(name,"rb");
     if (!fp) { for(unsigned i=0;i<3;++i) name[n-3+i]=(char)(ext[i]>='A'&&ext[i]<='Z' ? ext[i]+32 : ext[i]);
-        fp=fopen(name,"rb");
+        fp=cmt_fopen(name,"rb");
         }
     if (!fp) return false;
     loader_mode_t resolved=LOADER_MODE_NORMAL_1_1;
     bool ok=format==FILE_FORMAT_MZT ? multi(fp,record,&resolved) : single(fp,&resolved);
-    if(fclose(fp)) ok=false;
+    if(cmt_fclose(fp)) ok=false;
     if(ok) *mode=resolved;
     return ok;
 }
@@ -137,4 +141,33 @@ loader_mode_t sidecar_resolve(const char *path,uint16_t record,loader_mode_t req
     bool ok=sidecar_read(path,record,&mode);
     if(used) *used=ok;
     return ok ? mode : LOADER_MODE_NORMAL_1_1;
+}
+
+bool sidecar_write_mzf(const char *path,loader_mode_t mode) {
+    if(file_format_detect_from_name(path)!=FILE_FORMAT_MZF) return false;
+    const char *type="NORMAL";unsigned speed=1;
+    switch(mode) {
+    case LOADER_MODE_NORMAL_1_1: break;
+    case LOADER_MODE_NORMAL_1_2: speed=2;break;
+    case LOADER_MODE_NORMAL_1_3: speed=3;break;
+    case LOADER_MODE_NORMAL_1_4: speed=4;break;
+    case LOADER_MODE_MZ700_1X: type="MZ700";break;
+    case LOADER_MODE_IC_1_1: type="IC";break;
+    case LOADER_MODE_IC_1_2: type="IC";speed=2;break;
+    case LOADER_MODE_IC_1_3: type="IC";speed=3;break;
+    case LOADER_MODE_IC_1_4: type="IC";speed=4;break;
+    case LOADER_MODE_TC_1_1: type="TC";break;
+    case LOADER_MODE_TC_1_2: type="TC";speed=2;break;
+    case LOADER_MODE_TC_1_3: type="TC";speed=3;break;
+    default: return false;
+    }
+    char name[1024];size_t n=strlen(path);
+    if(n<4 || n>=sizeof(name)) return false;
+    memcpy(name,path,n+1);memcpy(name+n-3,"MFI",3);
+    cmt_file_t *out=record_file_create(name,sizeof(name));
+    if(!out)return false;
+    bool ok=cmt_fprintf(out,"TYPE=%s\nSPEED=1:%u\n",type,speed)>0 && !cmt_fflush(out);
+    if(cmt_fclose(out)) ok=false;
+    if(!ok) cmt_remove(name);
+    return ok;
 }

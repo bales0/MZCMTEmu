@@ -1,3 +1,4 @@
+#include "storage/fs.h"
 #include "sdcard.h"
 
 #include "driver/spi_master.h"
@@ -29,44 +30,35 @@ static void sdcard_gpio_prepare(void)
     gpio_set_direction(PIN_CS,   GPIO_MODE_OUTPUT);
 }
 
-static void sdcard_bus_free_internal(void)
+static bool sdcard_bus_free_internal(void)
 {
-    if (s_bus_initialized) {
-        esp_err_t ret = spi_bus_free(SPI2_HOST);
-        if (ret != ESP_OK) {
-            printf("SPI bus free FAIL (%d)\n", ret);
-        } else {
-            printf("SPI bus free OK\n");
-        }
-        s_bus_initialized = false;
-    }
+    if(!s_bus_initialized)return true;
+    esp_err_t result=spi_bus_free(SPI2_HOST);
+    if(result!=ESP_OK) {printf("SPI bus free FAIL (%d)\n",result);return false;}
+    s_bus_initialized=false;return true;
 }
 
-void sdcard_unmount(void)
+static void sdcard_unmount_native(void)
 {
-    if (s_mounted && s_card != NULL) {
-        esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
-        printf("SD unmount OK\n");
+    s_mounted=false;
+    if(s_card) {
+        esp_err_t result=esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT,s_card);
+        if(result!=ESP_OK) {printf("SD unmount FAIL (%d)\n",result);return;}
+        s_card=NULL;
     }
-
-    s_card = NULL;
-    s_mounted = false;
-
-    sdcard_bus_free_internal();
+    (void)sdcard_bus_free_internal();
 }
 
-void sdcard_init(void)
+static void sdcard_init_native(void)
 {
     if (s_mounted) {
         // už je připravená, nedělej nic
         return;
     }
 
-    // kdyby po předchozím failu zůstal bus viset initialized,
-    // nejdřív ho uvolni a mount zkus čistě znovu
-    if (s_bus_initialized) {
-        sdcard_bus_free_internal();
-    }
+    /* Failed unmount/free keeps its resource until a retry actually succeeds. */
+    if(s_card) {sdcard_unmount_native();if(s_card)return;}
+    if(s_bus_initialized && !sdcard_bus_free_internal())return;
 
     sdcard_gpio_prepare();
 
@@ -138,3 +130,7 @@ int sdcard_test(void)
     // kompatibilní "readiness" test bez zápisu do souboru
     return s_mounted ? 1 : 0;
 }
+static void mount_on_worker(void *context) {(void)context;sdcard_init_native();}
+static void unmount_on_worker(void *context) {(void)context;sdcard_unmount_native();}
+void sdcard_init(void) {if(!cmt_storage_execute(mount_on_worker,NULL))s_mounted=false;}
+void sdcard_unmount(void) {if(!cmt_storage_execute(unmount_on_worker,NULL))s_mounted=false;}

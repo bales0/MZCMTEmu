@@ -1,3 +1,4 @@
+#include "storage/fs.h"
 /* SPDX-License-Identifier: GPL-3.0-only
  * Ported from bales0/MZ-SD2CMT2-Reborn, commit 600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb.
  * https://github.com/bales0/MZ-SD2CMT2-Reborn
@@ -10,7 +11,7 @@ typedef enum { LOGICAL, QDF, PHYSICAL } kind_t;
 typedef struct { uint32_t header,body;
     uint16_t length;
     } entry_t;
-static FILE *fp;
+static cmt_file_t *fp;
 static uint32_t file_size,track_offset,track_size,scan_pos,cache_offset,source_pos;
 static uint16_t cache_size,records,selected;
 static uint8_t phase,cache[512];
@@ -45,7 +46,7 @@ static bool raw_byte(uint32_t position,uint8_t *out) {
         if(poll_cancel()) return false;
         uint32_t left=limit-position;
         size_t n=left<sizeof(cache) ? left:sizeof(cache);
-        if(fseek(fp,(long)(base+position),SEEK_SET) || fread(cache,1,n,fp)!=n) {io_error=true;
+        if(cmt_fseek(fp,(long)(base+position),SEEK_SET) || cmt_fread(cache,1,n,fp)!=n) {io_error=true;
             return false;
             }
         cache_offset=position;
@@ -150,7 +151,7 @@ static bool configure(const uint8_t *prefix,bool hxc) {
     if(hxc && (file_size<40 || le32(prefix+12)!=1 || le32(prefix+16)!=1 || le32(prefix+20)))return false;
     if(descriptor>file_size || file_size-descriptor<16)return false;
     uint8_t bytes[16];
-    if(fseek(fp,(long)descriptor,SEEK_SET) || fread(bytes,1,16,fp)!=16)return false;
+    if(cmt_fseek(fp,(long)descriptor,SEEK_SET) || cmt_fread(bytes,1,16,fp)!=16)return false;
     track_offset=le32(bytes);
     track_size=le32(bytes+4);
     return track_offset>=0x400 && track_size && track_offset<=file_size && track_size<=file_size-track_offset &&
@@ -161,7 +162,7 @@ void quickdisk_close(void) { fp=NULL;
     cache_size=0;
     scanning=false;
     }
-bool quickdisk_open(FILE *file,uint32_t size,quickdisk_cancel_fn cancel,void *context) {
+bool quickdisk_open(cmt_file_t *file,uint32_t size,quickdisk_cancel_fn cancel,void *context) {
     quickdisk_close();
     fp=file;
     file_size=size;
@@ -172,7 +173,7 @@ bool quickdisk_open(FILE *file,uint32_t size,quickdisk_cancel_fn cancel,void *co
     if(!fp || size<8)return false;
     uint8_t prefix[40]={0};
     size_t n=size<sizeof(prefix) ? size:sizeof(prefix);
-    if(fseek(fp,0,SEEK_SET) || fread(prefix,1,n,fp)!=n)return false;
+    if(cmt_fseek(fp,0,SEEK_SET) || cmt_fread(prefix,1,n,fp)!=n)return false;
     static const uint8_t qdf[16]={'-','Q','D',' ','f','o','r','m','a','t','-',255,255,255,255,255};
     uint8_t count=0;
     if(n>=8 && !memcmp(prefix,"HXCQDDRV",8)) {

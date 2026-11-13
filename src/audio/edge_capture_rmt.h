@@ -2,7 +2,7 @@
 
 /*
  * Backward-compatible name only. This project revision does not instantiate
- * any RMT TX/RX channel. Calls are forwarded to edge_capture/GPTimer.
+ * any RMT TX/RX channel. Calls are forwarded to edge_capture/MCPWM.
  */
 #include "audio/edge_capture.h"
 

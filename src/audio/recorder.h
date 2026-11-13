@@ -15,13 +15,15 @@ typedef enum {
     RECORDER_STATE_PAUSED_MOTOR,
     RECORDER_STATE_FINISHED,
     RECORDER_STATE_DELETED,
-    RECORDER_STATE_ERROR
+    RECORDER_STATE_ERROR,
+    RECORDER_STATE_FINALIZING
 } recorder_state_t;
 
 typedef enum {
     RECORDER_FORMAT_WAV = 0,
     RECORDER_FORMAT_LEP,
-    RECORDER_FORMAT_L16
+    RECORDER_FORMAT_L16,
+    RECORDER_FORMAT_MZF
 } recorder_format_t;
 
 void recorder_init(void);
@@ -48,3 +50,10 @@ void recorder_service_motor(bool motor_high);
 #ifdef __cplusplus
 }
 #endif
+
+void recorder_set_autoname(bool enabled);
+bool recorder_get_autoname(void);
+
+bool recorder_metadata_warning(void);
+
+void recorder_media_removed(void);

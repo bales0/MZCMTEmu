@@ -1,43 +1,47 @@
-# Přenos časování na ESP32-S3
+# Časování a vlastnictví periferií
 
-## Provedená oprava
+Stav 13. 11. 2026. Autoritou je zdroj SD2CMT2-Reborn 600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb, zejména mz_tape_profiles, mzf_playback, mzf_loader a tap_speed. Host důkazy jsou v [TEST_REPORT](TEST_REPORT.md); žádné níže uvedené časování nebylo změřeno na HW.
 
-recorder.c již neobsahuje s_edge_quantization_residual_us, jeho resetovací funkci ani volání resetů. Pro každý dokončený capture interval se nezávisle použije:
+## TX
 
-    units = max(1, (duration_us + unit_us / 2) / unit_us)
+Výchozí raw_pulse_rmt.c používá 16 MHz RMT s DMA, 128 interními symboly, frontou jedné transakce a průběžným encoderem. Jedna zdrojová FIFO má 4096 osmibajtových událostí (32768 B); 512 B bitset označuje nativní tick šířky. Další stejně velká DMA fronta nevzniká. Symbolové půlperiody mají maximum 32767 ticků; dlouhá úroveň pokračuje více symboly beze změny úrovně. Poslední neúplný symbol a RMT EOF uzavírají přenos.
 
-Součet se počítá v uint64_t, aby nepřetekl u UINT32_MAX. LEP má jednotku 50 µs, L16 16 µs. Při přesné polovině se zaokrouhluje nahoru. Kvantizace délky HIGH nemá žádný stav, který by změnil následnou délku LOW. Příklad regrese: 1, 24, 74, 74 µs v LEP musí dát 1, 1, 1, 1 jednotku; starý residual ovlivnil sousední interval.
+Sharp a TAP dodávají přesné šestnáctiny µs. WAV počítá nejbližší absolutní čas sample_index × 16000000 / sample_rate. Hystereze přechází HIGH při >=192 a LOW při <=64; konstantní run se dělí po 256 vzorcích bez umělé hrany. LEP/L16 dodávají celé µs násobené 16. Žádná samostatná sample ISR neobsluhuje WAV PLAY.
 
-WAV používá jinou časovou osu: součet duration_us × sample_rate a zbytek modulo 1 000 000 s počáteční fází 500 000. Tento zbytek zůstává přes hrany, aby počet PCM vzorků odpovídal celkovému času. Jeho odstranění by způsobilo sample drift. Počáteční fáze zachovává dosavadní nejbližší zaokrouhlení, nikoli nový algoritmus WAV.
+Pauza hradluje funkční zdrojové hodiny RMT skupiny, zachová encoder, DMA a rozpracovanou půlperiodu; resume hodiny obnoví. STOP nejprve hodiny obnoví, zastaví kanál a fyzicky odpojí RMT GPIO mux. UL pak vlastní GPIO4 přímo. Další RMT uživatel ve stejné skupině není dovolen. Mock testuje retenci po 70 tickách uprostřed intervalu, **skutečnou retenci je nutné prokázat analyzátorem**.
 
-Záznamové testy linkují skutečný recorder.c, edge_writer.c, edge_stream.c a wav_writer.c. Hardware capture a RTOS hodiny jsou nahrazeny malou host implementací. Neověřují ISR latenci, souběh, pause tail vytvořený HW capture ani přenos na skutečný Sharp. Viz [testy](../tests/host/test_recorder.c) a [report](TEST_REPORT.md).
+Uvolňování zdrojových slotů vychází z konzervativní dolní meze aktivního wall-time po rmt_transmit (+10 µs guard), s odečtením pauz. TX-done dorovná přesný součet zakódovaných intervalů. Tento odhad není měřený timestamp začátku DMA. Dokončený čas se publikuje pomocí 32bit sekvence a dvou 32bit slov; v ISR nejsou nové 64bit atomické operace. EOF a hranice bloků nastávají až po fyzickém drainu.
 
-## Referenční jednotky a zbývající port
+Diagnostický raw_pulse.c s GPTimerem se vybírá pouze CONFIG_MZ_TX_GPTIMER_FALLBACK. Absolutní Sharp/TAP/WAV přechody převádí na nejbližší µs bez kumulativního driftu (matematická chyba nejvýše ±0,5 µs; ISR jitter tím omezen není). Legacy raw_timer/raw_capture nejsou aktivní transport a jejich velké fronty linker ve výsledném ELF odstranil.
 
-Autorita: SD2CMT2-Reborn commit 600a788, formats/mz_tape_profiles.h/.cpp, play/mzf_playback.cpp, play/mzf_loader.cpp a obě guide/CMT_*TIMING_REFERENCE.md. Timer3 ticks jsou šestnáctiny µs. HIGH a LOW v profilech jsou logické úrovně na straně Sharp/8255; reference aplikuje pevnou konektorovou inverzi až na výstupu, bez výměny délek.
+## Sharp a TAP
 
-Současné mzf_stream.c používá 208/208/416/417 µs a jiné počty leaderu. Není referenčně kompatibilní jen tím, že přehraje MZF. Budoucí port musí mít jedinou tabulku 13 statických profilů, mapování všech 17 loader modes včetně AUTO/UL, přesné počty leader/mark/gap/checksum a samostatné vlastnictví linek během UL. Testovací timing vstupy rekordéru nejsou náhradou těchto golden waveform testů.
+Jediná Sharp tabulka obsahuje 13 profilů, nabídka má 17 režimů. Zachovány jsou regionové leader/mark/data časy, checksum, kopie, loadery a trailing fáze. NORMAL 1:1 má leader LOW4141, mark LOW4096/7795 a data krátký LOW4042/4087 či dlouhý7741/7786 dle následujícího bitu. Testy porovnávají celé průběhy i původní LOW/HIGH Z80 loadery, nikoli jen průměrnou rychlost.
 
-Pro budoucí HAL vyhodnotit 20MHz RMT: převod šestnáctin µs je 5/4 ticku. Zaokrouhlení každé hrany může driftovat; pro generování použít absolutní racionální čas přechodů. To je odlišné od zakázaného přenosu chyby při záznamu fyzických HIGH/LOW intervalů. Zvolená HW frekvence zatím nebyla ověřena. Nezaměňovat tento návrh za funkční RMT backend.
+Logické HIGH/LOW profilu nelze zaměnit s READ na konektoru. Sharp waveform zachovává pevnou výstupní polaritu reference; TAP používá přímou referenční polaritu. Uživatelská INVERT se aplikuje až v HAL. U1/U2 podle uživatele neinvertují, proto nepřidávají žádný další logický negátor. Safe idle je vždy READ LOW, SENSE HIGH, MONITOR LOW. Toto je firmware požadavek, nikoli důkaz elektrického resetového stavu.
 
-## Skutečný stav periferií
+TAP má pilot 4032/1610 celých pulzů, samostatný LOW/HIGH sync, MSB-first data, terminator a mezery 350 ms/1 s pouze mezi bloky. Všechna čtyři timingová pole pocházejí z referenční tap_speed. Předběžná analýza je přerušitelná; callback UI se při vlastním přehrávání nevolá.
 
-Lokální ESP-IDF je 6.0.1. ESP32-S3 soc_caps.h definuje SOC_RMT_SUPPORT_DMA=1. raw_pulse_set_rmt_enabled() zatím nic nezapíná; edge_capture_rmt.c je obálka GPIO ISR + GPTimer. WAV TX běží přes GPTimer sample ISR. Tento zásah periferní backendy nemění.
+UL je samostatný neblokující FSM se třemi variantami, cílovými loadery, timeouty a user-pause časem. Vlastnictví READ/SENSE dostane až po zastavení RMT; každá chyba vrací safe idle. MZT další rekord otevírá nad stejným souborem bez opakovaného scanu celého kontejneru; po UL→UL se podle reference zastaví.
 
-[ESP-IDF RMT](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32s3/api-reference/peripherals/rmt.html) dokumentuje 15bit délky symbolů a TX DMA konfiguraci. Dlouhé konstantní úrovně musí pokračovat bez umělé hrany. Fronta více transakcí sama nedokazuje bezspárový stream. Ověřit vlastní kontinuální encoder, interní DMA buffery, refill při souběhu SD/OLED a pause/stop/error hranice na analyzátoru.
+## RX a kvantizace
 
-[MCPWM capture](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32s3/api-reference/peripherals/mcpwm.html) poskytuje hardwarový latch timestampu. Před nahrazením GPIO ISR zhodnotit wraparound, dlouhý idle, první hranu, stop snapshot a cache/IRAM bezpečnost. RMT RX také vyžaduje důkaz kontinuity na batch hranicích a při tichu. Výběr backendu zůstává otevřený.
+Výchozí edge_capture.c používá MCPWM capture timer APB80 MHz, GPIO5 obě hrany, prescale1, IRQ prioritu3. Druhý kanál bez vstupního GPIO poskytuje soft-capture snapshot pro start/pause. Událost nese hardwarový latch; ISR latence neposouvá uložený timestamp. FIFO8192 × 8 B = 65536 B je interní DRAM. 32bit wrap se rozšiřuje pomocí wall-time pouze pro určení počtu otočení při dlouhém tichu. Pauza zakáže vstupní capture, vybere pending latch a zachytí částečný tail; resume vynechá čas pauzy. Overflow či detekovaná ztráta polarity jsou chyby.
 
-## Paměťový výchozí stav
+CONFIG_MCPWM_ISR_CACHE_SAFE, CONFIG_MCPWM_CTRL_FUNC_IN_IRAM, CONFIG_RMT_TX_ISR_CACHE_SAFE a CONFIG_RMT_ENCODER_FUNC_IN_IRAM jsou zapnuté. [Výpis symbolů](validation/port-symbols.txt) ověřuje encoder/helpers/capture callback v IRAM a obě FIFO v interní DRAM. Callbacky nevolají FS, malloc ani I²C. GPIO/GPTimer capture zůstává jen diagnostická alternativa CONFIG_MZ_CAPTURE_GPIO_FALLBACK. První hrana, cache stalls, skutečná ztráta hran a wrap za souběhu SD musí projít HW zkouškou.
 
-Fronty raw_timer a raw_capture mají každá 65536 B, edge_capture 8192 událostí po 8 B (65536 B) a raw_pulse 4096 struktur. Linker odstraňuje nevyužité sekce, takže jejich součet není automaticky skutečná BSS výsledného ELF. Build tohoto zásahu hlásí celkovou RAM 195568 B; runtime heap/stack/PSRAM a špičky front nebyly měřeny. Nové DMA fronty se nesmí prostě přičíst ke všem starým backendům. Během tohoto zásahu nebyl přidán žádný runtime buffer ani alokace do rekordéru; odstraněn byl residual a jeho resetovací kód. Ostatní backendy zatím zůstávají kvůli funkčnosti rozpracovaného portu.
+LEP/L16 RECORD kvantizuje každý dokončený fyzický interval samostatně:
 
-## Doplněný ZX TAP
+    units = max(1, ((uint64_t)duration_us + unit_us / 2) / unit_us)
 
-TAP má vlastní jedinou tabulku v audio/tap_stream.c se stejnými 16MHz ticks jako referenční tap_speed.cpp. Zdroj vrací přesné celočíselné ticks; player.c převádí absolutní časy hran na 1µs HAL s nejbližším zaokrouhlením, maximální matematická chyba je ±0,5 µs bez kumulativního driftu. Jde o generování přechodů, nikoli rekordérovou mezihra­novou kompenzaci. Skutečná ISR latence a jitter nejsou tímto výpočtem omezené; RMT DMA zůstává neimplementované.
+LEP unit50 µs, L16 unit16 µs; žádný residual do sousedního HIGH/LOW intervalu. WAV RECORD má odlišnou absolutní sample fázi s počátečním zbytkem500000 a modulo1000000. Jeho zbytek zachovává sample rate a nesmí být odstraněn. AutoName analyzuje původní hrany převedené samostatně do L16 před ztrátovou WAV/LEP kvantizací.
 
-Pilot má 4032 nebo 1610 celých LOW/HIGH pulzů, sync má odlišné LOW/HIGH časy, data jdou MSB-first po dvojici stejných půlperiod. Po bloku následuje terminator LOW dlouhý jako polovina pilotu, mezi bloky konstantní LOW 350 ms po headeru nebo 1 s po datech, za posledním blokem žádná další mezera. Polarita je přímá podle TAP reference mz_read_set_fast_from_isr; volitelná inverze se aplikuje až v HAL.
+## Úlohy, paměť a UI
 
-raw_pulse.c publikuje čas pouze dokončených fyzických intervalů přes 32bit sekvenční čítač a dvě 32bit části. Nevyužívá nové 64bit atomické operace, další frontu ani alokaci. Writer je ISR, případně init po zastavení timeru a dočkání ISR; čtenář je UI/player. Reset rovněž používá sekvenční publikaci. Původní IRQ depth RMW helpery leží podle ELF v IRAM (4037e288/4037e2e8), původní dělení __udivdi3 v ROM (40002544); latenci jsme neměřili. Čas nepočítá předběžné načtení ani pozastavený wall time a aktualizuje se až dokončením intervalu (u 1s mezery tedy skokem).
+Capture/RMT ISR mají prioritu3 a interní metadata. Storage je statická úloha na CPU0 s prioritou6, 8192 B stackem, čtyřmístnou frontou a osmi 1 KiB souborovými cache. Používá deskriptory open/read/write/lseek/fsync/close, bez alokace stdio FILE při každém otevření. Sekvenční byte API pracuje v cache; seek placeholderu uvnitř cache zůstává v RAM. Synchronous RPC používá notification slot0 vyhrazený callerům. Jediný asynchronní job dokončuje záznam a zveřejní výsledek release/acquire příznakem; UI nevstupuje do writeru během SAVING.
 
-Aktuální build po TAP: RAM 195696 B (+128 B proti výchozím 195568), flash aplikace 289305 B (+2768 B). Nepřibyla kopie pulzní fronty. Golden a integrační testy jsou v test_tap_stream.c a test_player_tap.c, výstupy v TEST_REPORT.md.
+Player je na CPU0, priorita5, 8192 B stack, aktivní obsluha po1 ms; storage má vyšší task prioritu kvůli krátkému obsloužení jeho RPC. UI/record foreground je CPU1, priorita2, stack8192 B, poll5 ms. Realtime capture zůstává ISR nad těmito úlohami. Pinning a hodnoty priorit jsou implementační volba čekající na zatěžovací měření. Žádný UI mutex se nepoužívá uvnitř ISR.
+
+Browser používá přibližně2,5 MiB PSRAM, rekordové profily64 KiB, MZF payload65535 B; alokují se jednou a ISR do nich nepřistupuje. Statická interní RAM finálního buildu153372 B, aplikace454617 B; hodnoty nezahrnují runtime SDK heap/stack a PSRAM. Před akceptací změřit nejmenší volný blok, stack high-water, SD latency a FIFO watermarks při dlouhém provozu.
+
+OLED přenáší jen změněné stránky nejvýše 20 Hz, s10 ms timeoutem a potvrzením úspěšně odeslaných stránek; analýza aktualizuje stav nejvýše 10 Hz a dovoluje STOP. Monitor je LOW při READY/WAIT/pauze/UL/idle/finalize a HIGH při aktivním RECORD nebo slyšitelném PLAY. TAP gap a LEP/L16 preroll/tail mají mute značky v transportu. GPIO41 obsluhuje foreground, takže jeho přepnutí není přesně na hranici symbolu a čeká na HW ověření latence.

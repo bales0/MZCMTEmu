@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-13",
+  "branch": "main",
+  "head": "25246a327ed2187cd24e7d11b4cbf7c511555a1d",
+  "host_suites": 20,
+  "host_pass": true,
+  "quickdisk_reference_fixtures": 14,
+  "fixture_files": 92,
+  "fixture_files_unchanged": true,
+  "hardware_connected": false,
+  "hardware_tested": false,
+  "ram_static_bytes": 153372,
+  "application_bytes": 454617,
+  "image_bytes": 455040,
+  "image_sha256": "5705b6386d4d9407b6feda75a6e80b1ee305a91cb71f22f30c3457ab9ad2c66e",
+  "flash_header_size_nibble": 4,
+  "flash_megabytes": 16
+}

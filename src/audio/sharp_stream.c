@@ -1,3 +1,4 @@
+#include "storage/fs.h"
 /* SPDX-License-Identifier: GPL-3.0-only
  * Ported from bales0/MZ-SD2CMT2-Reborn, commit 600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb.
  * https://github.com/bales0/MZ-SD2CMT2-Reborn
@@ -6,6 +7,8 @@
 #include "audio/sharp_stream.h"
 #include "formats/mz_tape_profiles.h"
 #include "formats/sidecar.h"
+#include "formats/quickdisk.h"
+#include "formats/mz_title.h"
 #include "play/mzf_loader.h"
 #include <stdio.h>
 #include <string.h>
@@ -13,7 +16,22 @@
 typedef enum { HEADER, LOADER, PAYLOAD, TURBO, EXTRA, UL, FINISHED } stage_t;
 typedef enum { LEADER, MARK_LONG, MARK_SHORT, MARK_FINAL, LOAD_BYTE, BITS, STOP_BIT,
     LOAD_CHECKSUM, CHECKSUM_BITS, CHECKSUM_STOP, TRAILING, BOUNDARY } step_t;
-static FILE *fp;
+static cmt_file_t *fp;
+static bool qd_source;
+static sharp_analysis_cancel_fn analysis_cancel;
+static void *analysis_context;
+static bool analysis_cancelled;
+void sharp_stream_set_analysis_control(sharp_analysis_cancel_fn cancel,void *context) {
+    analysis_cancel=cancel;
+    analysis_context=context;
+}
+bool sharp_stream_analysis_cancelled(void) { return analysis_cancelled; }
+static bool analysis_poll(void *context) {
+    (void)context;
+    if(analysis_cancel && analysis_cancel(analysis_context)) analysis_cancelled=true;
+    return analysis_cancelled;
+}
+static uint32_t qd_position;
 static uint8_t header[128], loader_bytes[128];
 static sharp_stream_info_t details;
 static mz_tape_profile_t native_profile,payload_profile;
@@ -30,22 +48,29 @@ static bool fail(void) { error=true;
 static uint16_t le16(const uint8_t *p) { return (uint16_t)p[0]|(uint16_t)((uint16_t)p[1]<<8);
     }
 static bool source_seek(uint32_t pos) {
-    return fp && pos>=payload_start && pos<=payload_end && !fseek(fp,(long)pos,SEEK_SET);
+    if(!fp || pos<payload_start || pos>payload_end) return false;
+    if(qd_source) {
+        if(!quickdisk_seek(pos)) return false;
+        qd_position=pos;
+        return true;
+    }
+    return !cmt_fseek(fp,(long)pos,SEEK_SET);
 }
 static int16_t source_read(void *buf,uint16_t n) {
-    long pos=ftell(fp);
+    long pos=qd_source ? (long)qd_position : cmt_ftell(fp);
     if(pos<0 || (uint32_t)pos<payload_start || (uint32_t)pos>payload_end) return -1;
     uint32_t left=payload_end-(uint32_t)pos;
     if(n>left) n=(uint16_t)left;
-    size_t got=fread(buf,1,n,fp);
-    return ferror(fp) ? -1 : (int16_t)got;
+    size_t got=qd_source ? quickdisk_read(buf,n) : cmt_fread(buf,1,n,fp);
+    if(qd_source) { qd_position+=(uint32_t)got; return got==n ? (int16_t)got : -1; }
+    return cmt_ferror(fp) ? -1 : (int16_t)got;
 }
 static bool locate(uint16_t wanted) {
     uint32_t pos=0;
     uint16_t count=0;
     while(pos<file_size) {
         uint8_t h[128];
-        if(file_size-pos<128 || fseek(fp,(long)pos,SEEK_SET) || fread(h,1,128,fp)!=128) return fail();
+        if(file_size-pos<128 || cmt_fseek(fp,(long)pos,SEEK_SET) || cmt_fread(h,1,128,fp)!=128) return fail();
         uint32_t length=le16(h+0x12);
         if(length>file_size-pos-128 || count==65535) return fail();
         ++count;
@@ -72,16 +97,20 @@ static void begin_stage(stage_t next) {
         stage==EXTRA ? file_size-payload_end : declared_length;
     if(stage==PAYLOAD || stage==TURBO) { if(!source_seek(payload_start)) fail();
         }
-    if(stage==EXTRA && fseek(fp,(long)payload_end,SEEK_SET)) fail();
+    if(stage==EXTRA && cmt_fseek(fp,(long)payload_end,SEEK_SET)) fail();
 }
 static bool read_byte(uint8_t *out,bool peek) {
     if(read_bytes>=stage_length) return false;
     if(stage==HEADER) *out=header[read_bytes];
     else if(stage==LOADER) *out=loader_bytes[read_bytes];
-    else { int c=fgetc(fp);
+    else if(qd_source) {
+        if(source_read(out,1)!=1) return fail();
+        if(peek && !source_seek(qd_position-1)) return fail();
+    }
+    else { int c=cmt_fgetc(fp);
         if(c==EOF) return fail();
         *out=(uint8_t)c;
-        if(peek && ungetc(c,fp)==EOF) return fail();
+        if(peek && cmt_ungetc(c,fp)==EOF) return fail();
         }
     if(!peek) ++read_bytes;
     return true;
@@ -188,8 +217,10 @@ bool sharp_stream_ul_ready(void) {
 }
 uint32_t sharp_stream_boundary_delay_us(bool motor_low_seen) {
     if(sharp_stream_ul_ready()) return 0;
+    if((stage==TURBO || stage==PAYLOAD) && details.format==FILE_FORMAT_MZT && details.record<details.records)
+        return motor_low_seen ? 0:120000;
     if(stage==TURBO || stage==EXTRA || (stage==PAYLOAD &&
-        (details.format==FILE_FORMAT_MZT || payload_end==file_size))) return 0;
+        (file_format_is_record_container(details.format) || payload_end==file_size))) return 0;
     uint32_t delay=0;
     if(stage==HEADER && (mzf_loader_is_ic_turbo() || mzf_loader_is_mz700_fast3())) delay=345000;
     else if(stage==LOADER && mzf_loader_is_tc_turbo()) delay=110000;
@@ -205,7 +236,7 @@ bool sharp_stream_advance(void) {
         else if(mzf_loader_is_active()) begin_stage(LOADER);
         else begin_stage(PAYLOAD);
     } else if(stage==LOADER && mzf_loader_is_tc_turbo()) begin_stage(TURBO);
-    else if(details.format!=FILE_FORMAT_MZT && payload_end<file_size && stage!=EXTRA && !mzf_loader_is_active()) begin_stage(EXTRA);
+    else if(!file_format_is_record_container(details.format) && payload_end<file_size && stage!=EXTRA && !mzf_loader_is_active()) begin_stage(EXTRA);
     else stage=FINISHED;
     return !error;
 }
@@ -227,7 +258,10 @@ bool sharp_stream_next_pulse(uint8_t *level,uint32_t *ticks,bool *count) {
     return true;
 }
 void sharp_stream_close(void) {
-    if(fp) fclose(fp);
+    quickdisk_close();
+    qd_source=false;
+    qd_position=0;
+    if(fp) cmt_fclose(fp);
     fp=NULL;
     error=false;
     pending_high_ticks=0;
@@ -235,23 +269,10 @@ void sharp_stream_close(void) {
     mzf_loader_reset();
     mzf_loader_set_source_io(NULL,NULL);
 }
-bool sharp_stream_open(const char *path,uint16_t record,loader_mode_t requested,sharp_stream_info_t *info) {
-    sharp_stream_close();
-    memset(&details,0,sizeof(details));
-    if(info) memset(info,0,sizeof(*info));
-    details.format=file_format_detect_from_name(path);
-    details.record=record;
-    details.requested=requested;
-    if(!path || !record || !file_format_is_sharp_tape(details.format) || details.format==FILE_FORMAT_MZQ || (unsigned)requested>=LOADER_MODE_COUNT) return fail();
-    fp=fopen(path,"rb");
-    if(!fp) return fail();
-    long end;
-    if(fseek(fp,0,SEEK_END) || (end=ftell(fp))<128 || (uint64_t)end>UINT32_MAX) goto bad;
-    file_size=(uint32_t)end;
-    if(!locate(record)) goto bad;
-    for(unsigned i=0;i<17 && header[i+1] && header[i+1]!=13;++i) details.title[i]=(char)(header[i+1]>=32 && header[i+1]<127 ? header[i+1] : '?');
+static bool prepare_record(const char *path,loader_mode_t requested,sharp_stream_info_t *info,bool cancellable) {
+    (void)mz_title_decode_display(header+1,17,details.title,sizeof(details.title));
     details.payload_bytes=declared_length;
-    details.effective=sidecar_resolve(path,record,requested,&details.sidecar);
+    details.effective=sidecar_resolve(path,details.record,requested,&details.sidecar);
     mzf_loader_set_source_io(source_seek,source_read);
     bool active=mzf_loader_prepare(FILE_FORMAT_MZF,details.effective,header,payload_end,payload_start);
     bool native=details.effective==LOADER_MODE_NORMAL_1_1 || details.effective==LOADER_MODE_NORMAL_1_2 ||
@@ -277,8 +298,15 @@ bool sharp_stream_open(const char *path,uint16_t record,loader_mode_t requested,
     uint8_t level;
     uint32_t ticks;
     bool count;
+    unsigned poll_budget=0;
     for(;;) {
-        while(sharp_stream_next_pulse(&level,&ticks,&count)) details.total_ticks+=ticks;
+        while(sharp_stream_next_pulse(&level,&ticks,&count)) {
+            details.total_ticks+=ticks;
+            if(++poll_budget==2048) {
+                poll_budget=0;
+                if(cancellable && analysis_poll(NULL)) goto bad;
+            }
+        }
         if(error) goto bad;
         if(sharp_stream_ul_ready() || stage==FINISHED) break;
         if(!sharp_stream_advance()) goto bad;
@@ -289,6 +317,45 @@ bool sharp_stream_open(const char *path,uint16_t record,loader_mode_t requested,
     return true;
 bad: sharp_stream_close();
     return fail();
+}
+bool sharp_stream_open(const char *path,uint16_t record,loader_mode_t requested,sharp_stream_info_t *info) {
+    sharp_stream_close();
+    analysis_cancelled=false;
+    memset(&details,0,sizeof(details));
+    if(info) memset(info,0,sizeof(*info));
+    details.format=file_format_detect_from_name(path);
+    details.record=record;
+    details.requested=requested;
+    if(!path || !record || !file_format_is_sharp_tape(details.format) || (unsigned)requested>=LOADER_MODE_COUNT) return fail();
+    fp=cmt_fopen(path,"rb");
+    if(!fp) return fail();
+    long end;
+    if(cmt_fseek(fp,0,SEEK_END) || (end=cmt_ftell(fp))<(details.format==FILE_FORMAT_MZQ ? 8:128) || (uint64_t)end>UINT32_MAX) goto bad;
+    file_size=(uint32_t)end;
+    qd_source=details.format==FILE_FORMAT_MZQ;
+    if(qd_source) {
+        if(!quickdisk_open(fp,file_size,analysis_poll,NULL) || !quickdisk_select(record,header,&declared_length)) goto bad;
+        details.records=quickdisk_count();
+        payload_start=0; payload_end=declared_length; qd_position=0;
+    } else if(!locate(record)) goto bad;
+    return prepare_record(path,requested,info,true);
+bad: sharp_stream_close();
+    return fail();
+}
+bool sharp_stream_continue_mzt(const char *path,loader_mode_t requested,sharp_stream_info_t *info) {
+    if(!fp || error || stage!=FINISHED || details.format!=FILE_FORMAT_MZT ||
+       details.record>=details.records || (unsigned)requested>=LOADER_MODE_COUNT) return false;
+    uint16_t record=details.record+1,records=details.records;
+    uint32_t position=payload_end;
+    if(position>file_size || file_size-position<128 || cmt_fseek(fp,(long)position,SEEK_SET) || cmt_fread(header,1,128,fp)!=128) return fail();
+    declared_length=le16(header+18);
+    payload_start=position+128;
+    if(declared_length>file_size-payload_start) return fail();
+    payload_end=payload_start+declared_length;
+    memset(&details,0,sizeof(details));
+    details.format=FILE_FORMAT_MZT;details.record=record;details.records=records;details.requested=requested;
+    mzf_loader_reset();
+    return prepare_record(path,requested,info,false);
 }
 bool sharp_stream_begin_ul(uint64_t now_us) {
     if(!sharp_stream_ul_ready() || !mzf_loader_begin(now_us)) return fail();

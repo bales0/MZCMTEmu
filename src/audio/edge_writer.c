@@ -1,11 +1,13 @@
+#include "storage/fs.h"
 #include "audio/edge_writer.h"
+#include "storage/record_file.h"
 
 #include <stdio.h>
 
 #define EDGE_SIGNAL_THRESHOLD 128U
 #define EDGE_MAX_UNITS 127U
 
-static FILE *s_fp = NULL;
+static cmt_file_t *s_fp = NULL;
 static char s_path[256];
 static bool s_open = false;
 static bool s_error = false;
@@ -26,7 +28,7 @@ static bool emit_slot(uint8_t level, uint8_t units)
     }
 
     slot = level ? (int8_t)units : (int8_t)(-(int16_t)units);
-    return (fputc((uint8_t)slot, s_fp) != EOF);
+    return (cmt_fputc((uint8_t)slot, s_fp) != EOF);
 }
 
 static bool emit_extension(void)
@@ -35,7 +37,7 @@ static bool emit_extension(void)
         return false;
     }
 
-    return (fputc(0, s_fp) != EOF);
+    return (cmt_fputc(0, s_fp) != EOF);
 }
 
 static bool emit_placeholder(void)
@@ -46,7 +48,7 @@ static bool emit_placeholder(void)
         return false;
     }
 
-    pos = ftell(s_fp);
+    pos = cmt_ftell(s_fp);
     if (pos < 0) {
         return false;
     }
@@ -70,14 +72,14 @@ static bool patch_placeholder(uint8_t units)
         return false;
     }
 
-    append_pos = ftell(s_fp);
+    append_pos = cmt_ftell(s_fp);
     if (append_pos < 0) {
         return false;
     }
 
-    if (fseek(s_fp, s_placeholder_offset, SEEK_SET) != 0 ||
+    if (cmt_fseek(s_fp, s_placeholder_offset, SEEK_SET) != 0 ||
         !emit_slot(s_level, units) ||
-        fseek(s_fp, append_pos, SEEK_SET) != 0) {
+        cmt_fseek(s_fp, append_pos, SEEK_SET) != 0) {
         return false;
     }
 
@@ -215,7 +217,7 @@ bool edge_writer_open(const char *path, uint32_t sample_rate)
         return false;
     }
 
-    s_fp = fopen(path, "wb");
+    s_fp = record_file_create(path,sizeof(s_path));
     if (s_fp == NULL) {
         return false;
     }
@@ -268,34 +270,24 @@ bool edge_writer_write_interval_units(uint8_t level, uint32_t units)
 
 bool edge_writer_finalize(void)
 {
-    bool ok = true;
-
-    if (!s_open || s_fp == NULL) {
-        return false;
-    }
-
-    if (!close_interval()) {
-        ok = false;
-    }
-
-    if (fclose(s_fp) != 0) {
-        ok = false;
-    }
-
-    s_fp = NULL;
-    s_open = false;
-    return ok && !s_error;
+    if(!s_open || !s_fp) return false;
+    bool ok=!s_error && close_interval() && !cmt_fflush(s_fp);
+    if(cmt_fclose(s_fp))ok=false;
+    s_fp=NULL;s_open=false;
+    if(!ok)cmt_remove(s_path);
+    s_path[0]=0;reset_interval_state();
+    return ok;
 }
 
 void edge_writer_abort_delete(void)
 {
     if (s_fp != NULL) {
-        fclose(s_fp);
+        cmt_fclose(s_fp);
         s_fp = NULL;
     }
 
     if (s_open && s_path[0] != '\0') {
-        remove(s_path);
+        cmt_remove(s_path);
     }
 
     s_open = false;

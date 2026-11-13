@@ -13,31 +13,25 @@
 #include "freertos/task.h"
 
 #include "audio/wav_reader.h"
-#include "audio/raw_out.h"
+#include "audio/wav_pulse_stream.h"
 #include "audio/raw_pulse.h"
 #include "audio/mzf_stream.h"
+#include "formats/sidecar.h"
 #include "audio/edge_stream.h"
 #include "audio/tap_stream.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 
-#define WAV_CHUNK 256U
 #define PULSE_CHUNK 256U
 #define PULSE_PREFILL_PULSES (PULSE_CHUNK * 12U)
-#define PLAYER_PREFILL_BYTES 8192U
 #define PLAYER_TASK_STACK_WORDS 8192U
 #define PLAYER_TASK_PRIORITY 5U
 #define PLAYER_TASK_CORE 0
 #define PLAYER_TASK_ACTIVE_DELAY_MS 1U
 #define PLAYER_TASK_IDLE_DELAY_MS 5U
 
-/* Threshold plus hysteresis for 8-bit PCM WAV -> one-bit GPIO. */
-#define WAV_LOW_THR   0x40U
-#define WAV_HIGH_THR  0xC0U
-
-static uint8_t wav_buf[WAV_CHUNK];
-static uint8_t wav_gpio_buf[WAV_CHUNK];
 static raw_pulse_t pulse_buf[PULSE_CHUNK];
+static uint32_t pulse_ticks[PULSE_CHUNK];
 
 static wav_info_t s_info;
 static mzf_stream_info_t s_mzf_info;
@@ -45,13 +39,15 @@ static edge_stream_info_t s_edge_info;
 static bool s_binary_tape = false;
 static bool s_edge_tape = false;
 static bool s_tap_tape = false;
+static uint64_t s_wav_final_us;
+static bool player_is_wav(void) { return !s_binary_tape && !s_edge_tape && !s_tap_tape; }
 static tap_speed_t s_tap_speed = TAP_SPEED_1400;
 static tap_stream_info_t s_tap_info;
 static uint64_t s_tap_ticks, s_tap_queued_us, s_tap_final_us;
 static uint64_t s_binary_elapsed_us, s_binary_final_us;
 /* 64 KiB UI metadata, allocated once in PSRAM at init, never used by ISR/DMA. */
 static uint8_t *s_record_modes;
-static char s_record_modes_path[256];
+static char s_record_modes_path[1024];
 static bool s_binary_waiting, s_binary_motor_low_seen;
 static int64_t s_binary_wait_until, s_binary_pause_remaining;
 static uint64_t player_binary_elapsed_us(void);
@@ -59,22 +55,10 @@ static bool s_ultrafast_enabled = false;
 static int s_playing = 0;
 static int s_eof = 0;
 static int s_read_error = 0;
-static uint8_t s_hyst = 0;
 static player_state_t s_state = PLAYER_STATE_IDLE;
 static player_pause_reason_t s_pause_reason = PLAYER_PAUSE_NONE;
 static SemaphoreHandle_t s_player_mutex = NULL;
 static TaskHandle_t s_player_task = NULL;
-
-/*
- * WAV staging state:
- *
- * A read block is retained until raw_out accepted every byte.  The old code
- * read a block and discarded its unwritten suffix if raw_out_write() ever
- * returned a partial count.  Normally the FIFO is large enough that this is
- * rare, but EOF must not depend on that assumption.
- */
-static size_t s_wav_pending_pos = 0;
-static size_t s_wav_pending_len = 0;
 
 /*
  * Pulse staging state.  A stream pulse is never discarded after it was read
@@ -86,7 +70,7 @@ static size_t s_pulse_pending_len = 0;
 
 /* Playback information for UI. */
 static uint32_t s_bytes_queued = 0;
-static char s_current_path[256];
+static char s_current_path[1024];
 
 static void player_service_locked(void);
 
@@ -128,7 +112,7 @@ static void player_task_loop(void *arg)
 
 static bool player_uses_pulse_output(void)
 {
-    return s_binary_tape || s_edge_tape || s_tap_tape;
+    return true;
 }
 
 static bool path_is_binary_tape(const char *path)
@@ -145,6 +129,9 @@ static bool path_is_binary_tape(const char *path)
     }
 
     return (strcasecmp(ext, ".mzf") == 0) ||
+           (strcasecmp(ext, ".mzq") == 0) ||
+           (strcasecmp(ext, ".qdf") == 0) ||
+           (strcasecmp(ext, ".qd") == 0) ||
            (strcasecmp(ext, ".mzt") == 0) ||
            (strcasecmp(ext, ".m12") == 0);
 }
@@ -153,18 +140,6 @@ static bool path_is_edge_tape(const char *path)
 {
     return edge_stream_is_edge_path(path);
 }
-
-static void player_reset_wav_pending(void)
-{
-    s_wav_pending_pos = 0;
-    s_wav_pending_len = 0;
-}
-
-static bool player_wav_has_pending(void)
-{
-    return s_wav_pending_pos < s_wav_pending_len;
-}
-
 
 static void player_reset_pulse_pending(void)
 {
@@ -197,6 +172,12 @@ static void player_mark_pulse_source_end(void)
         return;
     }
 
+    if(player_is_wav()) {
+        if(wav_pulse_stream_error()) s_read_error=1;
+        else if(wav_pulse_stream_eof()) s_eof=1;
+        else s_read_error=1;
+        return;
+    }
     if (edge_stream_has_error()) {
         s_read_error = 1;
     } else if (edge_stream_is_eof() ||
@@ -207,57 +188,12 @@ static void player_mark_pulse_source_end(void)
     }
 }
 
-/* Convert 8-bit WAV PCM to one-bit GPIO using threshold + hysteresis. */
-static void convert_block(const uint8_t *src, uint8_t *dst, size_t len)
-{
-    for (size_t i = 0; i < len; i++) {
-        uint8_t v = src[i];
-
-        if (s_hyst == 0U) {
-            if (v >= WAV_HIGH_THR) {
-                s_hyst = 1U;
-            }
-        } else {
-            if (v <= WAV_LOW_THR) {
-                s_hyst = 0U;
-            }
-        }
-
-        dst[i] = s_hyst ? 0xFFU : 0x00U;
-    }
-}
-
-/*
- * Mark the stream finished only after every last WAV byte is queued in the
- * GPTimer FIFO.  raw_timer_finish() then lets raw_timer hold the final
- * sample for its full duration and emit the final transition to idle LOW.
- */
-static void player_finish_wav_source_if_drained(void)
-{
-    if (s_eof || s_read_error || player_wav_has_pending()) {
-        return;
-    }
-
-    if (wav_reader_has_error()) {
-        s_read_error = 1;
-        return;
-    }
-
-    if (wav_reader_is_eof()) {
-        s_eof = 1;
-        raw_out_finish();
-    }
-}
-
 static void player_finish_stop(player_state_t final_state)
 {
     if (s_tap_tape) s_tap_final_us = raw_pulse_get_completed_us();
+    if (player_is_wav()) s_wav_final_us=raw_pulse_get_completed_us();
     if (s_binary_tape) s_binary_final_us = player_binary_elapsed_us();
-    if (player_uses_pulse_output()) {
-        raw_pulse_stop();
-    } else {
-        raw_out_stop();
-    }
+    raw_pulse_stop();
 
     wav_reader_close();
     mzf_stream_close();
@@ -267,8 +203,6 @@ static void player_finish_stop(player_state_t final_state)
     s_playing = 0;
     s_eof = 0;
     s_read_error = 0;
-    s_hyst = 0;
-    player_reset_wav_pending();
     player_reset_pulse_pending();
     s_state = final_state;
     s_pause_reason = PLAYER_PAUSE_NONE;
@@ -289,73 +223,6 @@ static void player_finish_stop(player_state_t final_state)
     /* s_current_path intentionally remains for the UI. */
 }
 
-/*
- * Feed sample-output FIFO.  The output buffer is never advanced past a byte
- * that raw_out did not accept, including the final non-full WAV block.
- */
-static bool player_feed_one_wav_chunk(void)
-{
-    size_t written;
-
-    if (s_eof || s_read_error) {
-        return false;
-    }
-
-    if (!player_wav_has_pending()) {
-        size_t free_bytes = raw_out_free();
-        size_t request;
-        size_t n;
-
-        if (free_bytes == 0U) {
-            return false;
-        }
-
-        request = (free_bytes < WAV_CHUNK) ? free_bytes : WAV_CHUNK;
-        n = wav_reader_read(wav_buf, request);
-
-        if (n == 0U) {
-            if (wav_reader_has_error()) {
-                s_read_error = 1;
-            } else if (wav_reader_is_eof()) {
-                s_eof = 1;
-                raw_out_finish();
-            } else {
-                s_read_error = 1;
-            }
-            return false;
-        }
-
-        convert_block(wav_buf, wav_gpio_buf, n);
-        s_wav_pending_pos = 0U;
-        s_wav_pending_len = n;
-    }
-
-    written = raw_out_write(&wav_gpio_buf[s_wav_pending_pos],
-                            s_wav_pending_len - s_wav_pending_pos);
-
-    if (written > 0U) {
-        s_wav_pending_pos += written;
-        s_bytes_queued += (uint32_t)written;
-    }
-
-    if (!player_wav_has_pending()) {
-        player_reset_wav_pending();
-        player_finish_wav_source_if_drained();
-    }
-
-    return written > 0U;
-}
-
-/* Kept as the common sample-output feeder entry point. */
-static bool player_feed_one_chunk(void)
-{
-    if (s_binary_tape || s_edge_tape) {
-        return false;
-    }
-
-    return player_feed_one_wav_chunk();
-}
-
 static bool player_fill_pulse_pending(void)
 {
     size_t count = 0U;
@@ -364,14 +231,15 @@ static bool player_fill_pulse_pending(void)
         return false;
     }
 
-    while (count < PULSE_CHUNK) {
+    bool native=raw_pulse_native_ticks16();
+    while (count < (player_is_wav() ? 32U:PULSE_CHUNK)) {
         uint8_t level = 0U;
         uint32_t duration_us = 0U;
         bool count_pulse = true;
         bool ok;
 
         if (s_binary_tape) {
-            ok = mzf_stream_next_pulse(&level, &duration_us);
+            ok = native ? mzf_stream_next_ticks16(&level,&duration_us):mzf_stream_next_pulse(&level, &duration_us);
         } else if (s_tap_tape) {
             uint32_t ticks;
             ok = tap_stream_next_pulse(&level, &ticks, &count_pulse);
@@ -381,9 +249,12 @@ static bool player_fill_pulse_pending(void)
                  * The source retains 16 MHz ticks for a future native HAL. */
                 s_tap_ticks += ticks;
                 uint64_t end_us = (s_tap_ticks + 8U) / 16U;
-                duration_us = (uint32_t)(end_us - s_tap_queued_us);
+                duration_us = native ? ticks:(uint32_t)(end_us - s_tap_queued_us);
                 s_tap_queued_us = end_us;
             }
+        } else if(player_is_wav()) {
+            ok=native ? wav_pulse_stream_next_ticks16(&level,&duration_us):wav_pulse_stream_next(&level,&duration_us);
+            count_pulse=level!=0;
         } else {
             ok = edge_stream_next_pulse(&level, &duration_us, &count_pulse);
         }
@@ -393,8 +264,11 @@ static bool player_fill_pulse_pending(void)
             break;
         }
 
+        pulse_ticks[count]=native && !s_edge_tape ? duration_us:duration_us*16U;
         pulse_buf[count].level = level ? 1U : 0U;
-        pulse_buf[count].count_pulse = count_pulse ? 1U : 0U;
+        pulse_buf[count].count_pulse = count_pulse ? RAW_PULSE_COUNT : 0U;
+        if((s_edge_tape && edge_stream_monitor_muted()) || (!count_pulse && s_tap_tape && duration_us >= (native ? 1600000U:100000U)))
+            pulse_buf[count].count_pulse |= RAW_PULSE_MONITOR_MUTE;
         pulse_buf[count].duration_us = duration_us == 0U ? 1U : duration_us;
         count++;
     }
@@ -414,8 +288,9 @@ static bool player_feed_one_pulse_chunk(void)
     }
 
     if (player_pulse_has_pending()) {
-        written = raw_pulse_write(&pulse_buf[s_pulse_pending_pos],
-                                  s_pulse_pending_len - s_pulse_pending_pos);
+        written = raw_pulse_native_ticks16() ?
+            raw_pulse_write_ticks16(&pulse_buf[s_pulse_pending_pos],&pulse_ticks[s_pulse_pending_pos],s_pulse_pending_len-s_pulse_pending_pos):
+            raw_pulse_write(&pulse_buf[s_pulse_pending_pos],s_pulse_pending_len-s_pulse_pending_pos);
         if (written != 0U) {
             s_pulse_pending_pos += written;
             s_bytes_queued += (uint32_t)written;
@@ -449,10 +324,8 @@ void player_init(void)
     s_playing = 0;
     s_eof = 0;
     s_read_error = 0;
-    s_hyst = 0U;
     s_state = PLAYER_STATE_IDLE;
     s_pause_reason = PLAYER_PAUSE_NONE;
-    player_reset_wav_pending();
     player_reset_pulse_pending();
     s_bytes_queued = 0U;
     s_binary_tape = false;
@@ -508,8 +381,6 @@ void player_start(const char *path)
     memset(&s_edge_info, 0, sizeof(s_edge_info));
     s_eof = 0;
     s_read_error = 0;
-    s_hyst = 0U;
-    player_reset_wav_pending();
     player_reset_pulse_pending();
 
     if (s_binary_tape) {
@@ -551,24 +422,15 @@ void player_start(const char *path)
         }
     }
 
+    if(player_is_wav() && !wav_pulse_stream_begin(s_info.sample_rate)) {
+        wav_reader_close();s_state=PLAYER_STATE_ERROR;player_unlock();return;
+    }
     snprintf(s_current_path, sizeof(s_current_path), "%s", path ? path : "");
     s_bytes_queued = 0U;
 
-    if (player_uses_pulse_output()) {
-        raw_out_stop();
-        raw_out_set_sample_output_enabled(false);
-        raw_pulse_set_rmt_enabled(false);
-        raw_pulse_init();
-        raw_pulse_set_output_enabled(true);
-        raw_pulse_clear_underrun();
-    } else {
-        raw_pulse_set_rmt_enabled(false);
-        raw_pulse_set_output_enabled(false);
-        raw_out_set_sample_output_enabled(true);
-        raw_out_init((int)s_info.sample_rate);
-        raw_out_stop();
-        raw_out_clear_underrun();
-    }
+    raw_pulse_init();
+    raw_pulse_set_output_enabled(true);
+    raw_pulse_clear_underrun();
 
     printf("player: START sr=%" PRIu32 "%s\n",
            s_tap_tape ? 0U : s_binary_tape ? s_mzf_info.sample_rate :
@@ -580,19 +442,10 @@ void player_start(const char *path)
     s_state = PLAYER_STATE_PLAYING;
     s_pause_reason = PLAYER_PAUSE_NONE;
 
-    /* Prefill before starting the physical output stream. */
-    if (player_uses_pulse_output()) {
-        while (raw_pulse_level() < PULSE_PREFILL_PULSES && !s_read_error) {
-            if (!player_feed_one_pulse_chunk()) {
-                break;
-            }
-        }
-    } else {
-        while (raw_out_level() < PLAYER_PREFILL_BYTES && !s_eof) {
-            if (!player_feed_one_chunk()) {
-                break;
-            }
-        }
+    /* Prefill bounded source work before starting the physical output. */
+    while (raw_pulse_level()<PULSE_PREFILL_PULSES && !s_read_error &&
+           (!player_is_wav() || wav_pulse_stream_queued_us()<300000)) {
+        if(!player_feed_one_pulse_chunk()) break;
     }
 
     if (s_read_error) {
@@ -602,15 +455,14 @@ void player_start(const char *path)
         return;
     }
 
-    if ((player_uses_pulse_output() && raw_pulse_level() == 0U) ||
-        (!player_uses_pulse_output() && raw_out_level() == 0U)) {
+    if (raw_pulse_level() == 0U) {
         printf("player: no data\n");
         player_finish_stop(PLAYER_STATE_ERROR);
         player_unlock();
         return;
     }
 
-    if (player_uses_pulse_output() && !raw_pulse_start()) {
+    if (!raw_pulse_start()) {
         printf("player: pulse start fail\n");
         player_finish_stop(PLAYER_STATE_ERROR);
         player_unlock();
@@ -619,13 +471,6 @@ void player_start(const char *path)
 
     if (player_uses_pulse_output() && !raw_pulse_service()) {
         printf("player: pulse service fail\n");
-        player_finish_stop(PLAYER_STATE_ERROR);
-        player_unlock();
-        return;
-    }
-
-    if (!player_uses_pulse_output() && !raw_out_start()) {
-        printf("player: raw start fail\n");
         player_finish_stop(PLAYER_STATE_ERROR);
         player_unlock();
         return;
@@ -655,11 +500,7 @@ void player_pause_user(void)
         s_binary_pause_remaining=s_binary_waiting ? s_binary_wait_until-esp_timer_get_time() : 0;
         if(s_binary_pause_remaining<0) s_binary_pause_remaining=0;
     }
-    if (player_uses_pulse_output()) {
-        raw_pulse_pause();
-    } else {
-        raw_out_pause();
-    }
+    raw_pulse_pause();
 
     s_playing = 0;
     s_state = PLAYER_STATE_PAUSED;
@@ -681,11 +522,7 @@ void player_resume_user(void)
         mzf_stream_pause_ul(false);
         if(s_binary_waiting) s_binary_wait_until=esp_timer_get_time()+s_binary_pause_remaining;
     }
-    if (player_uses_pulse_output()) {
-        raw_pulse_resume();
-    } else {
-        raw_out_resume();
-    }
+    raw_pulse_resume();
 
     s_playing = 1;
     s_state = PLAYER_STATE_PLAYING;
@@ -706,11 +543,7 @@ void player_pause_motor(void)
         return;
     }
 
-    if (player_uses_pulse_output()) {
-        raw_pulse_pause();
-    } else {
-        raw_out_pause();
-    }
+    raw_pulse_pause();
 
     s_playing = 0;
     s_state = PLAYER_STATE_PAUSED;
@@ -729,11 +562,7 @@ void player_resume_motor(void)
     }
 
     if(s_binary_tape && s_binary_waiting) s_binary_wait_until=esp_timer_get_time()+mzf_stream_boundary_delay_us(true);
-    if (player_uses_pulse_output()) {
-        raw_pulse_resume();
-    } else {
-        raw_out_resume();
-    }
+    raw_pulse_resume();
 
     s_playing = 1;
     s_state = PLAYER_STATE_PLAYING;
@@ -782,6 +611,26 @@ bool player_is_ultrafast_active(void)
     return mzf_stream_is_ultrafast_active();
 }
 
+/* Normal/turbo MZT continues record-by-record. An UL record only continues
+ * into a non-UL profile, matching the reference loader's return contract. */
+static int player_continue_mzt(bool after_ul) {
+    const sharp_stream_info_t *current=mzf_stream_details();
+    if(current->format!=FILE_FORMAT_MZT || current->record>=current->records) return 0;
+    uint16_t next=current->record+1;
+    loader_mode_t mode=mzf_stream_get_loader_mode();
+    if(s_record_modes && !strcmp(s_record_modes_path,s_current_path) && s_record_modes[next]!=255)
+        mode=(loader_mode_t)s_record_modes[next];
+    loader_mode_t resolved=sidecar_resolve(s_current_path,next,mode,NULL);
+    if(after_ul && (resolved==LOADER_MODE_UL || resolved==LOADER_MODE_UL_MZ800 || resolved==LOADER_MODE_UL_MZ700)) return 0;
+    if(!mzf_stream_continue_mzt(s_current_path,mode,&s_mzf_info)) return -1;
+    s_binary_elapsed_us=s_binary_final_us=0;
+    s_binary_waiting=false;s_binary_motor_low_seen=false;s_eof=s_read_error=0;s_bytes_queued=0;
+    player_reset_pulse_pending();raw_pulse_init();
+    while(raw_pulse_level()<PULSE_PREFILL_PULSES && !s_read_error) {
+        if(!player_feed_one_pulse_chunk()) break;
+    }
+    return !s_read_error && raw_pulse_start() ? 1:-1;
+}
 static void player_service_locked(void)
 {
     if (!s_playing) {
@@ -794,8 +643,8 @@ static void player_service_locked(void)
             printf("player: ULTRA ERROR\n");
             player_finish_stop(PLAYER_STATE_ERROR);
         } else if (mzf_stream_is_eof()) {
-            printf("player: ULTRA END\n");
-            player_finish_stop(PLAYER_STATE_EOF);
+            int next=player_continue_mzt(true);
+            if(next<=0) player_finish_stop(next<0 ? PLAYER_STATE_ERROR:PLAYER_STATE_EOF);
         }
         return;
     }
@@ -807,8 +656,10 @@ static void player_service_locked(void)
             return;
         }
 
+        uint64_t wav_read_start=wav_pulse_stream_samples();
         while (!s_read_error && raw_pulse_free() != 0U &&
-               (!s_eof || player_pulse_has_pending())) {
+               (!s_eof || player_pulse_has_pending()) &&
+               (!player_is_wav() || wav_pulse_stream_samples()-wav_read_start<65536)) {
             if (!player_feed_one_pulse_chunk()) {
                 break;
             }
@@ -861,7 +712,11 @@ static void player_service_locked(void)
             }
             if (esp_timer_get_time() < s_binary_wait_until) return;
             if (!mzf_stream_advance()) { player_finish_stop(PLAYER_STATE_ERROR); return; }
-            if (mzf_stream_is_eof()) { player_finish_stop(PLAYER_STATE_EOF); return; }
+            if (mzf_stream_is_eof()) {
+                int next=player_continue_mzt(false);
+                if(next<=0) player_finish_stop(next<0 ? PLAYER_STATE_ERROR:PLAYER_STATE_EOF);
+                return;
+            }
             s_binary_motor_low_seen = false;
             raw_pulse_init();
             s_binary_waiting = false;
@@ -891,42 +746,7 @@ static void player_service_locked(void)
         return;
     }
 
-    /*
-     * Feed until the FIFO is full or the source is completely handed to the
-     * backend.  Unlike the old >= WAV_CHUNK condition, this also flushes a
-     * retained partial block when only a few FIFO positions are free.
-     */
-    while (!s_eof && !s_read_error && raw_out_free() != 0U) {
-        if (!player_feed_one_chunk()) {
-            break;
-        }
-    }
 
-    if (s_read_error) {
-        printf("player: READ ERROR\n");
-        player_finish_stop(PLAYER_STATE_ERROR);
-        return;
-    }
-
-    if (raw_out_is_underrun()) {
-        if (s_eof) {
-            printf("player: END\n");
-            player_finish_stop(PLAYER_STATE_EOF);
-        } else {
-            printf("player: UNDERRUN\n");
-            player_finish_stop(PLAYER_STATE_UNDERRUN);
-        }
-        return;
-    }
-
-    /*
-     * raw_timer_level() includes a final sample held for its last period, so
-     * this cannot turn the line LOW before the terminal waveform is complete.
-     */
-    if (s_eof && raw_out_level() == 0U) {
-        printf("player: END\n");
-        player_finish_stop(PLAYER_STATE_EOF);
-    }
 }
 
 void player_service(void)
@@ -942,11 +762,7 @@ void player_pause(void)
         return;
     }
 
-    if (player_uses_pulse_output()) {
-        raw_pulse_pause();
-    } else {
-        raw_out_pause();
-    }
+    raw_pulse_pause();
     s_playing = 0;
     s_state = PLAYER_STATE_PAUSED;
 }
@@ -957,11 +773,7 @@ void player_resume(void)
         return;
     }
 
-    if (player_uses_pulse_output()) {
-        raw_pulse_resume();
-    } else {
-        raw_out_resume();
-    }
+    raw_pulse_resume();
     s_playing = 1;
     s_state = PLAYER_STATE_PLAYING;
 }
@@ -1031,6 +843,10 @@ static uint64_t player_tap_elapsed_us(void)
 
 uint32_t player_get_position_seconds(void)
 {
+    if(player_is_wav()) {
+        uint64_t elapsed=s_state==PLAYER_STATE_EOF || s_state==PLAYER_STATE_STOPPED || s_state==PLAYER_STATE_ERROR ? s_wav_final_us:raw_pulse_get_completed_us();
+        return (uint32_t)(elapsed/1000000);
+    }
     if (s_tap_tape) return (uint32_t)(player_tap_elapsed_us() / 1000000ULL);
     if (s_binary_tape) return (uint32_t)(player_binary_elapsed_us() / 1000000ULL);
     if (s_binary_tape) {
@@ -1050,8 +866,7 @@ uint32_t player_get_position_seconds(void)
     }
 
     if (s_edge_tape) {
-        size_t level = player_uses_pulse_output() ?
-            raw_pulse_level() : raw_out_level();
+        size_t level = raw_pulse_level();
         uint32_t played_samples = 0U;
 
         if (s_state == PLAYER_STATE_EOF) {
@@ -1070,30 +885,18 @@ uint32_t player_get_position_seconds(void)
             played_samples / s_edge_info.sample_rate;
     }
 
-    if (s_info.byte_rate == 0U) {
-        return 0U;
-    }
-
-    if (s_state == PLAYER_STATE_EOF) {
-        return s_info.data_size / s_info.byte_rate;
-    }
-
-    size_t level = raw_out_level();
-    uint32_t played_bytes = 0U;
-
-    if (s_bytes_queued > (uint32_t)level) {
-        played_bytes = s_bytes_queued - (uint32_t)level;
-    }
-
-    if (played_bytes > s_info.data_size) {
-        played_bytes = s_info.data_size;
-    }
-
-    return played_bytes / s_info.byte_rate;
+    return 0;
 }
 
 uint8_t player_get_progress_percent(void)
 {
+    if(player_is_wav()) {
+        if(s_state==PLAYER_STATE_EOF) return 100;
+        uint64_t total=s_info.sample_rate ? ((uint64_t)s_info.data_size*1000000+s_info.sample_rate/2)/s_info.sample_rate:0;
+        uint64_t elapsed=s_state==PLAYER_STATE_STOPPED || s_state==PLAYER_STATE_ERROR ? s_wav_final_us:raw_pulse_get_completed_us();
+        uint64_t percent=total ? elapsed*100/total:0;
+        return percent>=100 ? 99:(uint8_t)percent;
+    }
     if (s_tap_tape) {
         if (s_state == PLAYER_STATE_EOF) return 100U;
         uint64_t total_us = (s_tap_info.total_ticks + 8U) / 16U;
@@ -1161,26 +964,7 @@ uint8_t player_get_progress_percent(void)
         return (uint8_t)((consumed * 100U) / total);
     }
 
-    if (s_info.data_size == 0U) {
-        return 0U;
-    }
-
-    if (s_state == PLAYER_STATE_EOF) {
-        return 100U;
-    }
-
-    size_t level = raw_out_level();
-    uint32_t played_bytes = 0U;
-
-    if (s_bytes_queued > (uint32_t)level) {
-        played_bytes = s_bytes_queued - (uint32_t)level;
-    }
-
-    if (played_bytes > s_info.data_size) {
-        played_bytes = s_info.data_size;
-    }
-
-    return (uint8_t)((played_bytes * 100U) / s_info.data_size);
+    return 0;
 }
 
 bool player_is_tap(void) { return s_tap_tape; }
@@ -1218,8 +1002,10 @@ bool player_prepare_record(const char *path,uint16_t record) {
 bool player_set_record_mode(loader_mode_t mode) {
     if((unsigned)mode>=LOADER_MODE_COUNT || s_state!=PLAYER_STATE_READY || !s_record_modes) return false;
     uint16_t record=mzf_stream_details()->record;
-    char path[256]; snprintf(path,sizeof(path),"%s",s_current_path);
+    char path[1024]; snprintf(path,sizeof(path),"%s",s_current_path);
     uint8_t previous=s_record_modes[record]; s_record_modes[record]=(uint8_t)mode;
     if(player_prepare_record(path,record)) return true;
     s_record_modes[record]=previous; return false;
 }
+
+bool player_monitor_active(void) {return player_get_state()==PLAYER_STATE_PLAYING && !player_is_ultrafast_active() && raw_pulse_monitor_active();}

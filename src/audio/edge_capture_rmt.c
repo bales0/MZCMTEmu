@@ -2,8 +2,8 @@
  * Compatibility facade only.
  *
  * The current recorder and older callers still use the edge_capture_rmt API,
- * but transport capture intentionally uses GPIO5 edge timestamps from
- * edge_capture.c.  No RMT RX/TX channel and no GPIO12 clock are created.
+ * but transport capture intentionally uses GPIO5 hardware-latched timestamps from
+ * edge_capture.c (or the selected diagnostic fallback). No RMT channel is created.
  */
 #include "audio/edge_capture_rmt.h"
 

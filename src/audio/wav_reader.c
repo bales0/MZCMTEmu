@@ -1,19 +1,20 @@
+#include "storage/fs.h"
 #include "audio/wav_reader.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
 
-static FILE *s_fp = NULL;
+static cmt_file_t *s_fp = NULL;
 static wav_info_t s_info;
 static uint32_t s_data_remaining = 0;
 static bool s_is_open = false;
 static bool s_read_error = false;
 
-static bool read_u16_le(FILE *fp, uint16_t *out)
+static bool read_u16_le(cmt_file_t *fp, uint16_t *out)
 {
     uint8_t b[2];
-    if (fread(b, 1, 2, fp) != 2) {
+    if (cmt_fread(b, 1, 2, fp) != 2) {
         return false;
     }
 
@@ -21,10 +22,10 @@ static bool read_u16_le(FILE *fp, uint16_t *out)
     return true;
 }
 
-static bool read_u32_le(FILE *fp, uint32_t *out)
+static bool read_u32_le(cmt_file_t *fp, uint32_t *out)
 {
     uint8_t b[4];
-    if (fread(b, 1, 4, fp) != 4) {
+    if (cmt_fread(b, 1, 4, fp) != 4) {
         return false;
     }
 
@@ -35,12 +36,12 @@ static bool read_u32_le(FILE *fp, uint32_t *out)
     return true;
 }
 
-static bool skip_bytes(FILE *fp, uint32_t n)
+static bool skip_bytes(cmt_file_t *fp, uint32_t n)
 {
-    return (fseek(fp, (long)n, SEEK_CUR) == 0);
+    return (cmt_fseek(fp, (long)n, SEEK_CUR) == 0);
 }
 
-static bool parse_wav_header(FILE *fp, wav_info_t *out)
+static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
 {
     char riff_id[4];
     uint32_t riff_size;
@@ -55,7 +56,7 @@ static bool parse_wav_header(FILE *fp, wav_info_t *out)
         return false;
     }
 
-    if (fread(riff_id, 1, 4, fp) != 4) {
+    if (cmt_fread(riff_id, 1, 4, fp) != 4) {
         return false;
     }
 
@@ -63,7 +64,7 @@ static bool parse_wav_header(FILE *fp, wav_info_t *out)
         return false;
     }
 
-    if (fread(wave_id, 1, 4, fp) != 4) {
+    if (cmt_fread(wave_id, 1, 4, fp) != 4) {
         return false;
     }
 
@@ -78,7 +79,7 @@ static bool parse_wav_header(FILE *fp, wav_info_t *out)
         char chunk_id[4];
         uint32_t chunk_size;
 
-        if (fread(chunk_id, 1, 4, fp) != 4) {
+        if (cmt_fread(chunk_id, 1, 4, fp) != 4) {
             break;
         }
 
@@ -118,7 +119,7 @@ static bool parse_wav_header(FILE *fp, wav_info_t *out)
             found_fmt = true;
         }
         else if (memcmp(chunk_id, "data", 4) == 0) {
-            long data_pos = ftell(fp);
+            long data_pos = cmt_ftell(fp);
             if (data_pos < 0) {
                 return false;
             }
@@ -167,7 +168,7 @@ static bool parse_wav_header(FILE *fp, wav_info_t *out)
 void wav_reader_close(void)
 {
     if (s_fp) {
-        fclose(s_fp);
+        cmt_fclose(s_fp);
         s_fp = NULL;
     }
 
@@ -187,19 +188,19 @@ bool wav_reader_open(const char *path, wav_info_t *info)
 
     wav_reader_close();
 
-    FILE *fp = fopen(path, "rb");
+    cmt_file_t *fp = cmt_fopen(path, "rb");
     if (!fp) {
         return false;
     }
 
     if (!parse_wav_header(fp, &tmp)) {
-        fclose(fp);
+        cmt_fclose(fp);
         return false;
     }
 
     // Přesuň file pointer na začátek audio dat
-    if (fseek(fp, (long)tmp.data_offset, SEEK_SET) != 0) {
-        fclose(fp);
+    if (cmt_fseek(fp, (long)tmp.data_offset, SEEK_SET) != 0) {
+        cmt_fclose(fp);
         return false;
     }
 
@@ -220,13 +221,13 @@ bool wav_reader_probe(const char *path, wav_info_t *info)
         return false;
     }
 
-    FILE *fp = fopen(path, "rb");
+    cmt_file_t *fp = cmt_fopen(path, "rb");
     if (!fp) {
         return false;
     }
 
     bool ok = parse_wav_header(fp, &tmp);
-    fclose(fp);
+    cmt_fclose(fp);
 
     if (!ok) {
         return false;
@@ -251,8 +252,8 @@ size_t wav_reader_read(uint8_t *dst, size_t max_len)
         to_read = (size_t)s_data_remaining;
     }
 
-    size_t n = fread(dst, 1, to_read, s_fp);
-    if (n < to_read && ferror(s_fp)) {
+    size_t n = cmt_fread(dst, 1, to_read, s_fp);
+    if (n < to_read && cmt_ferror(s_fp)) {
         s_read_error = true;
     }
 

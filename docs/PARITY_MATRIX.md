@@ -1,42 +1,36 @@
 # Matice funkční parity
 
-Stav k 12. 11. 2026: **kompletní port není hotov a není akceptovatelný jako první cílová verze**. Reference [SD2CMT2-Reborn](https://github.com/bales0/MZ-SD2CMT2-Reborn/tree/600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb), firmware 2.0.3.
+Stav 13. 11. 2026 vůči [SD2CMT2-Reborn 2.0.3 / 600a788](https://github.com/bales0/MZ-SD2CMT2-Reborn/tree/600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb). DONE znamená implementováno; TESTED znamená konkrétní host test s mock periferií/RTOS; HW-TESTED vyžaduje skutečné měření. **Žádná oblast zatím není HW-TESTED a úplná akceptace zadání není splněna.**
 
-Status je úroveň důkazu celé oblasti: DONE = implementováno; TESTED = ověřeno host testem; HW-TESTED = ověřeno na cílovém HW. BLOCKED zde znamená nesplněnou akceptaci z uvedeného důvodu (také dosud chybějící implementaci), nikoli tvrzení, že je nutná změna PCB. Žádná oblast není označena za splněnou jen přítomností starého modulu.
+| Oblast | Implementace | Stav SW / důkaz | Zbývající akceptace |
+|---|---|---|---|
+| Browser a PSRAM index | file_list.c | TESTED: test_file_list, 1000+ souborů, sort, parent/scroll, dvě lifetime alokace, cancel/retry | FAT long paths, plný limit a OLED při velkém adresáři |
+| MZF playback | sharp_stream.c, mzf_stream.c | TESTED: test_sharp_stream, test_player_sharp, test_player_rmt; celé intervaly všech 17 režimů | LOAD na MZ-700/800 a analyzátor |
+| MZT selektor/profily | player.c, sharp_stream.c, main.c | TESTED transport: individuální profily/MTI, navigace, STOP/replay; UI DONE | OLED a STOP/RETURN včetně jediného rekordu na HW |
+| MZT návaznost | sharp_stream_continue_mzt, player.c | TESTED: native/turbo a smíšené UL; UL→UL stop podle reference | Dlouhá sekvence se skutečným MOTOR |
+| M12 | sharp_stream.c, sidecar.c | TESTED: společný kodek/loadery a M2I | Skutečný M12 LOAD |
+| QuickDisk | formats/quickdisk.c | TESTED: MZQ/QDF CRC, HxC/FlashFloppy všech 16 MFM fází, cancel/bounds; všech 14 fixture má shodný výsledek s původními parsery, přijaté i shodná data | Skutečný LOAD, duration cache a úplný firmware na HW |
+| WAV PLAY | wav_pulse_stream.c, player.c | TESTED: všechny intervaly44100/22050/48000/11025 Hz, hystereze,256-sample runy, invert/pause/EOF; nativní RMT44100 Hz | Zatížení SD a fyzické časy |
+| LEP/L16 PLAY | edge_stream.c, raw_pulse_rmt.c | TESTED: signed intervaly, zero extension, preroll/tail, round-trip a RMT integrace | Soubory Sharp/MZTools oběma směry na HW |
+| ZX TAP | tap_stream.c, player.c | TESTED:4 rychlosti, pilot/sync/MSB/terminator/gap, všechny dodané TAP,2000 fuzz případů, cancel, oba TX backendy | Skutečný ZX/Sharp přijímač a timing |
+|17 režimů / Z80 loadery | formats/mz_tape_profiles.c, play/mzf_loader.c, mz700_fast3.c | TESTED: LOW/HIGH golden získané kompilací původních generátorů; bounds/fallback | IC/TC/FAST3 a cílové RAM varianty na Sharpu |
+| UL handshake | play/mzf_loader.c | TESTED:3 varianty, simulovaný peer, timeout/pause, safe GPIO handoff | Elektrické úrovně, reálný peer, všechny chybové návraty |
+| MFI/M2I/MTI / AUTO | formats/sidecar.c | TESTED: manuální priorita, case-insensitive TYPE, per-record fallback, chyby a export MFI | SD soubory z externích nástrojů |
+| WAV RECORD | recorder.c, wav_writer.c | TESTED: absolutní sample fáze22/44k, RIFF odd pad, overflow guard, write/seek/flush/close fail | Dlouhý SAVE, FAT32 limit a SD timing |
+| LEP/L16 RECORD | recorder.c, edge_writer.c | TESTED: nezávislé zaokrouhlení,127 extension/placeholder/tail,8 generací, chyby zápisu | Capture pause/idle a opakované kopie s MZTools/HW |
+| MZF RECORD | mz_tape_decoder.c, mzf_writer.c | TESTED: NORMAL/IC/TC, checksum, normalizace loaderu, druhá kopie,0/65535 B, incomplete/delete | SAVE na skutečném Sharpu |
+| AutoName / klasifikace | record_autoname.c, record_rename.c, mz_title.c | TESTED: Sharp/IC/TC, Sinclair a CP/M4 rychlosti, názvy, checksum, kolize_01…_99, live pre-quantization | Dlouhý rychlý záznam a cizí tituly na HW |
+| RECORD řízení | recorder.c, main.c | TESTED core: user/MOTOR/AUTO, pause priority, overrun, removal, sequence exhaustion | Fyzická tlačítka a MOTOR souběh |
+| Asynchronní finalize | recorder.c, storage/fs.c | TESTED: odložený job, frozen UI state/path, cancel a removal nesmějí hlásit SAVED; bounded async slot | Skutečný FreeRTOS/FAT souběh a vizuální SAVING |
+| PLAY řízení | player.c, main.c | TESTED core: prefill/drain, user pause priority, MOTOR, EOF/underrun/replay, formátové hranice | Latence fyzických povelů a skutečná fronta za zátěže |
+| SENSE/monitor/S1 | app/cmt_bus_policy.h, route_switch.c, main.c | TESTED policy: READY HIGH, WAIT/pause SENSE LOW, mute, UL ownership, EXT priorita a40 ms debounce | Neinvertující U1/U2 potvrzeny uživatelem; napětí/reset/monitor latence neměřeny |
+| Tlačítka | drivers/buttons.c | TESTED:30 ms debounce, long/short STOP, chord priority, startup-held, repeat a tick wrap | Ergonomie/latence na fyzických klávesách |
+| SD lifecycle | drivers/sdcard.c, main.c | TESTED driver: init/mount/unmount/free failure/retry bez ztráty resource handle; UI recovery DONE | Vyjmutí při skutečné operaci, opětovné vložení, jiná karta |
+| SD jediný vlastník | storage/fs.c | TESTED skutečná ESP větev se simulovanou frontou: native IO pouze worker,8 slotů/1 KiB cache, seek patch v RAM, pool exhaustion, ISR refusal, faults | Reálný scheduler, blokující SD latency a stack/heap maxima |
+| NVS / menu | settings_codec.c, nvs_settings.c, loader_choice.h, main.c | TESTED core: CRC/version/ranges, migracev1→v2, no rewrite,17 módů a remembered speed; SYSTEM/ABOUT/KEYMAP/brightness DONE | Restart/recovery po výpadku a OLED vizuální QA |
+| OLED | ui.c, oled.c, main.c | TESTED driver/UI: page addressing,20 Hz dirty refresh,10 ms I²C timeout, retry po chybě, clipping a jas; obrazovky DONE | Bez screenshotu/měření na připojeném OLED; latence za zátěže |
+| RMT TX DMA | audio/raw_pulse_rmt.c | TESTED produkční encoder:12000 intervalů/refill, jediná transakce, native ticks, long runs, clock pause, stop/error/replay, no start allocation; target build | Retence při clock gate a bezspárovost DMA musí projít analyzátorem |
+| MCPWM HW RX | audio/edge_capture.c | TESTED produkční driver: latch/IRQ delay, wrap/multi-wrap idle, stale IRQ, pending pause tail, overflow, init failure, no start allocation; target build | First edge, cache stalls, zatížení a detekce ztráty hran na HW |
+| N16R8 / footprint | platformio.ini, sdkconfig | TESTED build/image:16MB header, octal PSRAM config; RAM153372 B, aplikace454617 B; callbacky IRAM/FIFO DRAM | Boot, skutečná PSRAM a hodinový heap/stack/fragmentace stress |
 
-| Oblast | Implementační modul nyní | Status | Referenční soubor | Důkaz a zbývající práce |
-|---|---|---|---|---|
-| Browser | src/file_list.c; src/main.c | BLOCKED | ui/browser.cpp; drivers/sdcard.cpp | 512 položek, alokace jmen/cest; TAP filtr ověřen integračně, bez testů obnovy a dlouhých adresářů — test dosud chybí |
-| MZF playback | src/audio/mzf_stream.c | BLOCKED | play/mzf_playback.cpp; formats/mz_tape_profiles.cpp | Pevné 208/416 µs nejsou referenční profily; chybí golden waveform — test dosud chybí |
-| MZT selector | src/audio/mzf_stream.c; src/main.c | BLOCKED | play/mzf_playback.cpp; play/play_controller.cpp; ui/browser.cpp | Chybí mini-browser, jednotlivé profily, MTI a čas rekordu — test dosud chybí |
-| M12 | src/audio/mzf_stream.c | BLOCKED | play/mzf_playback.cpp; formats/mzi_sidecar.cpp | Základní zdroj existuje; chybí loadery a M2I — test dosud chybí |
-| QuickDisk MZQ/QDF/QD | žádný parser | BLOCKED | play/mzf_playback.cpp; ui/browser.cpp | Neimplementováno; CRC/offsety/HxC/FlashFloppy neověřeny — test dosud chybí |
-| WAV play | src/audio/wav_reader.c; player.c; raw_timer.c | BLOCKED | formats/wav_reader.cpp; streams/wav_sample_stream.cpp; drivers/wav_playback_driver.cpp | GPTimer sample ISR; chybí waveform test a jednotný TX — test dosud chybí |
-| LEP/L16 play | src/audio/edge_stream.c; raw_pulse.c | BLOCKED | play/edge_playback.cpp | Host round-trip pokrývá znaménka, extension, preroll/tail; úplná reference a HW neověřeny — [host test](../tests/host/test_recorder.c), [výsledky](TEST_REPORT.md) |
-| ZX TAP | src/audio/tap_stream.c; player.c; raw_pulse.c; src/main.c | TESTED | play/tap_playback.cpp; play/tap_speed.cpp | [Golden parser/waveform a fuzz](../tests/host/test_tap_stream.c), [skutečný player/ISR s mock periferií](../tests/host/test_player_tap.c), [výstup](validation/tap-host.txt). 1400/1800/2100/2500, menu, sync/pilot/data/gap a bad-file validace. HW a RMT DMA neověřeny; rychlost zatím není perzistentní. |
-| Všech 17 loader modes | src/audio/mzf_stream.c | BLOCKED | play/loader_mode.h; formats/mz_tape_profiles.cpp; play/mzf_loader.cpp | Neimplementována úplná tabulka ani generování loaderů — test dosud chybí |
-| UL handshake | src/audio/mzf_stream.c | BLOCKED | play/mzf_loader.cpp; play/mzf_playback.cpp; play/play_controller.cpp | Částečné UL; chybí všechny varianty, adresní kontroly a testy — test dosud chybí |
-| MFI/M2I/MTI | žádný parser | BLOCKED | formats/mzi_sidecar.cpp; guide/MFI_M2I_MTI_FORMAT.md | Neimplementováno — test dosud chybí |
-| AUTO loader | src/audio/mzf_stream.c | BLOCKED | play/play_engine.cpp; play/mzf_playback.cpp | Chybí metadata i úplný reset na NORMAL 1:1 — test dosud chybí |
-| WAV record | src/audio/recorder.c; wav_writer.c | BLOCKED | record/wav_record_engine.cpp; drivers/wav_record_driver.cpp | Host fáze a RIFF procházejí; chyby FS, dlouhý idle, 4GB hranice a HW chybí — [host test](../tests/host/test_recorder.c), [výsledky](TEST_REPORT.md) |
-| LEP/L16 record | src/audio/recorder.c; edge_writer.c; edge_capture.c | BLOCKED | record/edge_record_driver.cpp; record/edge_record_engine.cpp | Residual odstraněn; host hranice/round-trip prošly. Pause ve stejné úrovni a capture na HW neověřeny — [host test](../tests/host/test_recorder.c), [výsledky](TEST_REPORT.md) |
-| MZF record | žádný dekodér | BLOCKED | record/mzf_record_engine.cpp; formats/mz_tape_decoder.cpp | Neimplementováno včetně checksum/recovery/duplicit — test dosud chybí |
-| AutoName | žádná implementace | BLOCKED | record/record_autoname.cpp; formats/mz_title.cpp; record/record_engine.cpp | Neimplementováno včetně kolizí a sidecar rename — test dosud chybí |
-| RECORD klasifikace | žádná implementace | BLOCKED | record/record_autoname.cpp; formats/mz_tape_decoder.cpp; formats/mz_loader_profiles.cpp | Chybí NORMAL/IC/TC/MZ700/CPM/Sinclair a rychlý lock — test dosud chybí |
-| RECORD ovládání | src/audio/recorder.c; src/main.c | BLOCKED | record/record_engine.cpp; ui/record_menu.cpp; ui/record_screen.cpp | Host user pause/MOTOR/AUTO/cancel/error prošly; fyzické hrany a tlačítka chybí — [host test](../tests/host/test_recorder.c), [výsledky](TEST_REPORT.md) |
-| PLAY ovládání | src/audio/player.c; src/main.c | BLOCKED | play/play_controller.cpp; play/play_engine.cpp | Chybí jednotný transport a výběr rekordů. TAP testuje skutečné pauzy/underrun/replay a opravu předčasného EOF při MOTOR pause — [test](../tests/host/test_player_tap.c) |
-| SENSE/monitor/CMT trasa | src/main.c; src/audio/mzf_stream.c | BLOCKED | drivers/mzio.cpp; drivers/monitor_mute.cpp | Fyzický přepínač S1; SW stav neřídí mux. Typy U1/U2 a měření úrovní chybí — test dosud chybí |
-| SD lifecycle | src/drivers/sdcard.c; src/main.c | BLOCKED | drivers/sdcard.cpp; ui/browser.cpp; main.cpp | SPI DMA existuje; record→browser/reinit/remove/write-error neotestovány — test dosud chybí |
-| Nastavení | src/main.c | BLOCKED | drivers/calibration_store.cpp; ui/menu.cpp; ui/record_menu.cpp; ui/settings_menu.cpp | Chybí NVS schéma, migrace a všechny volby — test dosud chybí |
-| OLED | src/ui/ui.c; src/drivers/oled.c; src/main.c | BLOCKED | src/ui/*.cpp | Dirty pages existují; chybí kompletní obrazovky a UI latence — test dosud chybí |
-| Realtime TX/RX a vlastnictví | src/audio/raw_pulse.c; raw_timer.c; edge_capture.c | BLOCKED | zadání §5; ESP-IDF RMT/MCPWM | RMT TX no-op, RX GPIO ISR+GPTimer. Chybí kontinuální DMA, HW timestamp capture a zatěžovací měření — test dosud chybí |
-
-## Dokončený dílčí zásah
-
-| Požadavek | Modul | Status | Reference | Test |
-|---|---|---|---|---|
-| Nezávislá kvantizace LEP/L16 bez residualu a jeho resetů | src/audio/recorder.c | TESTED | record/edge_record_driver.cpp: edge_quantize_short_from_isr | [test_edges](../tests/host/test_recorder.c), původní verze FAIL, opravená PASS; [report](TEST_REPORT.md) |
-
-Testovací timing vstupy všech 13 statických profilů slouží pouze pro regresi rekordéru. Nejsou golden waveform testem 17 loader modes, loaderů nebo UL. Pro žádnou oblast nebyl proveden HW test.
-
-TAP byl doplněn v necommitovaných pracovních změnách na výslovný pokyn uživatele. Nevznikl nový commit, větev ani push. Status TESTED pro TAP označuje software a simulovaný HAL; časování na desce, OLED ovládání a funkční LOAD musí ještě projít HW akceptací. Ostatní povinné oblasti zůstávají otevřené.
+Aktuální logy jsou [port-host](validation/port-host.txt), [port-build](validation/port-build.txt), [port-image](validation/port-image.txt) a [kontrolní součty fixture](validation/fixture-sha256.json). Metodika a omezení jsou v [TEST_REPORT](TEST_REPORT.md); historické reporty TAP/počátečního rekordéru nejsou aktuální inventurou chybějících funkcí.

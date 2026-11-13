@@ -1,0 +1,193 @@
+gcc.exe (i686-posix-dwarf-rev0, Built by MinGW-W64 project) 5.1.0
+PASS actual OLED/UI: SSD1306 page mode, bounded batched packets, 20Hz dirty refresh, clipped text, no unchanged writes, missing-device timeout and command/data failure retry
+PASS real buttons: 30ms debounce, startup-held suppression, STOP chord priority, one short/long event, repeat delay/rate and tick wrap
+SPI bus init FAIL (-1)
+SD mount FAIL (-1)
+SD mount OK
+SD unmount FAIL (-1)
+SD unmount FAIL (-1)
+SD mount OK
+SPI bus free FAIL (-1)
+SPI bus free FAIL (-1)
+SD mount OK
+PASS real SD lifecycle driver: SPI DMA and pinmap preserved, init/mount/unmount/free failures retain resources until successful retry; no format/write probe
+PASS actual storage worker/cache: native operations only on owner, byte IO batched, seek/ungetc/EOF, exclusive creation, pool exhaustion, nested calls, ISR refusal and error propagation
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+player: START sr=44100
+player: END
+player: START sr=62500 edge
+player: END
+PASS actual player/RMT DMA integration for all 17 Sharp modes including simulated UL peer, all four TAP speeds, WAV and L16; exact active duration, user-pause precedence and safe GPIO handoff
+PASS real RMT DMA encoder: one continuous transaction through repeated refills, exact split long runs, physical levels/inversion, 32-bit duration carry and complete EOF
+PASS RMT source-clock pause preserves in-flight half symbol and DMA queue, STOP detaches GPIO for UL, replay, underrun and init failure cleanup; no start/stop allocation
+PASS loader family/speed selector: all 17 modes, per-family remembered speeds, MZ700 1/3 and TC 1/2/3 constraints
+PASS actual MCPWM capture driver: hardware latch ignores ISR delay, 32-bit wrap and multi-wrap idle, stale IRQ, pending-edge pause tail, resume clock and polarity
+PASS MCPWM independent quantization, FIFO overflow and missed-polarity error, all initialization failures clean resources; no allocation on start/stop
+PASS injected write/seek/flush/close failures: WAV/LEP-L16/MZF provisional files removed, no stale handles; MFI failure isolated
+PASS exclusive creation preserves all recording collisions and oversized WAV write cannot wrap RIFF/FAT32 length
+PASS browser 1000+ files, case-insensitive stem/extension sort, hidden metadata, parent selection, retained scroll, path construction and cancel/retry
+PASS browser PSRAM index/name arena allocated exactly twice across repeated initialization and scans; no per-entry allocation
+PASS AutoName Sharp NORMAL and all IC/TC profiles, native/copier title and payload progress from original edges before WAV/LEP quantization
+PASS Sinclair and InterCopy CP/M subtypes 00/01: all four speed classifications, title checksum acceptance and rejection
+PASS AutoName collision suffix, original file preservation and invalid title rejection
+PASS quantified legacy limits: WAV 22k N1:3 classification ambiguity and LEP N1:4 header loss; live edge metadata bypasses both
+PASS MZF recording NORMAL 1:1..1:4, MZ700, all IC/TC: canonical header and payload, reference loader normalization and detected profile
+PASS MZF duplicate header/data recovery and reacquisition after signal break
+PASS MZF incomplete/checksum errors delete provisional output; exclusive create preserves collisions; long silence cannot wrap
+PASS MZF zero-length and maximum 65535-byte payload, bounded workspace and exact output size
+PASS QuickDisk logical MZQ, QDF CRC, HxC all 16 MFM phases, FlashFloppy, bounded selected payload and header conversion
+PASS QuickDisk damaged CRC/trailer, truncation/count/offset limits, cancellation and no analysis callback during playback
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\barbarian2.qd: MFM 3 records
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\barbarian2.qdf: QDF 3 records
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\FF_Blank.qd: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\FF_Blank_MZ_Formated.qd: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\FF_Blank_MZ_Formated_TC122.qd: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\FF_Flappy_UL800.qd: MFM 1 records
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\Flappy.qd: MFM 1 records
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_Blank.QD: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_Blank_MZ_Formated.QD: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_Blank_MZ_Formated_TC122.QD: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_MarioMZ1500.qd: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_MarioMZ1500_MZ_Formatedandloaded.qd: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\MZQ\mzfloader.mzq: REJECT
+QD fixture C:\Dokumenty\GitHub\MZCMTEmu\tests\MZQ\qdtestbas.mzq: MZQ 1 records
+PASS physical CMT route: safe initial external state, bounce rejection, 40 ms transitions, no repeated event
+PASS versioned settings codec: all modes/rates/formats, CRC bit corruption, invalid ranges and unknown schema fail closed
+PASS settings schema v1 to v2 preserves loader/TAP/record/rate and seeds new defaults; brightness, speed memory and independent RECORD control validated
+PASS NVS restore and commit, no rewrite for unchanged settings, corrupt blob defaults, init/open/read/write/commit failure and handle cleanup
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+PASS real Sharp/player/GPTimer integration for all 17 modes, block boundaries and simulated UL peer; safe final bus
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+PASS MZT selector and per-record profiles survive navigation; AUTO MTI is isolated, chosen record only, STOP/replay
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+player: START sr=1000000 binary
+PASS MZT continuous native/turbo and mixed UL records; each record keeps its profile; UL-to-UL stops per reference
+PASS Sharp all 17 modes: reference loader bytes, exact per-region waveform, checksum and physical polarity; UL handshakes
+PASS Sharp all 17 modes: reference loader bytes, exact per-region waveform, checksum and physical polarity; UL handshakes
+PASS reference HIGH-placement loader vectors: saved stack, header relocators, MZ700 runtime and unsafe IC refusal
+PASS MFI/M2I/MTI manual priority, case-insensitive TYPE, per-record fallback and fail-closed boundaries; legacy MZI ignored
+PASS loader overlap recovery resets native timing, MZT per-record selection and MTI, truncated files, UL timeout and bounds overflow
+PASS cancellable MZQ scan and Sharp duration analysis; clean retry without stale cancellation
+PASS deferred recorder finalization: frozen public state/path, nonblocking service, STOP/PLAY/MOTOR isolation, cancel and removal cannot report SAVED
+PASS LEP/L16 independent widths, half units, 127 extensions, 1 s idle, 8 generations
+PASS WAV 44100 Hz absolute phase: 44210 samples, RIFF lengths, physical levels
+PASS WAV 22050 Hz absolute phase: 22105 samples, RIFF lengths, physical levels
+PASS user pause priority, motor wait, cancel deletes, overrun errors, AUTO activity timeout
+PASS real recorder MZF motor wait, user-pause priority, automatic checksum completion, byte-exact file, incomplete STOP and abort cleanup
+PASS real recorder AutoName for WAV 22kHz, LEP, L16 and MZF: validated live header, closed-file rename, MFI under final name
+PASS media removal aborts recording with error and closed/deleted provisional file; exhausted REC9999 sequence cannot overwrite existing recording
+PASS TAP analysis cancellation, clean retry and no UI callback during playback
+PASS TAP all four speeds: golden pilot/sync/MSB data/terminator/gaps and exact totals
+PASS TAP empty/truncated/invalid lengths and flags, bad later block, arguments and cleanup
+PASS TAP maximum 65535-byte block and duration beyond 32-bit microseconds
+PASS TAP 2000 deterministic bounded parser fuzz cases (sanitizers depend on host)
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Boovie.tap @ 1400 Bd
+PASS fixture: 35379 bytes, 8 blocks, 610975 intervals, 3625512004 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Boovie.tap @ 1800 Bd
+PASS fixture: 35379 bytes, 8 blocks, 610975 intervals, 2835465696 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Boovie.tap @ 2100 Bd
+PASS fixture: 35379 bytes, 8 blocks, 610975 intervals, 2440584060 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Boovie.tap @ 2500 Bd
+PASS fixture: 35379 bytes, 8 blocks, 610975 intervals, 2061584992 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Bubl-128.tap @ 1400 Bd
+PASS fixture: 50433 bytes, 5 blocks, 827731 intervals, 4456144534 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Bubl-128.tap @ 1800 Bd
+PASS fixture: 50433 bytes, 5 blocks, 827731 intervals, 3477749379 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Bubl-128.tap @ 2100 Bd
+PASS fixture: 50433 bytes, 5 blocks, 827731 intervals, 2988806409 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Bubl-128.tap @ 2500 Bd
+PASS fixture: 50433 bytes, 5 blocks, 827731 intervals, 2519479243 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Circlelu.tap @ 1400 Bd
+PASS fixture: 14860 bytes, 4 blocks, 260215 intervals, 1606610524 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Circlelu.tap @ 1800 Bd
+PASS fixture: 14860 bytes, 4 blocks, 260215 intervals, 1255624076 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Circlelu.tap @ 2100 Bd
+PASS fixture: 14860 bytes, 4 blocks, 260215 intervals, 1080181912 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Circlelu.tap @ 2500 Bd
+PASS fixture: 14860 bytes, 4 blocks, 260215 intervals, 911805676 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Rapid128.tap @ 1400 Bd
+PASS fixture: 52367 bytes, 7 blocks, 869903 intervals, 4828151482 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Rapid128.tap @ 1800 Bd
+PASS fixture: 52367 bytes, 7 blocks, 869903 intervals, 3771891893 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Rapid128.tap @ 2100 Bd
+PASS fixture: 52367 bytes, 7 blocks, 869903 intervals, 3244010995 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Rapid128.tap @ 2500 Bd
+PASS fixture: 52367 bytes, 7 blocks, 869903 intervals, 2737325781 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Xfiles.tap @ 1400 Bd
+PASS fixture: 23470 bytes, 4 blocks, 397975 intervals, 2438481764 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Xfiles.tap @ 1800 Bd
+PASS fixture: 23470 bytes, 4 blocks, 397975 intervals, 1902628284 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Xfiles.tap @ 2100 Bd
+PASS fixture: 23470 bytes, 4 blocks, 397975 intervals, 1634783008 ticks
+TAP fixture: C:\Dokumenty\GitHub\MZCMTEmu\tests\TAP\Xfiles.tap @ 2500 Bd
+PASS fixture: 23470 bytes, 4 blocks, 397975 intervals, 1377730716 ticks
+player: START sr=44100
+player: END
+player: START sr=22050
+player: END
+player: START sr=48000
+player: END
+player: START sr=11025
+player: END
+PASS WAV shared pulse transport: four sample rates, every physical interval and hysteresis boundary, 256-sample silence splits, inversion, pauses and exact EOF clock
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+player: START sr=0 TAP
+player: END
+PASS real browser/player/GPTimer TAP integration: all speeds, inverted output, absolute edge times and physical progress
+PASS queued EOF MOTOR pause, user pause priority, active speed isolation, final terminator before FINISHED
+player: START sr=0 TAP
+player: START sr=0 TAP
+player: START sr=0 TAP
+player: UNDERRUN
+PASS STOP/replay while paused, actual FIFO underrun, malformed TAP error and idle output
+PASS real driver completed clock: 32-bit carry, session reset and partial-interval pause/resume

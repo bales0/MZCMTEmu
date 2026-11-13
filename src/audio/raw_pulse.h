@@ -8,6 +8,9 @@
 extern "C" {
 #endif
 
+#define RAW_PULSE_COUNT 1U
+#define RAW_PULSE_MONITOR_MUTE 2U
+
 typedef struct {
     uint8_t level;
     uint8_t count_pulse;
@@ -33,8 +36,8 @@ void raw_pulse_clear_underrun(void);
 void raw_pulse_set_output_enabled(bool enabled);
 
 /*
- * Compatibility entry point retained for player.c.  This recovery backend
- * deliberately does not allocate or use an RMT channel.
+ * Idle-only enable gate for the RMT backend. The diagnostic GPTimer backend
+ * is selected at build time with CONFIG_MZ_TX_GPTIMER_FALLBACK.
  */
 void raw_pulse_set_rmt_enabled(bool enabled);
 
@@ -42,8 +45,8 @@ void raw_pulse_set_read_invert(bool invert);
 bool raw_pulse_get_read_invert(void);
 
 /*
- * Legacy fixed-sample API retained only so the current player.c compiles.
- * WAV playback uses raw_out/raw_timer, not this pulse backend.
+ * Legacy fixed-sample API retained for compatibility with older diagnostics.
+ * All PLAY formats now use the pulse backend; no fixed-sample API is used.
  */
 void raw_pulse_set_tick_us(uint32_t tick_us);
 uint32_t raw_pulse_get_tick_us(void);
@@ -57,3 +60,11 @@ uint64_t raw_pulse_get_completed_us(void);
 #ifdef __cplusplus
 }
 #endif
+
+/* Optional native 16 MHz source widths. Levels/count flags come from events;
+ * ticks[i] replaces duration_us without widening/copying the source FIFO. */
+bool raw_pulse_native_ticks16(void);
+size_t raw_pulse_write_ticks16(const raw_pulse_t *events,const uint32_t *ticks,size_t count);
+
+/* Audible current interval, independent of queued future data. */
+bool raw_pulse_monitor_active(void);

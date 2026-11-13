@@ -1,0 +1,15 @@
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\barbarian2.qd: ACCEPT, 3 records
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\barbarian2.qdf: ACCEPT, 3 records
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\FF_Blank.qd: REJECT, 0 records, reference reason=empty count
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\FF_Blank_MZ_Formated.qd: REJECT, 0 records, reference reason=empty count
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\FF_Blank_MZ_Formated_TC122.qd: REJECT, 0 records, reference reason=frame/CRC/length
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\FF_Flappy_UL800.qd: ACCEPT, 1 records
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\Flappy.qd: ACCEPT, 1 records
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_Blank.QD: REJECT, 0 records, reference reason=physical count/CRC
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_Blank_MZ_Formated.QD: REJECT, 0 records, reference reason=empty count
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_Blank_MZ_Formated_TC122.QD: REJECT, 0 records, reference reason=frame/CRC/length
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_MarioMZ1500.qd: REJECT, 0 records, reference reason=frame/CRC/length
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\QD\hxc_MarioMZ1500_MZ_Formatedandloaded.qd: REJECT, 0 records, reference reason=frame/CRC/length
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\MZQ\mzfloader.mzq: REJECT, 0 records, reference reason=logical header/frames
+MATCH C:\Dokumenty\GitHub\MZCMTEmu\tests\MZQ\qdtestbas.mzq: ACCEPT, 1 records
+Reference QD parser kernels match; playback/duration/UI/RTOS are outside this comparison.

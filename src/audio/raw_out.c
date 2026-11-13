@@ -65,13 +65,12 @@ void raw_out_clear_underrun(void)
 
 void raw_out_set_read_invert(bool invert)
 {
-    raw_timer_set_read_invert(invert);
     raw_pulse_set_read_invert(invert);
 }
 
 bool raw_out_get_read_invert(void)
 {
-    return raw_timer_get_read_invert();
+    return raw_pulse_get_read_invert();
 }
 
 void raw_out_set_sample_output_enabled(bool enabled)

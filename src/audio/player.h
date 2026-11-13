@@ -70,3 +70,5 @@ bool player_set_record_mode(loader_mode_t mode);
 #ifdef __cplusplus
 }
 #endif
+
+bool player_monitor_active(void);

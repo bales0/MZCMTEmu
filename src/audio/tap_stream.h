@@ -30,3 +30,8 @@ bool tap_stream_has_error(void);
 #ifdef __cplusplus
 }
 #endif
+
+/* Only during preflight analysis, never during playback. */
+typedef bool (*tap_stream_cancel_fn)(void *context);
+void tap_stream_set_scan_control(tap_stream_cancel_fn fn,void *context);
+bool tap_stream_analysis_cancelled(void);

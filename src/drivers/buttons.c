@@ -2,170 +2,62 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#define PIN_BTN_PLAY  8
-#define PIN_BTN_STOP  9
-#define PIN_BTN_NEXT  10
-#define PIN_BTN_PREV  11
-#define PIN_BTN_REC   42
-
-#define BUTTONS_POLL_MS        20
-#define BUTTON_REPEAT_DELAY_MS 400
-#define BUTTON_REPEAT_RATE_MS  120
-#define BUTTON_STOP_LONG_MS    800
-
-static uint32_t last_time = 0;
-
-// stav tlačítek (1 = puštěno, 0 = stisknuto)
-static uint8_t last_play = 1;
-static uint8_t last_stop = 1;
-static uint8_t last_next = 1;
-static uint8_t last_prev = 1;
-static uint8_t last_rec  = 1;
-
-// hold/repeat stav
-static TickType_t next_press_time = 0;
-static TickType_t next_repeat_time = 0;
-
-static TickType_t prev_press_time = 0;
-static TickType_t prev_repeat_time = 0;
-
-static TickType_t stop_press_time = 0;
-static bool stop_long_sent = false;
-static bool s_last_event_repeat = false;
-
-void buttons_init(void)
-{
-    gpio_config_t cfg = {
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pin_bit_mask =
-            (1ULL << PIN_BTN_PLAY) |
-            (1ULL << PIN_BTN_STOP) |
-            (1ULL << PIN_BTN_NEXT) |
-            (1ULL << PIN_BTN_PREV) |
-            (1ULL << PIN_BTN_REC)
-    };
-    gpio_config(&cfg);
+#include <string.h>
+#define DEBOUNCE_MS 30U
+#define REPEAT_DELAY_MS 400U
+#define REPEAT_RATE_MS 120U
+#define STOP_LONG_MS 800U
+typedef struct { bool raw,down,armed,long_sent; TickType_t changed,pressed,repeated,delay; } key_t;
+static const int pins[]={8,9,10,11,42};
+static key_t keys[5];
+static bool last_repeat;
+void buttons_init(void) {
+    gpio_config_t cfg={.mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE,
+        .pull_down_en=GPIO_PULLDOWN_DISABLE,.pin_bit_mask=(1ULL<<8)|(1ULL<<9)|(1ULL<<10)|(1ULL<<11)|(1ULL<<42)};
+    gpio_config(&cfg);memset(keys,0,sizeof(keys));last_repeat=false;
+    TickType_t now=xTaskGetTickCount();
+    for(unsigned i=0;i<5;++i) {
+        keys[i].down=keys[i].raw=gpio_get_level(pins[i])==0;
+        keys[i].armed=!keys[i].down;keys[i].changed=now;
+    }
 }
-
-btn_event_t buttons_poll(void)
-{
-    TickType_t now = xTaskGetTickCount();
-
-    if ((now - last_time) < pdMS_TO_TICKS(BUTTONS_POLL_MS)) {
+btn_event_t buttons_poll(void) {
+    TickType_t now=xTaskGetTickCount();bool pressed[5]={0},released[5]={0};last_repeat=false;
+    for(unsigned i=0;i<5;++i) {
+        key_t *k=&keys[i];bool raw=gpio_get_level(pins[i])==0;
+        if(raw!=k->raw){k->raw=raw;k->changed=now;}
+        if(raw!=k->down && (TickType_t)(now-k->changed)>=pdMS_TO_TICKS(DEBOUNCE_MS)) {
+            k->down=raw;
+            if(raw) {pressed[i]=k->armed;k->pressed=k->repeated=now;k->delay=pdMS_TO_TICKS(REPEAT_DELAY_MS);k->long_sent=false;}
+            else {released[i]=k->armed;k->armed=true;}
+        }
+    }
+    /* STOP owns the chord until release: a held navigation key cannot leak
+     * a repeat into the next screen. A key held at startup must be released. */
+    key_t *stop=&keys[1];
+    if(stop->down || released[1]) {
+        for(unsigned i=0;i<5;++i)if(i!=1 && keys[i].down)keys[i].armed=false;
+        if(stop->down && stop->armed && !stop->long_sent && (TickType_t)(now-stop->pressed)>=pdMS_TO_TICKS(STOP_LONG_MS)) {
+            stop->long_sent=true;return BTN_STOP_LONG;
+        }
+        if(released[1] && !stop->long_sent)return BTN_STOP;
         return BTN_NONE;
     }
-    last_time = now;
-
-    uint8_t play = gpio_get_level(PIN_BTN_PLAY);
-    uint8_t stop = gpio_get_level(PIN_BTN_STOP);
-    uint8_t next = gpio_get_level(PIN_BTN_NEXT);
-    uint8_t prev = gpio_get_level(PIN_BTN_PREV);
-    uint8_t rec  = gpio_get_level(PIN_BTN_REC);
-
-    btn_event_t event = BTN_NONE;
-    s_last_event_repeat = false;
-
-    // ----------------------------------------------------
-    // PLAY - jen edge na stisk
-    // ----------------------------------------------------
-    if (last_play == 1 && play == 0) {
-        event = BTN_PLAY;
-    }
-
-    // ----------------------------------------------------
-    // STOP - short až na release, long při držení
-    // ----------------------------------------------------
-    if (event == BTN_NONE) {
-        // nový stisk STOP
-        if (last_stop == 1 && stop == 0) {
-            stop_press_time = now;
-            stop_long_sent = false;
-        }
-        // držení STOP -> long press
-        else if (last_stop == 0 && stop == 0 && !stop_long_sent) {
-            if ((now - stop_press_time) >= pdMS_TO_TICKS(BUTTON_STOP_LONG_MS)) {
-                stop_long_sent = true;
-                event = BTN_STOP_LONG;
-            }
-        }
-        // release STOP -> short press jen pokud neproběhl long
-        else if (last_stop == 0 && stop == 1) {
-            if (!stop_long_sent) {
-                event = BTN_STOP;
-            }
-            stop_long_sent = false;
+    if(pressed[0])return BTN_PLAY;
+    if(pressed[4])return BTN_REC;
+    for(unsigned i=2;i<=3;++i) {
+        key_t *k=&keys[i];
+        if(pressed[i])return i==2 ? BTN_NEXT:BTN_PREV;
+        if(k->down && k->armed && (TickType_t)(now-k->repeated)>=k->delay) {
+            k->repeated=now;k->delay=pdMS_TO_TICKS(REPEAT_RATE_MS);last_repeat=true;
+            return i==2 ? BTN_NEXT:BTN_PREV;
         }
     }
-
-    // ----------------------------------------------------
-    // NEXT - edge + autorepeat
-    // ----------------------------------------------------
-    if (event == BTN_NONE) {
-        if (last_next == 1 && next == 0) {
-            next_press_time = now;
-            next_repeat_time = now + pdMS_TO_TICKS(BUTTON_REPEAT_DELAY_MS);
-            event = BTN_NEXT;
-        } else if (last_next == 0 && next == 0) {
-            if ((now - next_press_time) >= pdMS_TO_TICKS(BUTTON_REPEAT_DELAY_MS) &&
-                now >= next_repeat_time) {
-                next_repeat_time = now + pdMS_TO_TICKS(BUTTON_REPEAT_RATE_MS);
-                event = BTN_NEXT;
-                s_last_event_repeat = true;
-            }
-        }
-    }
-
-    // ----------------------------------------------------
-    // PREV - edge + autorepeat
-    // ----------------------------------------------------
-    if (event == BTN_NONE) {
-        if (last_prev == 1 && prev == 0) {
-            prev_press_time = now;
-            prev_repeat_time = now + pdMS_TO_TICKS(BUTTON_REPEAT_DELAY_MS);
-            event = BTN_PREV;
-        } else if (last_prev == 0 && prev == 0) {
-            if ((now - prev_press_time) >= pdMS_TO_TICKS(BUTTON_REPEAT_DELAY_MS) &&
-                now >= prev_repeat_time) {
-                prev_repeat_time = now + pdMS_TO_TICKS(BUTTON_REPEAT_RATE_MS);
-                event = BTN_PREV;
-                s_last_event_repeat = true;
-            }
-        }
-    }
-
-    // ----------------------------------------------------
-    // REC - jen edge na stisk
-    // ----------------------------------------------------
-    if (event == BTN_NONE) {
-        if (last_rec == 1 && rec == 0) {
-            event = BTN_REC;
-        }
-    }
-
-    last_play = play;
-    last_stop = stop;
-    last_next = next;
-    last_prev = prev;
-    last_rec  = rec;
-
-    return event;
+    return BTN_NONE;
 }
-
-bool buttons_last_event_was_repeat(void)
-{
-    return s_last_event_repeat;
-}
-
-void buttons_delay_repeat(btn_event_t button, uint32_t delay_ms)
-{
-    TickType_t until = xTaskGetTickCount() + pdMS_TO_TICKS(delay_ms);
-
-    if (button == BTN_NEXT) {
-        next_repeat_time = until;
-    } else if (button == BTN_PREV) {
-        prev_repeat_time = until;
+bool buttons_last_event_was_repeat(void) {return last_repeat;}
+void buttons_delay_repeat(btn_event_t button,uint32_t delay_ms) {
+    if(button==BTN_NEXT || button==BTN_PREV) {
+        key_t *k=&keys[button==BTN_NEXT ? 2:3];k->repeated=xTaskGetTickCount();k->delay=pdMS_TO_TICKS(delay_ms);
     }
 }
