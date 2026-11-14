@@ -73,3 +73,10 @@ typedef struct {uint32_t fifo_used,fifo_capacity;uint64_t reserve_us;bool time_v
 void raw_pulse_status(raw_pulse_status_t *out);
 uint32_t raw_pulse_completed_source_bytes(void);
 #define RAW_PULSE_SOURCE_BYTE 4U
+
+/* Stable operation name after an SDK failure; NULL if no failure. */
+const char *raw_pulse_error(void);
+
+/* Foreground diagnostic snapshot; encoder activity is not a pad measurement. */
+typedef struct {bool rmt;uint32_t encoder_callbacks,completed_transactions;uint64_t encoded_us;} raw_pulse_debug_t;
+void raw_pulse_debug(raw_pulse_debug_t *out);

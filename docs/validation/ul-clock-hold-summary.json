@@ -1,0 +1,15 @@
+{
+  "banner": "MZCMTEmu TX-TRACE r11 UL SENSE HOLD S1 BYPASS INTERNAL 2026-11-13",
+  "build": "PASS",
+  "host": "3 suites GCC ASan/UBSan PASS",
+  "regression_before": "r10 timing fails PAIR_WRITE_HIGH pair=1 sent=0 with delayed rearm peer",
+  "regression_after": "44033 bytes decoded and compared successfully with same delayed rearm peer",
+  "read_setup_us": 2,
+  "sense_hold_us": 50,
+  "ram_bytes": 155548,
+  "application_bytes": 468881,
+  "image_bytes": 469312,
+  "sha256": "feed853eda9c1dbe9fb2e47653f81a79f132e0a6c3b4bc131d4ca60beae10440",
+  "hardware_verified": false,
+  "flashed": false
+}

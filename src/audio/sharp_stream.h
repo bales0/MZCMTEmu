@@ -11,6 +11,7 @@ typedef struct {
     char title[22];
     loader_mode_t requested,effective;
     bool sidecar, fallback, ultrafast;
+    bool source_reused,duration_cached,duration_deferred; /* Diagnostics for open-session reuse. */
     uint64_t total_ticks;
     uint32_t payload_bytes;
 } sharp_stream_info_t;
@@ -38,3 +39,9 @@ void sharp_stream_set_analysis_control(sharp_analysis_cancel_fn cancel,void *con
 bool sharp_stream_analysis_cancelled(void);
 
 bool sharp_stream_continue_mzt(const char *path,loader_mode_t mode,sharp_stream_info_t *info);
+
+/* Header/loader metadata only; no complete waveform or body duration scan. */
+bool sharp_stream_preview(const char *path,uint16_t record,loader_mode_t requested,sharp_stream_info_t *info);
+
+/* Immutable failure reason, safe to retain after stream close. */
+const char *sharp_stream_error(void);

@@ -1,10 +1,12 @@
 #pragma once
 #include <stdint.h>
 typedef uint32_t TickType_t;
+#ifndef portTICK_PERIOD_MS
 #define portTICK_PERIOD_MS 1U
+#endif
 
 #define portMAX_DELAY UINT32_MAX
-#define pdMS_TO_TICKS(ms) (ms)
+#define pdMS_TO_TICKS(ms) ((ms)/portTICK_PERIOD_MS)
 
 typedef int portMUX_TYPE;
 #define portMUX_INITIALIZER_UNLOCKED 0

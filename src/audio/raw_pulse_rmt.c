@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include <stdint.h>
+#include <stdio.h>
 
 #define OUTPUT_GPIO GPIO_NUM_4
 #define FIFO_SIZE 4096U
@@ -21,7 +22,7 @@ static DRAM_ATTR portMUX_TYPE lock=portMUX_INITIALIZER_UNLOCKED;
 static DRAM_ATTR uint32_t head,tail,encode_cursor;
 static DRAM_ATTR uint32_t native_flags[FIFO_SIZE/32];
 static DRAM_ATTR uint64_t queued_ticks;
-static DRAM_ATTR uint32_t source_bytes;
+static DRAM_ATTR uint32_t source_bytes,encoder_callbacks,completed_transactions;
 static DRAM_ATTR uint64_t encode_remaining,encoded_ticks,retired_tx_ticks;
 static DRAM_ATTR uint8_t encode_level,token;
 static DRAM_ATTR volatile bool running,paused,tx_done,encode_starved,finish_requested,accept_callbacks;
@@ -33,6 +34,15 @@ static uint32_t pps_count,legacy_tick_us=16;
 static rmt_channel_handle_t channel;
 static rmt_encoder_handle_t encoder;
 static bool initialized,channel_enabled;
+static const char *last_error;
+const char *raw_pulse_error(void){return __atomic_load_n(&last_error,__ATOMIC_ACQUIRE);}
+static bool rmt_check(esp_err_t rc,const char *operation){
+    if(rc==ESP_OK)return true;
+    error=true;
+    __atomic_store_n(&last_error,operation,__ATOMIC_RELEASE);
+    printf("tx: FAIL %s rc=0x%lx\n",operation,(unsigned long)(uint32_t)rc);
+    return false;
+}
 
 static void publish_completed(uint64_t value) {
     uint32_t seq=__atomic_load_n(&time_seq,__ATOMIC_RELAXED);
@@ -80,6 +90,7 @@ static size_t IRAM_ATTR encode(const void *data,size_t size,size_t written,size_
     size_t count=0;
     *done=false;
     portENTER_CRITICAL_ISR(&lock);
+    ++encoder_callbacks;
     if(!accept_callbacks) {*done=true;
     portEXIT_CRITICAL_ISR(&lock);
     return 0;
@@ -114,6 +125,7 @@ static bool IRAM_ATTR transmitted(rmt_channel_handle_t handle,const rmt_tx_done_
     (void)context;
     portENTER_CRITICAL_ISR(&lock);
     if(accept_callbacks) {
+        ++completed_transactions;
         tx_done=true;
         running=false;
         underrun=encode_starved && (!finish_requested || encode_cursor!=__atomic_load_n(&head,__ATOMIC_ACQUIRE));
@@ -154,12 +166,17 @@ void raw_pulse_stop(void) {
         rmt_ll_enable_group_clock(&RMT,true);
         portEXIT_CRITICAL(&lock);
         if(channel_enabled) {
-            if(rmt_disable(channel)!=ESP_OK)error=true;
+            if(!rmt_check(rmt_disable(channel),"RMT DISABLE"))error=true;
             else channel_enabled=false;
         }
     }
     portENTER_CRITICAL(&lock);
     running=paused=false;
+    /* STOP discards unsent source data, matching the GPTimer backend.
+     * Keep completed time/bytes for the player final-state snapshot. */
+    head=tail=encode_cursor=0;
+    encode_remaining=0;
+    queued_ticks=0;
     portEXIT_CRITICAL(&lock);
     /* GPIO is physically handed back to UL/idle, not left behind an RMT mux. */
     gpio_reset_pin(OUTPUT_GPIO);
@@ -167,20 +184,21 @@ void raw_pulse_stop(void) {
     gpio_set_direction(OUTPUT_GPIO,GPIO_MODE_OUTPUT);
 }
 void raw_pulse_init(void) {
+    __atomic_store_n(&last_error,NULL,__ATOMIC_RELEASE);
     raw_pulse_stop();
     if(channel_enabled) {error=true;
     return;
     }
     if(!initialized) {
-        rmt_tx_channel_config_t config={.gpio_num=-1,.clk_src=RMT_CLK_SRC_DEFAULT,
+        rmt_tx_channel_config_t config={.gpio_num=OUTPUT_GPIO,.clk_src=RMT_CLK_SRC_DEFAULT,
             .resolution_hz=16000000,.mem_block_symbols=128,.trans_queue_depth=1,.intr_priority=3,.flags.with_dma=1};
         rmt_simple_encoder_config_t encode_config={.callback=encode,.min_chunk_size=1};
         rmt_tx_event_callbacks_t callbacks={.on_trans_done=transmitted};
-        if(rmt_new_tx_channel(&config,&channel)!=ESP_OK) {error=true;
+        if(!rmt_check(rmt_new_tx_channel(&config,&channel),"RMT CHANNEL")) {error=true;
         return;
         }
-        if(rmt_new_simple_encoder(&encode_config,&encoder)!=ESP_OK ||
-           rmt_tx_register_event_callbacks(channel,&callbacks,NULL)!=ESP_OK) {
+        if(!rmt_check(rmt_new_simple_encoder(&encode_config,&encoder),"RMT ENCODER") ||
+           !rmt_check(rmt_tx_register_event_callbacks(channel,&callbacks,NULL),"RMT CALLBACK")) {
             if(encoder)rmt_del_encoder(encoder);
             rmt_del_channel(channel);
             channel=NULL;
@@ -189,10 +207,13 @@ void raw_pulse_init(void) {
             return;
         }
         initialized=true;
+        /* Creation needs a valid pin. Return it to safe GPIO idle until PLAY. */
+        raw_pulse_stop();
     }
     portENTER_CRITICAL(&lock);
     queued_ticks=0;
     source_bytes=0;
+    encoder_callbacks=completed_transactions=0;
     head=tail=encode_cursor=0;
     encode_remaining=encoded_ticks=retired_tx_ticks=0;
     running=paused=tx_done=encode_starved=finish_requested=accept_callbacks=underrun=error=false;
@@ -204,11 +225,12 @@ void raw_pulse_init(void) {
 }
 bool raw_pulse_start(void) {
     if(!initialized || error || running || !backend_enabled || !output_enabled || head==tail)return false;
-    if(channel_enabled && rmt_disable(channel)!=ESP_OK) {error=true;
+    if(channel_enabled && !rmt_check(rmt_disable(channel),"RMT DISABLE")) {error=true;
     return false;
     }
     channel_enabled=false;
-    if(rmt_tx_switch_gpio(channel,OUTPUT_GPIO,false)!=ESP_OK || rmt_enable(channel)!=ESP_OK) {error=true;
+    if(!rmt_check(rmt_tx_switch_gpio(channel,OUTPUT_GPIO,false),"RMT GPIO") ||
+       !rmt_check(rmt_enable(channel),"RMT ENABLE")) {error=true;
     raw_pulse_stop();
     return false;
     }
@@ -221,7 +243,7 @@ bool raw_pulse_start(void) {
     running=accept_callbacks=true;
     portEXIT_CRITICAL(&lock);
     rmt_transmit_config_t config={.loop_count=0,.flags.eot_level=0,.flags.queue_nonblocking=1};
-    if(rmt_transmit(channel,encoder,&token,sizeof(token),&config)!=ESP_OK) {error=true;
+    if(!rmt_check(rmt_transmit(channel,encoder,&token,sizeof(token),&config),"RMT TRANSMIT")) {error=true;
     raw_pulse_stop();
     return false;
     }
@@ -345,4 +367,10 @@ uint32_t raw_pulse_completed_source_bytes(void){portENTER_CRITICAL(&lock);
 uint32_t n=source_bytes;
 portEXIT_CRITICAL(&lock);
 return n;
+}
+
+void raw_pulse_debug(raw_pulse_debug_t *out){
+    portENTER_CRITICAL(&lock);
+    *out=(raw_pulse_debug_t){.rmt=true,.encoder_callbacks=encoder_callbacks,.completed_transactions=completed_transactions,.encoded_us=encoded_ticks/16U};
+    portEXIT_CRITICAL(&lock);
 }

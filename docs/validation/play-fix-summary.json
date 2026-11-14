@@ -1,0 +1,21 @@
+{
+  "date": "2026-11-13",
+  "head": "f5cda0fa04566e4008ef40ab0c9c49480316ddac",
+  "branch": "main",
+  "working_changes": true,
+  "host_suites": 24,
+  "host_pass": true,
+  "target_build_pass": true,
+  "ram_static_bytes": 155548,
+  "application_bytes": 464553,
+  "image_bytes": 464976,
+  "image_sha256": "9e6a57c4b6b6d0510884f1799e5c64a23bdb699135a72084d3f59960489cdb5e",
+  "fixture_files": 92,
+  "fixture_files_unchanged": true,
+  "motor_on_level": "HIGH (last user correction)",
+  "monitor": "COM6 / 115200 / USB Serial-JTAG",
+  "flashed": false,
+  "new_image_hardware_tested": false,
+  "host_seconds": 111.17,
+  "host_exit": 0
+}

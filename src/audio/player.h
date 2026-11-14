@@ -74,3 +74,17 @@ bool player_set_record_mode(loader_mode_t mode);
 bool player_monitor_active(void);
 
 void player_metadata(program_metadata_t *out);
+
+const char *player_error_message(void);
+
+typedef enum {
+ PLAYER_STOP_NONE,PLAYER_STOP_API,PLAYER_STOP_BUTTON,PLAYER_STOP_LONG_BUTTON,
+ PLAYER_STOP_S1_EXTERNAL,PLAYER_STOP_SD_REMOVED,PLAYER_STOP_SD_REINIT,
+ PLAYER_STOP_SD_RESTORE_FAILED,PLAYER_STOP_RECORD_START
+} player_stop_cause_t;
+void player_stop_for(player_stop_cause_t cause);
+const char *player_stop_cause_name(void);
+const char *player_state_name(player_state_t state);
+
+/* Physical connector level; false return means UL retains ownership. */
+bool player_set_sense_level(bool high);

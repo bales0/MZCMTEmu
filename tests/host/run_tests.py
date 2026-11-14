@@ -37,6 +37,8 @@ if args.sanitize:
     flags += ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']
 (ROOT / '.tmp').mkdir(exist_ok=True)
 SUITES = {
+    'test_ul_z80': ['tests/host/test_ul_z80.c','src/play/mzf_loader.c','src/play/mz700_fast3.c','src/formats/mz_loader_profiles.c'],
+    'test_menu': ['tests/host/test_menu.c'],
     'test_ui_policy': ['tests/host/test_ui_policy.c','src/ui/policy.c'],
     'test_program_metadata': ['src/audio/edge_writer.c','src/audio/edge_stream.c','src/audio/wav_writer.c','src/audio/wav_reader.c','src/audio/wav_pulse_stream.c','tests/host/test_program_metadata.c','src/formats/program_metadata.c','src/formats/tape_metadata.c','src/record/record_autoname.c','src/formats/mz_tape_decoder.c','src/formats/mz_loader_profiles.c','src/formats/mz_title.c','src/audio/tap_stream.c'],
     'test_capture_pcnt': ['tests/host/test_capture_mcpwm.c','src/audio/edge_capture.c','src/audio/edge_guard.c'],
@@ -108,7 +110,7 @@ for name, sources in SUITES.items():
             for dependency in ['src/formats/program_metadata.c','src/formats/mz_title.c','src/formats/mz_loader_profiles.c']:
                 if dependency not in sources:sources.append(dependency)
         if 'src/audio/player.c' in sources:
-            for dependency in ['src/formats/tape_metadata.c','src/record/record_autoname.c','src/formats/mz_tape_decoder.c']:
+            for dependency in ['src/formats/mz_tape_profiles.c','src/formats/tape_metadata.c','src/record/record_autoname.c','src/formats/mz_tape_decoder.c']:
                 if dependency not in sources:sources.append(dependency)
         cmd = [cc, *flags, *suite_flags, '-DRECORDINGS_DIR="."', '-I', str(ROOT / 'tests/host/stubs'),
                '-I', str(ROOT / 'src'), *[str(ROOT / s) for s in sources], '-o', str(exe)]

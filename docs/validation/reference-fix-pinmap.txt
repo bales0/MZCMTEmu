@@ -1,0 +1,23 @@
+2026-11-13; static source audit vs specification pin table, original DOCX and schematic. No physical continuity measurement.
+PASS src/main.c READ_GPIO = GPIO4
+PASS src/main.c MOTOR_GPIO = GPIO6
+PASS src/main.c SENSE_GPIO = GPIO7
+PASS src/main.c MONITOR_GPIO = GPIO41
+PASS src/main.c SWITCH_GPIO = GPIO21
+PASS src/main.c SD_DETECT_GPIO = GPIO47
+PASS src/audio/raw_pulse_rmt.c OUTPUT_GPIO = GPIO4
+PASS src/audio/raw_pulse.c RAW_PULSE_PIN_OUT = GPIO4
+PASS src/audio/edge_capture.c CAPTURE_GPIO = GPIO5
+PASS src/audio/edge_capture_gpio.c EDGE_CAPTURE_PIN_IN = GPIO5
+PASS src/audio/raw_timer.c PIN_OUT = GPIO4
+PASS src/audio/raw_capture.c PIN_IN = GPIO5
+PASS src/gpio_raw.c PIN_READ_OUT = GPIO4
+PASS src/gpio_raw.c PIN_WRITE_IN = GPIO5
+PASS src/drivers/sdcard.c PIN_CS = GPIO13
+PASS src/drivers/sdcard.c PIN_CLK = GPIO14
+PASS src/drivers/sdcard.c PIN_MOSI = GPIO15
+PASS src/drivers/sdcard.c PIN_MISO = GPIO16
+PASS src/drivers/i2c.c SDA = GPIO17
+PASS src/drivers/i2c.c SCL = GPIO18
+PASS buttons array PLAY/STOP/NEXT/PREV/REC = GPIO8/9/10/11/42; pull-up, pressed LOW
+PASS PCNT optional edge_gpio_num = GPIO5

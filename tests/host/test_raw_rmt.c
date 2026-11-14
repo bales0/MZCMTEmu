@@ -8,6 +8,7 @@
 #ifdef RMT_PLAYER_TEST
 #include "audio/player.h"
 #include "audio/tap_stream.h"
+#include "audio/mzf_stream.h"
 #include "audio/wav_writer.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -24,6 +25,12 @@ static uint8_t pin;
 #ifdef RMT_PLAYER_TEST
 static uint8_t sense=1,write_pin,monitor;
 static bool bus_owned,arm700;
+static bool verify_ul_payload;
+static uint32_t ul_received;
+static uint8_t ul_bit_count,ul_bits;
+static uint32_t ul_read_writes,ul_last_clock_read,ul_pad_reads;
+static uint64_t peer_ack_at,ul_low_at,ul_longest_low;
+static uint8_t ul_expected_byte(uint32_t i) { return (uint8_t)((i*73U+(i>>8)*19U)^0xA5U); }
 #endif
 static bool routed,source_done;
 static rmt_symbol_word_t memory[128];
@@ -33,7 +40,11 @@ static const void *payload;
 static size_t payload_size;
 static bool failed(void) {return fail_at && ++calls==fail_at;
 }
-int64_t esp_timer_get_time(void) {return (int64_t)(wall_ticks/16);
+int64_t esp_timer_get_time(void) {
+#ifdef RMT_PLAYER_TEST
+ if(bus_owned && mzf_stream_is_ultrafast_active())wall_ticks+=16; /* Poll/CPU time. */
+#endif
+return (int64_t)(wall_ticks/16);
 }
 void test_rmt_clock_gate(bool enable) {RMT.clock=enable;
 }
@@ -42,17 +53,36 @@ routed=false;
 pin=0;
 return ESP_OK;
 }
-esp_err_t gpio_set_direction(int gpio,int mode) {assert((gpio==4 || gpio==7) && mode==GPIO_MODE_OUTPUT);
+esp_err_t gpio_set_direction(int gpio,int mode) {assert((gpio==4 || gpio==7) && (mode==GPIO_MODE_OUTPUT || mode==GPIO_MODE_INPUT_OUTPUT));
 return ESP_OK;
 }
 esp_err_t gpio_set_level(int gpio,int level) {
 #ifdef RMT_PLAYER_TEST
  if(gpio==4) {assert(!routed);
  pin=(uint8_t)level;
+ ++ul_read_writes;
  if(bus_owned && arm700 && !level && sense){write_pin=0;
  arm700=false;
  }}
- else if(gpio==7) {if(bus_owned && sense!=(uint8_t)level)write_pin=level ? 0:1;
+ else if(gpio==7) {
+ if(verify_ul_payload && bus_owned && !sharp_stream_has_error() && sense!=(uint8_t)level) {
+  assert(ul_read_writes>ul_last_clock_read); /* READ written before each SENSE edge. */
+  ul_last_clock_read=ul_read_writes;
+  if(!level)ul_low_at=wall_ticks;
+  else if(wall_ticks-ul_low_at>ul_longest_low)ul_longest_low=wall_ticks-ul_low_at;
+  ul_bits=(uint8_t)((ul_bits<<1)|pin);
+  if(++ul_bit_count==8) {
+   uint8_t decoded=(uint8_t)~((ul_bits>>2)|(ul_bits<<6));
+   assert(decoded==ul_expected_byte(ul_received));
+   ++ul_received;ul_bit_count=0;ul_bits=0;
+  }
+ }
+ if(bus_owned && !arm700 && sense!=(uint8_t)level){
+  if(verify_ul_payload && !level){
+   write_pin=0;peer_ack_at=wall_ticks+((ul_received==0 && ul_bit_count==1) ? 8600U:20U)*16;
+  }
+  else {write_pin=level ? 0:1;peer_ack_at=0;}
+ }
  sense=(uint8_t)level;
  }
  else {assert(gpio==41);
@@ -72,15 +102,23 @@ esp_err_t gpio_config(const gpio_config_t *config) {
  write_pin=arm700 ? 1:0;
  return ESP_OK;
 }
-int gpio_get_level(int gpio) {assert(gpio==5);
+int gpio_get_level(int gpio) {
+if(verify_ul_payload && gpio!=5)++ul_pad_reads;
+if(gpio==4)return pin;
+if(gpio==7)return sense;
+if(gpio==6)return verify_ul_payload ? (!sense && !peer_ack_at):1;
+assert(gpio==5);
+if(peer_ack_at && wall_ticks>=peer_ack_at){write_pin=1;peer_ack_at=0;}
 return write_pin;
 }
 #endif
 esp_err_t rmt_new_tx_channel(const rmt_tx_channel_config_t *config,rmt_channel_handle_t *out) {
+ assert(config->gpio_num==4); /* ESP-IDF rejects -1 even for detached idle. */
  assert(config->flags.with_dma && config->resolution_hz==16000000 && config->mem_block_symbols==128 && config->trans_queue_depth==1 && config->intr_priority==3);
  if(failed())return -1;
  assert(!tx.allocated);
  tx.allocated=true;
+ routed=true;
  *out=&tx;
  ++allocations;
  RMT.clock=true;
@@ -208,9 +246,12 @@ int main(void) {
  fail_at=fault;
  raw_pulse_init();
  assert(!raw_pulse_start() && !tx.allocated && !enc.allocated);
+ const char *expected_error=fault==1 ? "RMT CHANNEL":fault==2 ? "RMT ENCODER":"RMT CALLBACK";
+ assert(raw_pulse_error() && !strcmp(raw_pulse_error(),expected_error));
  }
  fail_at=0;
  raw_pulse_init();
+ assert(!raw_pulse_error());
  unsigned initialized_allocations=allocations;
  raw_pulse_set_read_invert(false);
  raw_pulse_t events[]={{0,0,238},{1,1,469},{1,0,30000},{0,0,1000000},{1,1,UINT32_MAX},{0,0,10}};
@@ -332,6 +373,17 @@ int main(void) {
  assert(!raw_pulse_monitor_active() && raw_pulse_get_pulses_per_second()==1);
  raw_pulse_stop();
  raw_pulse_init();
+ /* Reproduce stopped player with a full 4095-entry unsent FIFO. */
+ raw_pulse_t stopped_pending_event={1,RAW_PULSE_COUNT,5000};
+ for(unsigned i=0;i<4095;++i)assert(raw_pulse_write(&stopped_pending_event,1)==1);
+ assert(raw_pulse_start());
+ raw_pulse_status(&status);assert(status.fifo_used==4095 && status.reserve_us>20000000);
+ raw_pulse_debug_t diagnostic;raw_pulse_debug(&diagnostic);
+ assert(diagnostic.rmt && diagnostic.encoder_callbacks>0 && diagnostic.encoded_us>0 && diagnostic.completed_transactions==0);
+ raw_pulse_stop();raw_pulse_status(&status);
+ assert(!status.running && !status.paused && status.fifo_used==0 && status.reserve_us==0);
+ assert(raw_pulse_free()==4095 && !raw_pulse_start() && !pin && !routed);
+ raw_pulse_init();
  raw_pulse_t long_event={1,RAW_PULSE_COUNT|RAW_PULSE_SOURCE_BYTE,1000000};
  assert(raw_pulse_write(&long_event,1)==1);
  raw_pulse_finish();
@@ -386,9 +438,18 @@ static void fixture(const char *path) {
  header[21]=header[23]=0x12;
  assert(fwrite(header,1,128,f)==128 && fwrite(data,1,4,f)==4 && !fclose(f));
 }
+static void large_ul800_fixture(void) {
+ FILE *f=fopen("large-ul800.mzf","wb");assert(f);
+ uint8_t header[128]={1};memcpy(header+1,"UL800 44033\r",12);
+ header[18]=(uint8_t)44033;header[19]=(uint8_t)(44033>>8);
+ header[21]=header[23]=0x1e;
+ assert(fwrite(header,1,128,f)==128);
+ for(uint32_t i=0;i<44033;++i)assert(fputc(ul_expected_byte(i),f)!=EOF);
+ assert(!fclose(f));
+}
 static void drain_player(void) {
  unsigned budget=250000;
- bool paused_once=false;
+ bool paused_once=false,paused_data_once=false;
  while(player_get_state()==PLAYER_STATE_PLAYING) {
   assert(budget--);
   if(!paused_once) {
@@ -402,12 +463,23 @@ static void drain_player(void) {
    paused_once=true;
   }
   if(tx.running && RMT.clock)advance(remaining);
-  else wall_ticks+=10000ULL*16;
+  else wall_ticks+=(player_is_ultrafast_active() ? 1000ULL:10000ULL)*16;
   player_service();
+  if(verify_ul_payload && bus_owned){
+   if(sense!=1 || ul_bit_count!=0)fprintf(stderr,"RETURN sense=%u bits=%u received=%u state=%u active=%u\n",sense,ul_bit_count,ul_received,player_get_state(),mzf_stream_is_ultrafast_active());
+   assert(sense==1 && ul_bit_count==0);
+   if(!paused_data_once && ul_received && player_get_state()==PLAYER_STATE_PLAYING){
+    uint32_t held=ul_received;
+    player_pause_user();wall_ticks+=5000000ULL*16;player_service();
+    assert(player_get_state()==PLAYER_STATE_PAUSED && ul_received==held && sense==1);
+    player_resume_user();paused_data_once=true;
+   }
+  } /* Whole-byte return. */
  }
  assert(player_get_state()==PLAYER_STATE_EOF && !tx.running && !pin && !routed && player_get_progress_percent()==100);
 }
 int main(void) {
+ setvbuf(stdout,NULL,_IONBF,0);
  player_init();
  fixture("dma.mzf");
  for(unsigned mode=0;mode<LOADER_MODE_COUNT;++mode) {
@@ -423,6 +495,24 @@ int main(void) {
   if(mode>=2 && mode<=4)assert(sense==1 && !monitor);
  }
  assert(!remove("dma.mzf"));
+ large_ul800_fixture();
+ for(unsigned mode=LOADER_MODE_UL;mode<=LOADER_MODE_UL_MZ700;++mode){
+  assert(player_set_loader_mode((loader_mode_t)mode));
+  bus_owned=false;sense=1;ul_received=ul_bit_count=ul_bits=0;
+  peer_ack_at=ul_low_at=ul_longest_low=0;
+  ul_read_writes=ul_last_clock_read=ul_pad_reads=0;
+  verify_ul_payload=true;
+  player_start("large-ul800.mzf");
+  drain_player();
+  assert(ul_received==44033 && ul_bit_count==0 && sense==1);
+  assert(ul_longest_low>=8600U*16 && ul_longest_low<500000U*16);
+#if !CMT_UL_TRACE
+  assert(ul_pad_reads==0);
+#endif
+  verify_ul_payload=false;
+ }
+ assert(!remove("large-ul800.mzf"));
+ puts("PASS UL/UL800/UL700 each44033 bytes: independent decode, reference edge order, late first ACK, no diagnostic GPIO reads, whole-byte returns and data pause");
  const uint8_t tap[]={2,0,0,0xA5,4,0,255,128,0,255};
  FILE *f=fopen("dma.tap","wb");
  assert(f && fwrite(tap,1,sizeof(tap),f)==sizeof(tap) && !fclose(f));

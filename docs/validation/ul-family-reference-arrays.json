@@ -1,0 +1,38 @@
+[
+  {
+    "array": "generic_ul_mz700_mode_P",
+    "bytes": 4,
+    "identical": true,
+    "sha256": "d49b64dfb0e57c888ab843af5e382796cd74993699fb292a406ff279e5a8c009"
+  },
+  {
+    "array": "loader_body_ul_working_P",
+    "bytes": 66,
+    "identical": true,
+    "sha256": "f315b3f6f348117204ff6d43f7b48ffcc1997edb912d24fe88b22373d716f761"
+  },
+  {
+    "array": "mz800_header_prolog_P",
+    "bytes": 29,
+    "identical": true,
+    "sha256": "0f3ba68a34c609f00c344e79f87ac0eae1abb93da2a38762dbf5a6b1546f1704"
+  },
+  {
+    "array": "loader_body_mz800_low_working_P",
+    "bytes": 59,
+    "identical": true,
+    "sha256": "ebfc8ee5e99f3299588dd730356687f56d296b65fd3cdcaae193a0f88af3ef40"
+  },
+  {
+    "array": "loader_body_mz800_high_working_P",
+    "bytes": 59,
+    "identical": true,
+    "sha256": "63125ea59a2ada1bdb260d87eaff01585f48057316465b5f65bbb02d4824ec12"
+  },
+  {
+    "array": "loader_body_mz700_working_P",
+    "bytes": 63,
+    "identical": true,
+    "sha256": "83b0e97e1a8fa74cbf43e1a76d74f43ee8f6be4b7e74e1aad5d00125b3fc631e"
+  }
+]

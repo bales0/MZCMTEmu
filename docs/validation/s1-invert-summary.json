@@ -1,0 +1,14 @@
+{
+  "date": "2026-11-13",
+  "temporary": true,
+  "gpio21_high": "EXTERNAL",
+  "gpio21_low": "INTERNAL",
+  "motor_gpio6_on": "HIGH",
+  "target_build_pass": true,
+  "route_host_sanitizers_pass": true,
+  "ram_static_bytes": 155516,
+  "application_bytes": 464721,
+  "image_bytes": 465152,
+  "image_sha256": "cf37b7ea2e2a4495e274c5ed53e7f525a1cd72fcbb8299a9795698607eaa8db0",
+  "flashed": false
+}

@@ -1,4 +1,10 @@
+> Aktuální r15 (14. 11. 2026): [UL, UL700 a UL800 podle SD2CMT2](UL_FAMILY_PERFORMANCE.md). Odstraněné 10ms čekání po každé krátké dávce UL, vypnutý detailní trace, účinné -O2. Všechny tři režimy prošly host přenosem 44 033 bajtů; Z80 přijímače LOW/HIGH a 100Hz plánování PASS, cílový build PASS. Uživatel potvrdil LOAD v r14 UL800 s nízkou rychlostí; r15 a UL700 zatím bez HW potvrzení. S1 bypass zůstává zapnutý. Následující starší záznamy jsou historie.
+
 # Matice funkční parity
+
+Nejnovější oprava: dlouhé PLAY/REC a samostatná PLAY/RECORD/SYSTEM menu podle reference, první QD NEXT/PREV pouze náhled bez výpočtu celé délky. Pinout beze změny a celý zkontrolovaný.24 sad ASan/UBSan + target PASS, HW nového obrazu neověřeno. [Aktuální audit/testy](PINOUT_REFERENCE_AUDIT.md).
+
+Aktuální PLAY oprava na main f5cda0f + pracovní změny:24 sad ASan/UBSan a target build PASS, HW nového obrazu neověřen. RMT vytváří kanál s GPIO4; QD selector drží validovanou session a omezenou duration cache; RECORD SETUP je samostatné menu. Podrobnosti a hranice důkazů: [PLAY_DIAGNOSTICS_FIX](PLAY_DIAGNOSTICS_FIX.md).
 
 Stav 13. 11. 2026 vůči [SD2CMT2-Reborn 2.0.3 / 600a788](https://github.com/bales0/MZ-SD2CMT2-Reborn/tree/600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb). DONE znamená implementováno; TESTED znamená konkrétní host test s mock periferií/RTOS; HW-TESTED vyžaduje skutečné měření. **Žádná oblast zatím není HW-TESTED a úplná akceptace zadání není splněna.**
 
@@ -46,6 +52,6 @@ Celkem23 sad, GCC14.2 ASan+UBSan; [aktuální log](validation/ui-metadata-host-l
 | OLED | ui.c, oled.c, main.c | TESTED pixelový renderer: šest inverzních řádků, metadata/bary, overlay priority/expiry, marquee,20 Hz dirty refresh,10 ms timeout/retry; host PNG viz TEST_REPORT | Host náhledy existují; skutečná čitelnost a měření na OLED chybí; latence za zátěže |
 | RMT TX DMA | audio/raw_pulse_rmt.c | TESTED produkční encoder:12000 intervalů/refill, jediná transakce, native ticks, long runs, clock pause, stop/error/replay, no start allocation; target build | Retence při clock gate a bezspárovost DMA musí projít analyzátorem |
 | MCPWM HW RX | audio/edge_capture.c | TESTED produkční driver: latch/IRQ delay, wrap/multi-wrap idle, stale IRQ, pending pause tail, overflow, init failure, no start allocation; target build | First edge, cache stalls, zatížení a detekce ztráty hran na HW |
-| N16R8 / footprint | platformio.ini, sdkconfig | TESTED build/image:16MB header, octal PSRAM config; RAM154348 B, aplikace461513 B; callbacky IRAM/FIFO DRAM | Boot, skutečná PSRAM a hodinový heap/stack/fragmentace stress |
+| N16R8 / footprint | platformio.ini, sdkconfig | TESTED build/image:16MB header, octal PSRAM config; RAM155516 B, aplikace464705 B; callbacky IRAM/FIFO DRAM | Boot, skutečná PSRAM a hodinový heap/stack/fragmentace stress |
 
-Aktuální logy jsou [ui-metadata-host-linux](validation/ui-metadata-host-linux.txt), [ui-metadata-build](validation/ui-metadata-build.txt), [ui-metadata-image](validation/ui-metadata-image.txt) a [kontrolní součty fixture](validation/fixture-sha256.json). Metodika a omezení jsou v [TEST_REPORT](TEST_REPORT.md); historické reporty TAP/počátečního rekordéru nejsou aktuální inventurou chybějících funkcí.
+Aktuální logy jsou [reference-fix-host-linux](validation/reference-fix-host-linux.txt), [reference-fix-build](validation/reference-fix-build.txt), [reference-fix-image](validation/reference-fix-image.txt) a [kontrolní součty fixture](validation/fixture-sha256.json). Metodika a omezení jsou v [TEST_REPORT](TEST_REPORT.md); historické reporty TAP/počátečního rekordéru nejsou aktuální inventurou chybějících funkcí.

@@ -1,0 +1,11 @@
+{
+  "banner": "MZCMTEmu TX-TRACE r6 SENSE AUTO LOW S1 BYPASS INTERNAL 2026-11-13",
+  "build": "PASS",
+  "host": "5 suites GCC ASan/UBSan PASS",
+  "ram_bytes": 155532,
+  "application_bytes": 468341,
+  "image_bytes": 468768,
+  "sha256": "29b8aee22ca9cdbe7a2599f6e0fb7d6af55ffee7943afb0f6480df88cd2765a0",
+  "hardware_verified": false,
+  "flashed": false
+}

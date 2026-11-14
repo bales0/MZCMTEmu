@@ -84,6 +84,10 @@ uint16_t mzf_loader_build_loader(uint8_t *destination, uint16_t capacity);
 bool mzf_loader_begin(uint64_t now_us);
 /* Foreground bounded event step: no busy wait, source read outside ISR. */
 bool mzf_loader_bus_step(uint64_t now_us, uint8_t write_level);
+typedef struct { const char *phase; int8_t expected_write; uint8_t pair; } mzf_loader_bus_debug_t;
+/* Foreground snapshot, take before a failed step resets bus outputs. */
+mzf_loader_bus_debug_t mzf_loader_bus_debug(void);
+bool mzf_loader_bus_data_phase(void);
 uint8_t mzf_loader_bus_read(void);
 uint8_t mzf_loader_bus_sense(void);
 bool mzf_loader_bus_error(void);

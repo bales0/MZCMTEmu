@@ -1,0 +1,30 @@
+[
+  {
+    "file": "src/audio/mzf_stream.c",
+    "optimization": [
+      "-Og",
+      "-O2"
+    ]
+  },
+  {
+    "file": "src/audio/sharp_stream.c",
+    "optimization": [
+      "-Og",
+      "-O2"
+    ]
+  },
+  {
+    "file": "src/play/mzf_loader.c",
+    "optimization": [
+      "-Og",
+      "-O2"
+    ]
+  },
+  {
+    "file": "src/audio/player.c",
+    "optimization": [
+      "-Og",
+      "-O2"
+    ]
+  }
+]

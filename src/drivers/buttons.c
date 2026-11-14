@@ -7,6 +7,7 @@
 #define REPEAT_DELAY_MS 400U
 #define REPEAT_RATE_MS 120U
 #define STOP_LONG_MS 800U
+#define MENU_LONG_MS 700U
 typedef struct { bool raw,down,armed,long_sent; TickType_t changed,pressed,repeated,delay; } key_t;
 static const int pins[]={8,9,10,11,42};
 static key_t keys[5];
@@ -43,8 +44,18 @@ btn_event_t buttons_poll(void) {
         if(released[1] && !stop->long_sent)return BTN_STOP;
         return BTN_NONE;
     }
-    if(pressed[0])return BTN_PLAY;
-    if(pressed[4])return BTN_REC;
+    /* Like reference SELECT/RIGHT: short fires on release, so a hold cannot
+     * start transport before opening its menu. Startup-held/chord keys stay inert. */
+    const unsigned dual[]={0,4};
+    for(unsigned n=0;n<2;++n){
+        unsigned i=dual[n];key_t *k=&keys[i];
+        if(k->down && k->armed && !k->long_sent && (TickType_t)(now-k->pressed)>=pdMS_TO_TICKS(MENU_LONG_MS)){
+            k->long_sent=true;
+            for(unsigned j=0;j<5;++j)if(j!=i && keys[j].down)keys[j].armed=false;
+            return i==0 ? BTN_PLAY_LONG:BTN_REC_LONG;
+        }
+        if(released[i] && !k->long_sent)return i==0 ? BTN_PLAY:BTN_REC;
+    }
     for(unsigned i=2;i<=3;++i) {
         key_t *k=&keys[i];
         if(pressed[i])return i==2 ? BTN_NEXT:BTN_PREV;

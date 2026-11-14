@@ -1,0 +1,103 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_player_rmt
+player: request path=dma.mzf mode=0/NORMAL 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2799863 path=dma.mzf
+player: request path=dma.mzf mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2799863 path=dma.mzf
+player: request path=dma.mzf mode=2/UL
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL WRITE5=0 bytes=4 read_setup_us=2 sense_hold_us=50 low_ack_us=200 load=1200 exec=1200 receiver=OTHER
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=2
+player: finish PLAYING -> EOF completed_us=3314865 path=dma.mzf
+player: request path=dma.mzf mode=3/UL MZ800
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ800 WRITE5=0 bytes=4 read_setup_us=2 sense_hold_us=50 low_ack_us=200 load=1200 exec=1200 receiver=LOW
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=2
+player: finish PLAYING -> EOF completed_us=3601446 path=dma.mzf
+player: request path=dma.mzf mode=4/UL MZ700
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ700 WRITE5=1 bytes=4 read_setup_us=2 sense_hold_us=50 low_ack_us=200 load=1200 exec=1200 receiver=LOW
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=2
+player: finish PLAYING -> EOF completed_us=3618800 path=dma.mzf
+player: request path=dma.mzf mode=5/MZ700 FAST3
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=902400 path=dma.mzf
+player: request path=dma.mzf mode=6/IC 1:4
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1093765 path=dma.mzf
+player: request path=dma.mzf mode=7/IC 1:3
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1197776 path=dma.mzf
+player: request path=dma.mzf mode=8/IC 1:2
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1425756 path=dma.mzf
+player: request path=dma.mzf mode=9/TC 1:3
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1204140 path=dma.mzf
+player: request path=dma.mzf mode=10/TC 1:2
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1621289 path=dma.mzf
+player: request path=dma.mzf mode=11/NORMAL 1:2
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1425756 path=dma.mzf
+player: request path=dma.mzf mode=12/NORMAL 1:3
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1197776 path=dma.mzf
+player: request path=dma.mzf mode=13/MZ700 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2840460 path=dma.mzf
+player: request path=dma.mzf mode=14/NORMAL 1:4
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1093765 path=dma.mzf
+player: request path=dma.mzf mode=15/IC 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2809804 path=dma.mzf
+player: request path=dma.mzf mode=16/TC 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2872376 path=dma.mzf
+player: request path=large-ul800.mzf mode=3/UL MZ800
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ800 WRITE5=0 bytes=44033 read_setup_us=2 sense_hold_us=50 low_ack_us=200 load=1200 exec=1200 receiver=LOW
+ul: FAIL reason=UL ACK WINDOW phase=PAIR_WRITE_HIGH expect_WRITE=1 WRITE5=0 pair=1 READ4_CMD=1 SENSE7_CMD=0 write_edges=2 sent=0/44033 elapsed_us=736460 clock_windows=2 low_cmd_max_us=17203
+ul: TRACE MCU pad inputs, not measured at Sharp/8255; chronological last 9 events
+ul: edge us=1000 sent=0 pair=0 phase=START_DELAY expect=-1 W5=0 M6=0 R4=0/0 S7=1/1 (cmd/pad)
+ul: edge us=700000 sent=0 pair=0 phase=READY_DELAY expect=-1 W5=0 M6=0 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=701000 sent=0 pair=0 phase=INITIAL_WRITE_LOW expect=0 W5=0 M6=0 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=701000 sent=0 pair=0 phase=PAIR_WRITE_LOW expect=0 W5=0 M6=0 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=701002 sent=0 pair=0 phase=PAIR_WRITE_HIGH expect=1 W5=0 M6=1 R4=0/0 S7=0/0 (cmd/pad)
+ul: edge us=709603 sent=0 pair=0 phase=PAIR_WRITE_HIGH expect=1 W5=1 M6=1 R4=0/0 S7=0/0 (cmd/pad)
+ul: edge us=719255 sent=0 pair=1 phase=PAIR_WRITE_LOW expect=0 W5=0 M6=0 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=719257 sent=0 pair=1 phase=PAIR_WRITE_HIGH expect=1 W5=0 M6=0 R4=1/1 S7=0/0 (cmd/pad)
+ul: edge us=727858 sent=0 pair=1 phase=PAIR_WRITE_HIGH expect=1 W5=0 M6=0 R4=1/1 S7=0/0 (cmd/pad)
+player: ERROR UL ACK WINDOW
+player: finish PLAYING -> ERROR completed_us=3609718 path=large-ul800.mzf
+
+test_player_rmt: /mnt/c/Dokumenty/GitHub/MZCMTEmu/tests/host/test_raw_rmt.c:487: drain_player: Assertion `player_get_state()==PLAYER_STATE_EOF && !tx.running && !pin && !routed && player_get_progress_percent()==100' failed.
+Traceback (most recent call last):
+  File "/mnt/c/Dokumenty/GitHub/MZCMTEmu/tests/host/run_tests.py", line 123, in <module>
+    subprocess.run([str(exe), *extra], cwd=tmp, env=env, check=True)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/subprocess.py", line 577, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/mnt/c/Dokumenty/GitHub/MZCMTEmu/.tmp/test_player_rmt-o5p481dd/test_player_rmt']' died with <Signals.SIGABRT: 6>.

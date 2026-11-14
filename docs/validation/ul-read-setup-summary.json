@@ -1,0 +1,13 @@
+{
+  "banner": "MZCMTEmu TX-TRACE r10 UL READ SETUP S1 BYPASS INTERNAL 2026-11-13",
+  "build": "PASS",
+  "host": "3 GCC ASan/UBSan suites PASS",
+  "ul_payload_bytes": 44033,
+  "read_setup_us": 2,
+  "ram_bytes": 155548,
+  "application_bytes": 468833,
+  "image_bytes": 469264,
+  "sha256": "1bcd9384e93d1745705fc75faa61fa70195ef81a916af10c6aad14f3622869fb",
+  "hardware_verified": false,
+  "flashed": false
+}

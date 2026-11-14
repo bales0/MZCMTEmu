@@ -578,3 +578,7 @@ void raw_pulse_status(raw_pulse_status_t *out){
  .time_valid=false,.running=s_running,.paused=s_paused,.underrun=s_underrun};
 }
 uint32_t raw_pulse_completed_source_bytes(void){return __atomic_load_n(&source_bytes,__ATOMIC_ACQUIRE);}
+
+const char *raw_pulse_error(void){return NULL;}
+
+void raw_pulse_debug(raw_pulse_debug_t *out){*out=(raw_pulse_debug_t){0};}

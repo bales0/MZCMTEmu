@@ -14,7 +14,9 @@ typedef enum {
     BTN_STOP_LONG,
     BTN_NEXT,
     BTN_PREV,
-    BTN_REC
+    BTN_REC,
+    BTN_REC_LONG,
+    BTN_PLAY_LONG
 } btn_event_t;
 
 void buttons_init(void);

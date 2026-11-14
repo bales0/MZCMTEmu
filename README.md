@@ -1,8 +1,12 @@
+> Aktuální r15 (14. 11. 2026): [UL, UL700 a UL800 podle SD2CMT2](docs/UL_FAMILY_PERFORMANCE.md). Odstraněné 10ms čekání po každé krátké dávce UL, vypnutý detailní trace, účinné -O2. Všechny tři režimy prošly host přenosem 44 033 bajtů; Z80 přijímače LOW/HIGH a 100Hz plánování PASS, cílový build PASS. Uživatel potvrdil LOAD v r14 UL800 s nízkou rychlostí; r15 a UL700 zatím bez HW potvrzení. S1 bypass zůstává zapnutý. Následující starší záznamy jsou historie.
+
 # MZCMTEmu
 
 Port kazetového rozhraní Sharp MZ na ESP32-S3 N16R8: 16 MB flash, 8 MB octal PSRAM, SD SPI a SSD1306 128×64. Funkční vzor je [SD2CMT2-Reborn 2.0.3](https://github.com/bales0/MZ-SD2CMT2-Reborn/tree/600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb).
 
-Implementované části prošly 23 hostitelskými sadami (Debian GCC14.2, ASan/UBSan) a cílovým sestavením. **Port dosud nemá HW akceptaci (HW zatím není připojený):** neproběhl LOAD na Sharpu, měření analyzátorem ani hodinový test SD/PSRAM. Rozsah důkazů a otevřené kontroly jsou v [matici parity](docs/PARITY_MATRIX.md) a [test reportu](docs/TEST_REPORT.md).
+Implementované části prošly 24 hostitelskými sadami (Debian GCC14.2, ASan/UBSan) a cílovým sestavením. **Nový opravný build dosud nemá HW akceptaci:** uživatel hlásil selhání předchozího firmwaru na desce a uvedl COM6. Úspěšný LOAD, měření analyzátorem ani hodinový test SD/PSRAM tohoto obrazu nejsou doloženy. Rozsah důkazů a otevřené kontroly jsou v [matici parity](docs/PARITY_MATRIX.md) a [test reportu](docs/TEST_REPORT.md).
+
+Aktuální oprava první QD navigace, dlouhých REC/PLAY a úplná kontrola GPIO: [PINOUT_REFERENCE_AUDIT](docs/PINOUT_REFERENCE_AUDIT.md). Předchozí opravu inicializace RMT dokumentuje [PLAY_DIAGNOSTICS_FIX](docs/PLAY_DIAGNOSTICS_FIX.md). MOTOR ON je podle uživatele HIGH; nový obraz je nutné ověřit na desce.
 
 ## Funkce
 
@@ -42,17 +46,18 @@ N16R8 override nastavuje image/upload header i sdkconfig na 16 MB a octal PSRAM.
 
 ## Ovládání pěti tlačítky
 
-| Kontext | PLAY | STOP krátce | STOP dlouze | NEXT / PREV | REC |
-|---|---|---|---|---|---|
-| Browser | Složka, příprava/start souboru | Rodič | Menu | Výběr + repeat | Začátek/čekání RECORD |
-| MZT/QD selektor | Zvolený rekord | Browser | Ukončení | Rekord | Profil tohoto rekordu |
-| PLAY | Pauza/pokračování dle MOTOR/módu | Stop; kontejner → selektor | Ukončení | Výběr browseru na pozadí, bez seek | Bez akce |
-| RECORD | Pauza/pokračování | Uložit; další STOP návrat | Zrušit a smazat | Bez akce | Bez akce |
-| SAVING | Bez akce | Vyčkat dokončení | Vyžádat smazání po uzavření | Bez akce | Bez akce |
-| Menu | Změnit volbu / otevřít info | Zpět + uložit | Bez akce | Volba; v KEYMAP stránka | Bez akce |
-| Bez SD | Bez startu | Návrat dle stavu | Menu | Bez procházení | Bez startu |
+| Kontext | PLAY krátce / dlouze | REC krátce / dlouze | STOP krátce / dlouze | NEXT / PREV |
+|---|---|---|---|---|
+| Filebrowser | Otevřít/start / PLAY menu | Připravit RECORD / RECORD menu | Rodič / systémové nastavení | Výběr + repeat |
+| MZT/QD selektor | Spustit rekord / bez akce | Profil rekordu / bez akce | Browser / ukončit | Rekord |
+| PLAY | Pauza/pokračování / bez akce | Bez akce | Stop, kontejner → selektor / ukončit | Browser na pozadí bez seek |
+| RECORD | Pauza/pokračování / bez akce | Bez akce | Uložit / zrušit a smazat | Bez akce |
+| SAVING | Bez akce | Bez akce | Vyčkat / smazat po uzavření | Bez akce |
+| Každé menu | Změnit volbu/info / bez akce | Bez akce | Uložit a browser (v info o úroveň zpět) | Volba; v KEYMAP stránka |
 
-Odrušení 30 ms; STOP long 800 ms; repeat po 400 ms, dále po 120 ms. STOP má prioritu v kombinaci tlačítek a blokuje opakování držené navigační klávesy do další obrazovky. Krátký STOP se vyhodnotí při uvolnění. Záznamy směřují do /RECORDINGS.
+Odrušení 30 ms; STOP long 800 ms; repeat po 400 ms, dále po 120 ms. STOP má prioritu v kombinaci tlačítek a blokuje opakování držené navigační klávesy do další obrazovky. Krátké PLAY/REC/STOP se vyhodnotí při uvolnění. PLAY/REC long700 ms, STOP long800 ms; u dlouhého REC proto nevznikne předčasný start záznamu. Záznamy směřují do /RECORDINGS.
+
+RECORD nastavení: ve filebrowseru podržet REC (700 ms). TYPE, CTRL a AUTONAME mění krátký PLAY; STOP uloží a vrátí přímo do browseru. RECORD položky v PLAY menu nejsou. V QD selektoru nejprve STOP do browseru. Dlouhé REC při chybějící kartě vyžádá SD retry. První otevření QD obraz validuje, první návštěvy dalších rekordů čtou jen hlavičku/prefix; výpočet úplné délky se odkládá na skutečné PLAY. Sériová diagnostika: `pio device monitor --port COM6 --baud 115200`.
 
 S1 fyzicky přepíná CMT trasu. EXT (GPIO21 LOW, debounce 40 ms) zablokuje PLAY/REC, zastaví PLAY a zruší rozpracovaný RECORD včetně SAVING; návrat na INTERNAL nic automaticky nespouští, software nevytváří mux. Uživatel potvrdil neinvertující převodníky U1/U2; elektrické parametry a resetové stavy stále vyžadují měření. [Pinmap a HW kontroly](docs/HARDWARE.md).
 

@@ -1,0 +1,12 @@
+high0 sense_inv0 write_inv0 hold0: ok0 sent256 copied256 match0 pc1200 phaseFAILED expected-1 write1
+high0 sense_inv0 write_inv0 hold50: ok0 sent256 copied256 match0 pc1200 phaseFAILED expected-1 write1
+high1 sense_inv0 write_inv0 hold50: ok0 sent256 copied0 match0 pc1100 phaseFAILED expected-1 write1
+high0 sense_inv0 write_inv1 hold0: ok0 sent0 copied0 match0 pc1153 phaseFAILED expected-1 write1
+high0 sense_inv0 write_inv1 hold50: ok0 sent0 copied0 match0 pc1153 phaseFAILED expected-1 write1
+high1 sense_inv0 write_inv1 hold50: ok0 sent0 copied0 match0 pcc037 phaseFAILED expected-1 write1
+high0 sense_inv1 write_inv0 hold0: ok0 sent0 copied0 match0 pc1147 phaseFAILED expected-1 write1
+high0 sense_inv1 write_inv0 hold50: ok0 sent0 copied0 match0 pc1147 phaseFAILED expected-1 write1
+high1 sense_inv1 write_inv0 hold50: ok0 sent0 copied0 match0 pcc026 phaseFAILED expected-1 write1
+high0 sense_inv1 write_inv1 hold0: ok1 sent256 copied255 match0 pc1162 phaseDONE expected-1 write0
+high0 sense_inv1 write_inv1 hold50: ok1 sent256 copied256 match1 pc1200 phaseDONE expected-1 write0
+high1 sense_inv1 write_inv1 hold50: ok1 sent256 copied0 match1 pc1100 phaseDONE expected-1 write0

@@ -1,0 +1,257 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_player_sharp
+player: request path=all.mzf mode=0/NORMAL 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2799863 path=all.mzf
+player: request path=all.mzf mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2799863 path=all.mzf
+player: request path=all.mzf mode=2/UL
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL WRITE5=0 bytes=4 sequence=SD2CMT2 trace=1 start_delay_ms=100 ready_delay_us=0 initial_wait_ms=0 data_wait_ms=500 load=1200 exec=1200 receiver=OTHER
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=3 elapsed_ms=5100 data_ms=0 bytes_per_s=40816
+player: finish PLAYING -> EOF completed_us=3314865 path=all.mzf
+player: request path=all.mzf mode=3/UL MZ800
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ800 WRITE5=0 bytes=4 sequence=SD2CMT2 trace=1 start_delay_ms=700 ready_delay_us=1000 initial_wait_ms=5000 data_wait_ms=500 load=1200 exec=1200 receiver=LOW
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=3 elapsed_ms=5720 data_ms=0 bytes_per_s=40816
+player: finish PLAYING -> EOF completed_us=3598689 path=all.mzf
+player: request path=all.mzf mode=4/UL MZ700
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ700 WRITE5=1 bytes=4 sequence=SD2CMT2 trace=1 start_delay_ms=0 ready_delay_us=0 initial_wait_ms=5000 data_wait_ms=1000 load=1200 exec=1200 receiver=LOW
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=3 elapsed_ms=5020 data_ms=0 bytes_per_s=40816
+player: finish PLAYING -> EOF completed_us=3617421 path=all.mzf
+player: request path=all.mzf mode=5/MZ700 FAST3
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=902400 path=all.mzf
+player: request path=all.mzf mode=6/IC 1:4
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1093765 path=all.mzf
+player: request path=all.mzf mode=7/IC 1:3
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1197776 path=all.mzf
+player: request path=all.mzf mode=8/IC 1:2
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1425755 path=all.mzf
+player: request path=all.mzf mode=9/TC 1:3
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1204140 path=all.mzf
+player: request path=all.mzf mode=10/TC 1:2
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1621289 path=all.mzf
+player: request path=all.mzf mode=11/NORMAL 1:2
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1425755 path=all.mzf
+player: request path=all.mzf mode=12/NORMAL 1:3
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1197777 path=all.mzf
+player: request path=all.mzf mode=13/MZ700 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2840460 path=all.mzf
+player: request path=all.mzf mode=14/NORMAL 1:4
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1093765 path=all.mzf
+player: request path=all.mzf mode=15/IC 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2809804 path=all.mzf
+player: request path=all.mzf mode=16/TC 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2872376 path=all.mzf
+PASS automatic SENSE LOW across all 17 native profiles and IC 1:4 motor pause; stale policy cannot overwrite UL; safe final bus
+player: STOP cause=API_STOP from=EOF path=all.mzf
+player: finish EOF -> STOPPED completed_us=2872376 path=all.mzf
+player: select path=session.mzq record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: select path=session.mzq record=2 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=session.mzq record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=session.mzq record=2 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=session.mzq record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=session.mzq record=2 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=session.mzq record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=session.mzq record=2 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: request path=session.mzq mode=0/NORMAL 1:1
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2799863 path=session.mzq
+player: select path=session.mzq record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: STOP cause=API_STOP from=READY path=session.mzq
+player: finish READY -> STOPPED completed_us=2799863 path=session.mzq
+PASS QD selector retains validated directory/durations, first visits and revisits avoid analysis; exact duration deferred to PLAY; STOP invalidates cache; selected-path alias safe
+player: select path=multi.mzt record=1 mode=1 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: select path=multi.mzt record=1 mode=14 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=multi.mzt record=2 mode=1 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=multi.mzt record=1 mode=14 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=multi.mzt record=2 mode=1 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: request path=multi.mzt mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2872376 path=multi.mzt
+player: select path=multi.mzt record=1 mode=14 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: request path=multi.mzt mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=2872376 path=multi.mzt
+player: select path=multi.mzt record=1 mode=14 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: request path=multi.mzt mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: STOP cause=API_STOP from=PLAYING path=multi.mzt
+player: finish PLAYING -> STOPPED completed_us=0 path=multi.mzt
+player: STOP cause=API_STOP from=STOPPED path=multi.mzt
+player: finish STOPPED -> STOPPED completed_us=0 path=multi.mzt
+PASS MZT selector and per-record profiles survive navigation; AUTO MTI is isolated, chosen record only, STOP/replay
+player: select path=sequence.mzt record=1 mode=1 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=1 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=11 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: request path=sequence.mzt mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1425756 path=sequence.mzt
+player: select path=sequence.mzt record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=6 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=11 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=9 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=6 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: request path=sequence.mzt mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+player: finish PLAYING -> EOF completed_us=1204140 path=sequence.mzt
+player: select path=sequence.mzt record=1 mode=6 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=2 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=9 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=2 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: request path=sequence.mzt mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL WRITE5=0 bytes=4 sequence=SD2CMT2 trace=1 start_delay_ms=100 ready_delay_us=0 initial_wait_ms=0 data_wait_ms=500 load=1200 exec=1200 receiver=OTHER
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=3 elapsed_ms=5100 data_ms=0 bytes_per_s=40816
+player: finish PLAYING -> EOF completed_us=2799862 path=sequence.mzt
+player: select path=sequence.mzt record=1 mode=2 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=2 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=3 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=2 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: request path=sequence.mzt mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL WRITE5=0 bytes=4 sequence=SD2CMT2 trace=1 start_delay_ms=100 ready_delay_us=0 initial_wait_ms=0 data_wait_ms=500 load=1200 exec=1200 receiver=OTHER
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=3 elapsed_ms=5100 data_ms=0 bytes_per_s=40816
+player: finish PLAYING -> EOF completed_us=3314865 path=sequence.mzt
+player: select path=sequence.mzt record=1 mode=2 result=READY elapsed_ms=0
+player: source_reused=0 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=3 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=2 mode=4 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: select path=sequence.mzt record=1 mode=0 result=READY elapsed_ms=0
+player: source_reused=1 duration_cached=0 duration_deferred=1 records=2
+player: request path=sequence.mzt mode=1/AUTO
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ700 WRITE5=1 bytes=4 sequence=SD2CMT2 trace=1 start_delay_ms=0 ready_delay_us=0 initial_wait_ms=5000 data_wait_ms=1000 load=1200 exec=1200 receiver=LOW
+ul: END sent=4/4 clock_windows=16 low_cmd_max_us=3 elapsed_ms=5020 data_ms=0 bytes_per_s=40816
+player: finish PLAYING -> EOF completed_us=3620638 path=sequence.mzt
+PASS MZT continuous native/turbo and mixed UL records; each record keeps its profile; UL-to-UL stops per reference
+player: STOP cause=API_STOP from=EOF path=sequence.mzt
+player: finish EOF -> STOPPED completed_us=3620638 path=sequence.mzt
+player: request path=ul-no-peer.mzf mode=3/UL MZ800
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ800 WRITE5=1 bytes=4 sequence=SD2CMT2 trace=1 start_delay_ms=700 ready_delay_us=1000 initial_wait_ms=5000 data_wait_ms=500 load=1200 exec=1200 receiver=LOW
+ul: FAIL reason=UL TIMEOUT phase=INITIAL_WRITE_LOW expect_WRITE=0 WRITE5=1 pair=0 READ4_CMD=1 SENSE7_CMD=1 write_edges=0 sent=0/4 elapsed_us=5711714 clock_windows=0 low_cmd_max_us=0
+ul: TRACE MCU pad inputs, not measured at Sharp/8255; chronological last 4 events
+ul: edge us=10002 sent=0 pair=0 phase=START_DELAY expect=-1 W5=1 M6=1 R4=0/0 S7=1/1 (cmd/pad)
+ul: edge us=710212 sent=0 pair=0 phase=READY_DELAY expect=-1 W5=1 M6=1 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=720215 sent=0 pair=0 phase=INITIAL_WRITE_LOW expect=0 W5=1 M6=1 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=5711714 sent=0 pair=0 phase=INITIAL_WRITE_LOW expect=0 W5=1 M6=1 R4=1/1 S7=1/1 (cmd/pad)
+player: ERROR UL TIMEOUT
+player: finish PLAYING -> ERROR completed_us=3598689 path=ul-no-peer.mzf
+player: STOP cause=API_STOP from=ERROR path=ul-no-peer.mzf
+player: finish ERROR -> STOPPED completed_us=3598689 path=ul-no-peer.mzf
+PASS no UL peer: timeout reason survives stream close, safe READ/SENSE/monitor outputs, not generic SOURCE/TX error
+player: STOP cause=API_STOP from=STOPPED path=ul-no-peer.mzf
+player: finish STOPPED -> STOPPED completed_us=3598689 path=ul-no-peer.mzf
+player: request path=ul-no-ack.mzf mode=3/UL MZ800
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ800 WRITE5=0 bytes=4 sequence=SD2CMT2 trace=1 start_delay_ms=700 ready_delay_us=1000 initial_wait_ms=5000 data_wait_ms=500 load=1200 exec=1200 receiver=LOW
+ul: FAIL reason=UL TIMEOUT phase=PAIR_WRITE_HIGH expect_WRITE=1 WRITE5=0 pair=0 READ4_CMD=1 SENSE7_CMD=0 write_edges=0 sent=0/4 elapsed_us=1220221 clock_windows=1 low_cmd_max_us=500001
+ul: TRACE MCU pad inputs, not measured at Sharp/8255; chronological last 6 events
+ul: edge us=10002 sent=0 pair=0 phase=START_DELAY expect=-1 W5=0 M6=1 R4=0/0 S7=1/1 (cmd/pad)
+ul: edge us=710212 sent=0 pair=0 phase=READY_DELAY expect=-1 W5=0 M6=1 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=720215 sent=0 pair=0 phase=INITIAL_WRITE_LOW expect=0 W5=0 M6=1 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=720217 sent=0 pair=0 phase=PAIR_WRITE_LOW expect=0 W5=0 M6=1 R4=1/1 S7=1/1 (cmd/pad)
+ul: edge us=720220 sent=0 pair=0 phase=PAIR_WRITE_HIGH expect=1 W5=0 M6=1 R4=1/1 S7=0/0 (cmd/pad)
+ul: edge us=1220221 sent=0 pair=0 phase=PAIR_WRITE_HIGH expect=1 W5=0 M6=1 R4=1/1 S7=0/0 (cmd/pad)
+player: ERROR UL TIMEOUT
+player: finish PLAYING -> ERROR completed_us=3598689 path=ul-no-ack.mzf
+player: STOP cause=API_STOP from=ERROR path=ul-no-ack.mzf
+player: finish ERROR -> STOPPED completed_us=3598689 path=ul-no-ack.mzf
+PASS missing data ACK: reference 500ms timeout, safe SENSE HIGH/read/monitor and immutable error after close
+player: STOP cause=API_STOP from=STOPPED path=ul-no-ack.mzf
+player: finish STOPPED -> STOPPED completed_us=3598689 path=ul-no-ack.mzf
+player: request path=ul-schedule.mzf mode=3/UL MZ800
+player: START sr=1000000 binary
+player: TX STARTED state=PLAYING fifo=3072 completed_us=0
+ul: BEGIN mode=UL MZ800 WRITE5=0 bytes=32768 sequence=SD2CMT2 trace=1 start_delay_ms=700 ready_delay_us=1000 initial_wait_ms=5000 data_wait_ms=500 load=1200 exec=1200 receiver=LOW
+player: STOP cause=API_STOP from=PLAYING path=ul-schedule.mzf
+player: finish PLAYING -> STOPPED completed_us=3589957 path=ul-schedule.mzf
+PASS real UL task loop: no per-batch sleep, periodic 1-tick idle after100-110ms of work, only at SENSE HIGH; STOP cleanup
+

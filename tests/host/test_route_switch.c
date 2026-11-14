@@ -27,18 +27,15 @@ int main(void) {
  }
  o=cmt_bus_outputs(false,false,false,PLAYER_STATE_PLAYING,RECORDER_STATE_FINISHED,true);
  assert(o.sense_high && !o.monitor_enabled);
+ assert(ROUTE_FORCE_INTERNAL && !route_switch_is_external(true) && !route_switch_is_external(false));
  route_switch_t s={0};
- assert(route_switch_update(&s,false,0)==ROUTE_EXTERNAL && s.external);
- assert(route_switch_update(&s,true,1)==ROUTE_UNCHANGED && s.external);
- assert(route_switch_update(&s,false,30000)==ROUTE_UNCHANGED && s.external);
- assert(route_switch_update(&s,true,40000)==ROUTE_UNCHANGED && s.external);
- assert(route_switch_update(&s,true,79999)==ROUTE_UNCHANGED && s.external);
- assert(route_switch_update(&s,true,80000)==ROUTE_INTERNAL && !s.external);
- assert(route_switch_update(&s,false,100000)==ROUTE_UNCHANGED);
- assert(route_switch_update(&s,false,139999)==ROUTE_UNCHANGED);
- assert(route_switch_update(&s,false,140000)==ROUTE_EXTERNAL && s.external);
- assert(route_switch_update(&s,false,999999)==ROUTE_UNCHANGED);
+ assert(route_switch_update(&s,true,0)==ROUTE_INTERNAL && !s.external);
+ const uint64_t times[]={1,30000,40000,79999,80000,100000,140000,999999};
+ for(unsigned i=0;i<sizeof(times)/sizeof(times[0]);++i)
+  assert(route_switch_update(&s,(i&1)!=0,times[i])==ROUTE_UNCHANGED && !s.external);
+ route_switch_t low_at_boot={0};
+ assert(route_switch_update(&low_at_boot,false,0)==ROUTE_INTERNAL && !low_at_boot.external);
  assert(route_switch_update(NULL,true,0)==ROUTE_UNCHANGED);
- puts("PASS physical CMT route: safe initial external state, bounce rejection, 40 ms transitions, no repeated event");
+ puts("PASS S1 bypass: HIGH/LOW and startup both remain INTERNAL, no external event/transport abort; bus output policies preserved");
  return 0;
 }

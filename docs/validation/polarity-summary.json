@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-13",
+  "banner": "MZCMTEmu TX-TRACE r5 SENSE ARM S1 BYPASS INTERNAL",
+  "build": "PASS",
+  "host_suites": [
+    "test_route_switch",
+    "test_sharp_stream",
+    "test_player_sharp",
+    "test_player_rmt",
+    "test_player_tap"
+  ],
+  "host_result": "PASS (GCC ASan/UBSan)",
+  "ram_bytes": 155532,
+  "application_bytes": 468309,
+  "image_bytes": 468736,
+  "sha256": "c34f0413e44e24268d33cc1a8f3760da2c09bed3ed84a0832d54000b701f9a3b",
+  "hardware_verified": false,
+  "flashed": false
+}

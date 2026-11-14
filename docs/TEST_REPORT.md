@@ -1,4 +1,30 @@
-# Ověření UI, metadat a PCNT — 13. 11. 2026
+> Aktuální r15 (14. 11. 2026): [UL, UL700 a UL800 podle SD2CMT2](UL_FAMILY_PERFORMANCE.md). Odstraněné 10ms čekání po každé krátké dávce UL, vypnutý detailní trace, účinné -O2. Všechny tři režimy prošly host přenosem 44 033 bajtů; Z80 přijímače LOW/HIGH a 100Hz plánování PASS, cílový build PASS. Uživatel potvrdil LOAD v r14 UL800 s nízkou rychlostí; r15 a UL700 zatím bez HW potvrzení. S1 bypass zůstává zapnutý. Následující starší záznamy jsou historie.
+
+# Aktuální test S1 bypass / UL chyba
+
+INTERNAL je vynucený bez ohledu na GPIO21.5 dotčených sad ASan/UBSan a target build PASS, včetně konkrétního UL TIMEOUT po close/reset. [Aktuální test](S1_BYPASS_TEST.md), [host](validation/s1-bypass-host.txt), [build](validation/s1-bypass-build.txt), [hash](validation/s1-bypass-summary.json). RAM155532 B, aplikace468005 B. GPIO4 matrix84 odpovídá RMT výstupu3 a poslední uživatelský log ukazuje dokončený RMT předběh, pak selhání UL-MZ800. Skutečný READ konektorový průběh/LOAD dosud není ověřený ani problém označený jako vyřešený. Obraz neflashován.
+
+---
+
+# Diagnostika TX-TRACE r3
+
+Oprava RMT STOP zahazuje neodeslanou frontu/rezervu; dokončené čítače uchovává. Doloženo regresí4095 neodeslaných událostí.5 dotčených sad s ASan/UBSan PASS, target build PASS. Nové pojmenované stavy, STOP_CAUSE, FILE, RMT callback počty a čtení GPIO4 konfigurace mají určit příčinu chybějícího HW signálu; **ten zatím není vyřešený/ověřený**. Uživatelský log z několika minut ukazuje PLAY=3/STOPPED a TX running0, nikoli aktivní TX. [Diagnóza a další reprodukce](TX_OUTPUT_DIAGNOSIS.md), [testy](validation/tx-trace-host.txt), [build](validation/tx-trace-build.txt), [souhrn](validation/tx-trace-summary.json). RAM155532 B, aplikace467709 B; obraz neflashován. Testovací S1 HIGH=EXT zůstává.
+
+---
+
+# Aktuální oprava referenčního ovládání a QD náhledu
+
+**24 sad ASan/UBSan PASS, cílový build PASS.** Main f5cda0fa04566e4008ef40ab0c9c49480316ddac + pracovní změny. Dlouhé REC/PLAY z filebrowseru otevírají samostatná menu; RECORD položky nejsou v PLAY. I první návštěva jiného QD rekordu vynechá úplný výpočet délky, ten proběhne až při PLAY. Pinout všech backendů souhlasí se zadáním/DOCX/schématem, beze změny GPIO. [Podrobný audit](PINOUT_REFERENCE_AUDIT.md), [host log](validation/reference-fix-host-linux.txt), [build](validation/reference-fix-build.txt), [souhrn](validation/reference-fix-summary.json). RAM155516 B, aplikace464705 B. Nový obraz není flashován ani HW akceptovaný. Všech92 fixture nezměněno.
+
+---
+
+# Historická oprava PLAY — 13. 11. 2026
+
+Výchozí main f5cda0fa04566e4008ef40ab0c9c49480316ddac + pracovní změny. **24 sad/ASan/UBSan PASS, cílový build PASS; nový obraz neflashován a na desce neověřen.** RAM155548 B, aplikace464553 B. Uživatel hlásí chyby předchozího obrazu na zařízení, potvrdil MOTOR ON=HIGH a COM6. Příčina odmítnutého RMT GPIO−1, QD session/cache, RECORD SETUP, nové testy a reprodukce monitoru jsou v [PLAY_DIAGNOSTICS_FIX](PLAY_DIAGNOSTICS_FIX.md). [Aktuální host log](validation/play-fix-host-linux.txt), [build](validation/play-fix-build.txt), [souhrn](validation/play-fix-summary.json). Všechny92 fixture nezměněné.
+
+---
+
+# Historický report UI, metadat a PCNT — 13. 11. 2026
 
 **23 host sad s ASan/UBSan, cílový build PASS; HW akceptace NEPROVEDENA.** Výchozí commit main d3f67c4a978a38dad23e49c918b145182046452b plus necommitnuté pracovní změny tohoto zadání. Nebyl proveden staging, commit, vytvoření větve, push ani PR. Reference 2.0.3 / 600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb a MZTools nebyly měněny. Uživatelské odstranění starého zadání je zachováno.
 

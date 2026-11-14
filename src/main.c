@@ -31,6 +31,7 @@
 #include "esp_system.h"
 #include "sdkconfig.h"
 #include "app/route_switch.h"
+#include "app/menu.h"
 #include "app/cmt_bus_policy.h"
 #include "ui/view.h"
 #include "ui/policy.h"
@@ -108,21 +109,8 @@ static uint8_t s_setting_rec_control,s_setting_brightness=80,s_loader_speeds=0xB
 static unsigned s_menu_info_page;
 
 // MENU state
-typedef enum {
-    MENU_ITEM_MODE = 0,
-    MENU_ITEM_SIGNAL_INVERT,
-    MENU_ITEM_PLAY_ULTRAFAST,
-    MENU_ITEM_REC_FORMAT,
-    MENU_ITEM_REC_AUTO_SIGNAL,
-    MENU_ITEM_TAP_SPEED,
-    MENU_ITEM_AUTONAME,
-    MENU_ITEM_LOADER_SPEED,
-    MENU_ITEM_CMT_SOURCE,
-    MENU_ITEM_BRIGHTNESS,
-    MENU_ITEM_ABOUT,
-    MENU_ITEM_KEYMAP,
-    MENU_ITEM_COUNT
-} menu_item_t;
+static app_menu_t s_menu;
+
 
 static bool s_menu_active = false;
 static bool s_settings_error;
@@ -133,7 +121,7 @@ static bool s_menu_pre_wrap_prev = false;
 
 
 
-// true = uživatel zmáčkl PLAY při MOTOR LOW a čekáme na MOTOR HIGH.
+// true = PLAY armed while MOTOR is OFF; wait for active HIGH.
 static bool play_wait_motor = false;
 static bool play_motor_override = false;
 static TickType_t play_wait_motor_armed_tick = 0;
@@ -176,19 +164,19 @@ static bool player_screen_active(player_state_t st)
 
 
 
-static bool motor_signal_is_high(void)
+static bool motor_is_on(void)
 {
-    return (gpio_get_level(MOTOR_GPIO) != 0);
+    return (gpio_get_level(MOTOR_GPIO) != 0); /* User corrected MOTOR ON = HIGH. */
 }
 
-static bool transport_motor_is_high(void)
+static bool transport_motor_is_on(void)
 {
-    return !s_setting_motor_auto || motor_signal_is_high();
+    return !s_setting_motor_auto || motor_is_on();
 }
 
-static bool record_motor_is_high(void)
+static bool record_motor_is_on(void)
 {
-    return s_setting_rec_control!=0 || motor_signal_is_high();
+    return s_setting_rec_control!=0 || motor_is_on();
 }
 
 static bool switch_signal_is_high(void)
@@ -209,7 +197,7 @@ static cmt_bus_outputs_t bus_outputs(void)
 static void service_sense_output(void)
 {
     cmt_bus_outputs_t out=bus_outputs();
-    if(!out.ul_owns_sense)gpio_set_level(SENSE_GPIO,out.sense_high);
+    if(!out.ul_owns_sense)player_set_sense_level(out.sense_high);
 }
 static void service_monitor_output(void)
 {
@@ -236,6 +224,8 @@ static void play_wait_motor_arm(void)
     play_wait_motor = true;
     play_motor_override = false;
     play_wait_motor_armed_tick = xTaskGetTickCount() + pdMS_TO_TICKS(200);
+    /* Assert cassette-button SENSE before waiting for the Sharp motor latch. */
+    service_sense_output();
 }
 
 static void clear_play_preview(void)
@@ -439,7 +429,7 @@ static bool sd_runtime_try_mount(void)
 
     if(s_sd_recover_path[0]) {
         if(!recorder_is_active() && !switch_ext_mode) {
-            if(!player_prepare_record(s_sd_recover_path,s_sd_recover_record))player_stop();
+            if(!player_prepare_record(s_sd_recover_path,s_sd_recover_record))player_stop_for(PLAYER_STOP_SD_RESTORE_FAILED);
             else ui_show_overlay("SELECTOR RESTORED",1200);
         }
         s_sd_recover_path[0]=0;
@@ -454,7 +444,7 @@ static bool sd_runtime_try_mount(void)
 /* Called only after the foreground writer/transport has closed its handles. */
 static void sd_runtime_request_reinit(void)
 {
-    player_stop();
+    player_stop_for(PLAYER_STOP_SD_REINIT);
     sdcard_unmount();
     s_sd_ready=false;
     s_sd_next_mount_retry=xTaskGetTickCount()+pdMS_TO_TICKS(SD_MOUNT_RETRY_MS);
@@ -477,7 +467,7 @@ static void sd_runtime_on_removed(void)
         pst == PLAYER_STATE_EOF ||
         pst == PLAYER_STATE_UNDERRUN ||
         pst == PLAYER_STATE_ERROR) {
-        player_stop();
+        player_stop_for(PLAYER_STOP_SD_REMOVED);
     }
 
     recorder_media_removed();
@@ -545,11 +535,12 @@ static bool menu_is_active(void)
     return s_menu_active;
 }
 
-static void menu_enter(void)
+static void menu_enter(app_menu_section_t section)
 {
     s_menu_active = true;
     s_menu_info_page=0;
-    s_menu_selected = 0;
+    s_menu=(app_menu_t){.section=section};
+    s_menu_selected=app_menu_selected(&s_menu);
     s_menu_pre_wrap_next = false;
     s_menu_pre_wrap_prev = false;
 }
@@ -571,19 +562,15 @@ static void menu_exit(void)
 static void menu_next(void)
 {
     if(s_menu_info_page) {s_menu_info_page=s_menu_info_page==5 ? 1:s_menu_info_page+1;return;}
-    s_menu_selected++;
-    if (s_menu_selected >= MENU_ITEM_COUNT) {
-        s_menu_selected = 0;
-    }
+    app_menu_move(&s_menu,1);
+    s_menu_selected=app_menu_selected(&s_menu);
 }
 
 static void menu_prev(void)
 {
     if(s_menu_info_page) {s_menu_info_page=s_menu_info_page==1 ? 5:s_menu_info_page-1;return;}
-    s_menu_selected--;
-    if (s_menu_selected < 0) {
-        s_menu_selected = MENU_ITEM_COUNT - 1;
-    }
+    app_menu_move(&s_menu,-1);
+    s_menu_selected=app_menu_selected(&s_menu);
 }
 
 static const char *rec_format_to_text(recorder_format_t format)
@@ -631,17 +618,17 @@ static void menu_activate_selected(void)
                 recorder_set_sample_rate(s_setting_rec_rate);
             } else if (s_setting_rec_format == RECORDER_FORMAT_WAV &&
                        s_setting_rec_rate == 22050U) {
-                s_setting_rec_format = RECORDER_FORMAT_LEP;
+                s_setting_rec_format = RECORDER_FORMAT_L16;
                 recorder_set_format(s_setting_rec_format);
                 s_setting_rec_rate = 44100U;
                 recorder_set_sample_rate(s_setting_rec_rate);
             } else if (s_setting_rec_format == RECORDER_FORMAT_WAV) {
                 s_setting_rec_format = RECORDER_FORMAT_LEP;
                 recorder_set_format(s_setting_rec_format);
-            } else if (s_setting_rec_format == RECORDER_FORMAT_LEP) {
-                s_setting_rec_format = RECORDER_FORMAT_L16;
-                recorder_set_format(s_setting_rec_format);
             } else if (s_setting_rec_format == RECORDER_FORMAT_L16) {
+                s_setting_rec_format = RECORDER_FORMAT_LEP;
+                recorder_set_format(s_setting_rec_format);
+            } else if (s_setting_rec_format == RECORDER_FORMAT_LEP) {
                 s_setting_rec_format = RECORDER_FORMAT_MZF;
                 recorder_set_format(s_setting_rec_format);
             } else {
@@ -657,7 +644,7 @@ static void menu_activate_selected(void)
             (void)player_set_loader_mode(loader_from_family(loader_family(player_get_loader_mode()),s_loader_speeds));
             break;
         case MENU_ITEM_CMT_SOURCE:
-            ui_show_overlay("USE SWITCH S1",1500);
+            ui_show_overlay(ROUTE_FORCE_INTERNAL ? "S1 BYPASS INTERNAL":"USE SWITCH S1",1500);
             break;
         case MENU_ITEM_BRIGHTNESS:
             s_setting_brightness=s_setting_brightness==100 ? 10:s_setting_brightness+10;
@@ -674,7 +661,7 @@ static void menu_activate_selected(void)
             break;
 
         case MENU_ITEM_REC_AUTO_SIGNAL:
-            s_setting_rec_control=(uint8_t)((s_setting_rec_control+1)%3);
+            s_setting_rec_control=(uint8_t)app_menu_next_record_control(s_setting_rec_control);
             s_setting_rec_auto_signal=s_setting_rec_control==2;
             recorder_set_auto_signal(s_setting_rec_auto_signal);
             break;
@@ -688,7 +675,7 @@ static void ui_build_info_model(void)
 {
     ui_use_text_view();
     static const char *const keys[4][8]={
-      {"BROWSER KEYS","PLAY: OPEN / START","STOP: PARENT","HOLD STOP: MENU","NEXT/PREV: SELECT","REC: START RECORD","NEXT/PREV: MORE","STOP: BACK"},
+      {"BROWSER KEYS","PLAY: OPEN / START","HOLD PLAY: PLAY MENU","REC: ARM RECORD","HOLD REC: RECORD MENU","STOP: PARENT","HOLD STOP: SETTINGS","NEXT/PREV: MORE"},
       {"PLAY KEYS","PLAY: USER PAUSE","PLAY: RESUME","STOP: END / SELECT","HOLD STOP: END","MOTOR: AUTO PAUSE","NEXT/PREV: MORE","STOP: BACK"},
       {"RECORD KEYS","REC: START / ARM","PLAY: PAUSE/RESUME","STOP: SAVE","HOLD STOP: DELETE","AUTO: IDLE STOP 5s","NEXT/PREV: MORE","STOP: BACK"},
       {"IMAGE SELECTOR KEYS","NEXT/PREV: RECORD","REC: RECORD PROFILE","PLAY: START RECORD","STOP: BACK TO BROWSER","MZT: AUTO CONTINUE","NEXT/PREV: MORE","STOP: BACK"}};
@@ -718,12 +705,12 @@ static void ui_build_menu_model(void)
 {
     ui_use_text_view();
     if(s_menu_info_page) {ui_build_info_model();return;}
-    snprintf(ui_header, sizeof(ui_header), "MENU");
+    snprintf(ui_header, sizeof(ui_header), "%s",s_menu.section==APP_MENU_RECORD ? "RECORD MENU":s_menu.section==APP_MENU_PLAY ? "PLAY MENU":"SETTINGS");
 
     snprintf(ui_menu_item0, sizeof(ui_menu_item0),
-             "%cMODE:%s",
+             "%cPLAY CTRL:%s",
              (s_menu_selected == MENU_ITEM_MODE) ? '}' : ' ',
-             s_setting_motor_auto ? "AUTO" : "MANUAL");
+             s_setting_motor_auto ? "MOTOR" : "MANUAL");
 
     snprintf(ui_menu_item1, sizeof(ui_menu_item1),
              "%cSIGNAL INVERT:%s",
@@ -754,16 +741,17 @@ static void ui_build_menu_model(void)
     unsigned family=loader_family(player_get_loader_mode());
     snprintf(ui_menu_item7,sizeof(ui_menu_item7),"%cSPEED:%s",s_menu_selected==MENU_ITEM_LOADER_SPEED ? '}':' ',
              loader_speed_slot(family)<0 ? "--":loader_speed(player_get_loader_mode())==0 ? "1:1":loader_speed(player_get_loader_mode())==1 ? "1:2":loader_speed(player_get_loader_mode())==2 ? "1:3":"1:4");
-    snprintf(ui_menu_item8,sizeof(ui_menu_item8),"%cCMT:%s S1",s_menu_selected==MENU_ITEM_CMT_SOURCE ? '}':' ',switch_ext_mode ? "EXTERNAL":"INTERNAL");
+    snprintf(ui_menu_item8,sizeof(ui_menu_item8),"%cCMT:%s",s_menu_selected==MENU_ITEM_CMT_SOURCE ? '}':' ',ROUTE_FORCE_INTERNAL ? "INTERNAL FIXED":switch_ext_mode ? "EXTERNAL":"INTERNAL");
     snprintf(ui_menu_item9,sizeof(ui_menu_item9),"%cOLED BRIGHT:%u%%",s_menu_selected==MENU_ITEM_BRIGHTNESS ? '}':' ',s_setting_brightness);
     snprintf(ui_menu_item10,sizeof(ui_menu_item10),"%cABOUT / MEMORY",s_menu_selected==MENU_ITEM_ABOUT ? '}':' ');
     snprintf(ui_menu_item11,sizeof(ui_menu_item11),"%cKEYMAP",s_menu_selected==MENU_ITEM_KEYMAP ? '}':' ');
-    const char *rows[]={ui_menu_item0,ui_menu_item1,ui_menu_item2,ui_menu_item3,
-                        ui_menu_item4,ui_menu_item5,ui_menu_item6,ui_menu_item7,ui_menu_item8,ui_menu_item9,ui_menu_item10,ui_menu_item11};
-    int first=s_menu_selected>5 ? s_menu_selected-5:0;
-    ui_model.line[0] = ui_header;
-    ui_model.line[1] = s_settings_error ? "SETTINGS ERROR" : "";
-    for(unsigned row=0;row<6;++row) ui_model.line[row+2]=rows[first+row];
+    const char *rows[MENU_ITEM_COUNT]={ui_menu_item0,ui_menu_item1,ui_menu_item2,ui_menu_item3,
+        ui_menu_item4,ui_menu_item5,ui_menu_item6,ui_menu_item7,ui_menu_item8,ui_menu_item9,ui_menu_item10,ui_menu_item11};
+    unsigned index=app_menu_index(&s_menu),first=index>5 ? index-5:0;
+    ui_model.line[0]=ui_header;
+    ui_model.line[1]=s_settings_error ? "SETTINGS ERROR":"PLAY CHANGE STOP BACK";
+    for(unsigned row=0;row<6;++row){menu_item_t id=app_menu_item(&s_menu,first+row);ui_model.line[row+2]=id<MENU_ITEM_COUNT ? rows[id]:"";}
+
 }
 
 // --------------------------------------------------------
@@ -835,8 +823,8 @@ static bool ui_should_show_playback_screen(void)
 static void ui_build_playback_model(void)
 {
     ui_transport_view_t view={0};player_state_t state=player_get_state();
-    const char *path=play_wait_motor ? file_list_get_path():player_get_current_path();
-    player_metadata(&view.program);if(play_wait_motor)program_metadata_reset(&view.program,file_format_detect_from_name(path));
+    const char *path=play_wait_motor && state!=PLAYER_STATE_READY ? file_list_get_path():player_get_current_path();
+    player_metadata(&view.program);if(play_wait_motor && state!=PLAYER_STATE_READY)program_metadata_reset(&view.program,file_format_detect_from_name(path));
     view.filename=basename_ptr(path);
     view.seconds=player_get_position_seconds();view.progress=player_get_progress_percent();
     view.sample_rate=player_get_sample_rate();view.playback_baud=player_is_tap() ? (uint16_t)player_get_baud_rate():0;
@@ -845,7 +833,7 @@ static void ui_build_playback_model(void)
     if(play_wait_motor)view.status="WAIT MOTOR";
     else if(state==PLAYER_STATE_READY)view.status="SELECT RECORD";
     else if(state==PLAYER_STATE_PAUSED)view.status=player_get_pause_reason()==PLAYER_PAUSE_MOTOR ? "PAUSE MOTOR":"PAUSE USER";
-    else if(state==PLAYER_STATE_ERROR)view.status="ERROR";
+    else if(state==PLAYER_STATE_ERROR){view.status="ERROR";view.warning=player_error_message();}
     else if(state==PLAYER_STATE_UNDERRUN)view.status="UNDERRUN";
     else if(state==PLAYER_STATE_EOF)view.status="FINISHED";
     else if(player_is_ultrafast_active())view.status="UL HANDSHAKE";
@@ -869,14 +857,23 @@ static void ui_build_browser_model(void)
 static void start_selected_file(void)
 {
     if(switch_ext_mode) return;
-    const char *path = file_list_get_path();
+    const char *selected=player_get_state()==PLAYER_STATE_READY ? player_get_current_path():file_list_get_path();
+    char selected_copy[1024];
+    snprintf(selected_copy,sizeof(selected_copy),"%s",selected ? selected:"");
+    const char *path=selected_copy;
 
-    if (path == NULL) {
+    if (!path[0]) {
         ui_show_overlay("NOFILE", 1000);
         return;
     }
 
+    /* Connector SENSE is active LOW; HIGH releases the cassette button.
+     * Arm before synchronous file preparation and the first READ edge.
+     * UL takes ownership only after its normal header has drained. */
+    player_set_sense_level(false);
+    printf("sense: PLAY arm GPIO7_CMD=0 before source preparation / TX\n");
     player_start(path);
+    service_sense_output(); /* Restore HIGH immediately if preparation failed. */
     service_monitor_output();
     clear_play_preview();
 }
@@ -889,7 +886,7 @@ static void service_motor_pause_resume(void)
         return;
     }
 
-    bool motor_high = motor_signal_is_high();
+    bool motor_high = motor_is_on();
     player_state_t st = player_get_state();
     player_pause_reason_t reason = player_get_pause_reason();
 
@@ -926,7 +923,7 @@ static void service_route_switch(void)
     switch_ext_mode=route.external;
     if(event==ROUTE_EXTERNAL) {
         play_wait_motor_clear();
-        player_stop();
+        player_stop_for(PLAYER_STOP_S1_EXTERNAL);
         recorder_state_t state=recorder_get_state();
         if(state==RECORDER_STATE_FINALIZING || state==RECORDER_STATE_RECORDING || state==RECORDER_STATE_WAIT_MOTOR ||
            state==RECORDER_STATE_PAUSED_USER || state==RECORDER_STATE_PAUSED_MOTOR)
@@ -953,7 +950,7 @@ static bool cancel_image_analysis(void *context)
     btn_event_t event=buttons_poll();
     if(event==BTN_STOP || event==BTN_STOP_LONG || gpio_get_level(GPIO_NUM_47)) return true;
     int64_t now=esp_timer_get_time();
-    if(switch_signal_is_high())external_since=0;
+    if(!route_switch_is_external(switch_signal_is_high()))external_since=0;
     else if(!external_since)external_since=now;
     else if(now-external_since>=40000)return true;
     if(now-shown_at>=100000) {
@@ -1030,11 +1027,55 @@ static void service_wait_start_on_motor(void)
         return;
     }
 
-    if (motor_signal_is_high()) {
+    if (motor_is_on()) {
         play_wait_motor_clear();
         ui_clear_overlay();
         start_selected_file();
     }
+}
+
+/* Foreground only, changes plus a bounded heartbeat; never from ISR. */
+static void diagnostics_tick(btn_event_t button)
+{
+    static uint32_t previous=UINT32_MAX;
+    static player_state_t dumped_state=PLAYER_STATE_IDLE;
+    static int64_t last;
+    unsigned motor=(unsigned)(gpio_get_level(MOTOR_GPIO)!=0);
+    unsigned route=(unsigned)(gpio_get_level(SWITCH_GPIO)!=0);
+    unsigned write=(unsigned)(gpio_get_level(GPIO_NUM_5)!=0);
+    cmt_bus_outputs_t bus=bus_outputs();
+    player_state_t play=player_get_state();
+    recorder_state_t rec=recorder_get_state();
+    uint32_t key=motor|(route<<1)|((unsigned)s_sd_ready<<2)|((unsigned)play<<3)|((unsigned)rec<<7)|
+        ((unsigned)s_setting_motor_auto<<12)|((unsigned)s_setting_rec_control<<13)|((unsigned)play_wait_motor<<15);
+    int64_t now=esp_timer_get_time();
+    if(button!=BTN_NONE)printf("diag: button=%u menu=%u record_setup=%u\n",(unsigned)button,(unsigned)s_menu_active,(unsigned)(s_menu.section==APP_MENU_RECORD));
+    bool active=player_is_playing() || recorder_is_active() || play_wait_motor;
+    if(previous!=UINT32_MAX && now-last<100000)return; /* Bound noisy input logs to 10 Hz. */
+    if(key==previous && now-last<(active ? 2000000:10000000))return;
+    previous=key;last=now;
+    if(play!=dumped_state){
+        dumped_state=play;
+        if(play==PLAYER_STATE_PLAYING){
+            printf("diag: GPIO4/7 configuration at PLAY entry (not measured edges)\n");
+            (void)gpio_dump_io_configuration(stdout,(1ULL<<READ_GPIO)|(1ULL<<SENSE_GPIO));
+        }
+    }
+    raw_pulse_debug_t debug;raw_pulse_debug(&debug);
+    raw_pulse_status_t tx;raw_pulse_status(&tx);
+    printf("diag: MOTOR6=%u/%s PLAY_CTRL=%s WAIT=%u S1_21=%u S1_BYPASS=%u EXT=%u SD=%u PLAY=%u/%s STOP_CAUSE=%s PAUSE=%u REC=%u REC_CTRL=%u FILE=%s\n",
+        motor,motor ? "ON":"OFF",s_setting_motor_auto ? "MOTOR":"MANUAL",(unsigned)play_wait_motor,
+        route,(unsigned)ROUTE_FORCE_INTERNAL,(unsigned)switch_ext_mode,(unsigned)s_sd_ready,(unsigned)play,player_state_name(play),player_stop_cause_name(),(unsigned)player_get_pause_reason(),(unsigned)rec,(unsigned)s_setting_rec_control,basename_ptr(player_get_current_path()));
+    printf("diag: WRITE5=%u SENSE7_POLICY=%s READ_INVERT=%u (commands, not connector measurements)\n",
+        write,bus.ul_owns_sense ? "UL":bus.sense_high ? "HIGH/IDLE":"LOW/ACTIVE",
+        (unsigned)raw_pulse_get_read_invert());
+    if(player_is_ultrafast_active())printf("diag: UL progress=%u%% avg_bps=%lu\n",
+        (unsigned)player_get_progress_percent(),(unsigned long)player_get_baud_rate());
+    printf("diag: TX running=%u paused=%u fifo=%lu/%lu reserve_us=%llu underrun=%u error=%s rmt=%u enc_cb=%lu done=%lu encoded_us=%llu heap=%lu min=%lu\n",
+        (unsigned)tx.running,(unsigned)tx.paused,(unsigned long)tx.fifo_used,(unsigned long)tx.fifo_capacity,
+        (unsigned long long)tx.reserve_us,(unsigned)tx.underrun,raw_pulse_error() ? raw_pulse_error():"none",
+        (unsigned)debug.rmt,(unsigned long)debug.encoder_callbacks,(unsigned long)debug.completed_transactions,(unsigned long long)debug.encoded_us,
+        (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
 }
 
 static void app_task(void *arg)
@@ -1047,6 +1088,7 @@ static void app_task(void *arg)
 
         service_sd_detect();
         service_route_switch();
+        diagnostics_tick(e);
 
         // MENU má prioritu nad browser/playback
         if (menu_is_active()) {
@@ -1060,10 +1102,10 @@ static void app_task(void *arg)
                 menu_exit();
             }
             else if (e == BTN_STOP_LONG) {
-                // v menu ignore
+                menu_exit();
             }
             else if (e == BTN_NEXT) {
-                bool wrapped = (s_menu_selected >= (MENU_ITEM_COUNT - 1));
+                bool wrapped = app_menu_index(&s_menu)==app_menu_count(&s_menu)-1;
                 if (wrapped && buttons_last_event_was_repeat() && !s_menu_pre_wrap_next) {
                     s_menu_pre_wrap_next = true;
                     s_menu_pre_wrap_prev = false;
@@ -1075,7 +1117,7 @@ static void app_task(void *arg)
                 }
             }
             else if (e == BTN_PREV) {
-                bool wrapped = (s_menu_selected <= 0);
+                bool wrapped = app_menu_index(&s_menu)==0;
                 if (wrapped && buttons_last_event_was_repeat() && !s_menu_pre_wrap_prev) {
                     s_menu_pre_wrap_prev = true;
                     s_menu_pre_wrap_next = false;
@@ -1092,7 +1134,7 @@ static void app_task(void *arg)
 
             service_motor_pause_resume();
             if (s_setting_rec_control==0) {
-                recorder_service_motor(motor_signal_is_high());
+                recorder_service_motor(motor_is_on());
             }
             recorder_service();
             service_wait_start_on_motor();
@@ -1100,11 +1142,7 @@ static void app_task(void *arg)
             service_sense_output();
             service_monitor_output();
 
-            if (ui_should_show_no_sd_screen()) {
-                ui_build_no_sd_model();
-            } else {
-                ui_build_menu_model();
-            }
+            ui_build_menu_model();
             ui_mark_external_route();
             ui_set_external(switch_ext_mode);ui_render(&ui_model);
 
@@ -1116,8 +1154,15 @@ static void app_task(void *arg)
             continue;
         }
 
-        if (e == BTN_PLAY) {
-            bool motor_high = transport_motor_is_high();
+        if(e==BTN_REC_LONG || e==BTN_PLAY_LONG){
+            player_state_t state=player_get_state();
+            if(!recorder_is_active() && !play_wait_motor && (state==PLAYER_STATE_IDLE || state==PLAYER_STATE_STOPPED)){
+                if(e==BTN_REC_LONG && !s_sd_ready){s_sd_next_mount_retry=0;ui_show_overlay("NO SD",1000);}
+                else menu_enter(e==BTN_REC_LONG ? APP_MENU_RECORD:APP_MENU_PLAY);
+            }
+        }
+        else if (e == BTN_PLAY) {
+            bool motor_high = transport_motor_is_on();
             player_state_t st = player_get_state();
             player_pause_reason_t reason = player_get_pause_reason();
 
@@ -1130,7 +1175,7 @@ static void app_task(void *arg)
                 }
                 // RECORD mode má prioritu
                 else if (recorder_is_active()) {
-                    recorder_handle_play(record_motor_is_high());
+                    recorder_handle_play(record_motor_is_on());
                 }
                 // PLAYBACK / browser logika
                 else if (st == PLAYER_STATE_READY) {
@@ -1195,7 +1240,7 @@ static void app_task(void *arg)
                 bool container=file_format_is_record_container(file_format_detect_from_name(player_get_current_path()));
                 uint16_t record=player_sharp_details()->record;
                 char path[1024]; snprintf(path,sizeof(path),"%s",player_get_current_path());
-                player_stop();
+                player_stop_for(PLAYER_STOP_BUTTON);
                 if(container && st!=PLAYER_STATE_READY && s_sd_ready)
                     (void)player_prepare_record(path,record);
             }
@@ -1221,14 +1266,14 @@ static void app_task(void *arg)
                 play_wait_motor_clear();
                 clear_play_preview();
                 ui_clear_overlay();
-                player_stop();
+                player_stop_for(PLAYER_STOP_LONG_BUTTON);
             }
             else {
                 play_wait_motor_clear();
                 clear_play_preview();
                 ui_clear_overlay();
 
-                menu_enter();
+                menu_enter(APP_MENU_SYSTEM);
             }
         }
         else if (e == BTN_NONE) {
@@ -1294,14 +1339,14 @@ static void app_task(void *arg)
                             play_wait_motor_clear();
                             clear_play_preview();
                             ui_clear_overlay();
-                            player_stop();
+                            player_stop_for(PLAYER_STOP_RECORD_START);
                         }
 
                         ui_clear_overlay();
                         play_wait_motor_clear();
                         clear_play_preview();
 
-                        recorder_handle_rec(RECORDINGS_DIR, record_motor_is_high());
+                        recorder_handle_rec(RECORDINGS_DIR, record_motor_is_on());
                     }
                 } else {
                     // REC is intentionally inert while the record workflow is active.
@@ -1311,7 +1356,7 @@ static void app_task(void *arg)
 
         service_motor_pause_resume();
         if (s_setting_rec_control==0) {
-            recorder_service_motor(motor_signal_is_high());
+            recorder_service_motor(motor_is_on());
         }
         recorder_service();
         service_wait_start_on_motor();
@@ -1342,7 +1387,9 @@ static void app_task(void *arg)
 
 void app_main(void)
 {
-    // SERIAL fix
+    setvbuf(stdout,NULL,_IOLBF,0);
+    printf("MZCMTEmu TX-TRACE r15 SD2CMT2 UL FAST S1 BYPASS INTERNAL 2026-11-14; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
+    // Give the USB console time to enumerate.
     vTaskDelay(pdMS_TO_TICKS(500));
     fflush(stdout);
 
@@ -1375,7 +1422,7 @@ void app_main(void)
     };
     gpio_config(&motor_cfg);
 
-    // SWITCH = vstup s pull-up, zatím jen příprava logiky, bez akcí
+    // S1 position input only; physical contacts switch the CMT route.
     gpio_config_t switch_cfg = {
         .pin_bit_mask = (1ULL << SWITCH_GPIO),
         .mode = GPIO_MODE_INPUT,
@@ -1403,9 +1450,9 @@ void app_main(void)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
-    gpio_set_level(SENSE_GPIO, 1); // preload latch before enabling output
+    gpio_set_level(SENSE_GPIO,1); // preload latch before enabling output
     gpio_config(&sense_cfg);
-    gpio_set_level(SENSE_GPIO, 1);   // default STOP/idle = HIGH
+    gpio_set_level(SENSE_GPIO,1);   // default STOP/idle = HIGH
 
     gpio_config_t monitor_cfg = {
         .pin_bit_mask = (1ULL << MONITOR_GPIO),
@@ -1427,6 +1474,7 @@ void app_main(void)
     app_settings_t restored;
     s_settings_error=settings_load(&restored)<0;
     s_setting_motor_auto=restored.motor_auto;
+    printf("settings: load_error=%u PLAY_CTRL=%s REC_CTRL=%u loader=%u format=%u\n",(unsigned)s_settings_error,restored.motor_auto ? "MOTOR":"MANUAL",(unsigned)restored.record_control,(unsigned)restored.loader,(unsigned)restored.record_format);
     s_setting_signal_invert=restored.invert;
     s_setting_rec_auto_signal=restored.record_auto;
     s_setting_rec_format=restored.record_format;

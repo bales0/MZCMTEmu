@@ -1,0 +1,17 @@
+{
+  "banner": "MZCMTEmu TX-TRACE r13 UL ATOMIC CLOCK S1 BYPASS INTERNAL 2026-11-13",
+  "build": "PASS",
+  "host": "4 GCC ASan/UBSan suites PASS",
+  "unprotected_probe": "expected failure PAIR_WRITE_HIGH pair=1 under injected LOW preemption",
+  "protected_probe": "44033 bytes, 176132 clock windows, 20us peer ACK, 8.6ms scheduler delays at HIGH, low_cmd_max_us=22",
+  "missing_ack": "UL ACK WINDOW with SENSE HIGH before critical exit; low_cmd_max_us=202 in host",
+  "read_setup_us": 2,
+  "high_hold_us": 50,
+  "low_ack_window_us": 200,
+  "ram_bytes": 156220,
+  "application_bytes": 470389,
+  "image_bytes": 470816,
+  "sha256": "6bacef2eb2c0e63afc54450626f77f68a1bdc3d7090c12cb6c276c7718e53bc3",
+  "hardware_verified": false,
+  "flashed": false
+}

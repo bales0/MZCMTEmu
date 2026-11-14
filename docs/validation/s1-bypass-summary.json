@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-13",
+  "head": "f5cda0fa04566e4008ef40ab0c9c49480316ddac",
+  "working_changes": true,
+  "s1_bypassed": true,
+  "internal_forced": true,
+  "motor_on_high": true,
+  "target_build_pass": true,
+  "host_suites": [
+    "test_route_switch",
+    "test_sharp_stream",
+    "test_player_sharp",
+    "test_player_rmt",
+    "test_player_tap"
+  ],
+  "host_pass": true,
+  "sanitizers": "GCC14.2 ASan+UBSan Debian",
+  "ram_static_bytes": 155532,
+  "application_bytes": 468005,
+  "image_bytes": 468432,
+  "image_sha256": "7e93efb33f7078652e4a5769c33d5af62fcf65bcb395621334fa801e1fd74711",
+  "flashed": false,
+  "hardware_signal_issue_resolved": false
+}

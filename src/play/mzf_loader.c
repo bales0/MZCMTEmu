@@ -1040,19 +1040,20 @@ uint16_t mzf_loader_build_loader(uint8_t *destination, uint16_t capacity)
  * at most one handshake event, so STOP/SD removal can always preempt a wait. */
 typedef enum { BUS_IDLE, BUS_DELAY, BUS_READY, BUS_INITIAL, BUS_ARM_HIGH,
     BUS_ARM_LOW, BUS_PAIR_LOW, BUS_PAIR_HIGH, BUS_END, BUS_DONE, BUS_FAILED } bus_phase_t;
-static bus_phase_t bus_phase;
+static bus_phase_t bus_phase,bus_failed_phase;
 static uint64_t bus_deadline;
 static uint8_t bus_read, bus_sense=1, bus_data, bus_pairs;
 static bool bus_loaded, bus_paused;
 static uint64_t bus_pause_start;
 static bool bus_fail(const char *text) {
     set_error_P(text);
+    if(bus_phase!=BUS_FAILED)bus_failed_phase=bus_phase;
     bus_phase=BUS_FAILED;
     bus_read=0;
     bus_sense=1;
     return false;
 }
-static uint64_t bus_timeout(void) { return mzf_loader_is_mz700_ul() ? 1000000ULL : 500000ULL;
+static uint64_t bus_timeout(void) { return mzf_loader_is_mz700_ul() ? MZF_LOADER_MZ700_TIMEOUT_US:MZF_LOADER_TIMEOUT_US;
     }
 static bool bus_load(void) {
     uint8_t value;
@@ -1072,14 +1073,15 @@ bool mzf_loader_begin(uint64_t now_us) {
     context.started=true;
     context.finished=false;
     bus_loaded=false;
+    bus_pairs=0;
     bus_paused=false;
     bus_sense=1;
     bus_read=context.variant==MZF_LOADER_VARIANT_MZ800_HEADER ? 0 : 1;
     if (mzf_loader_is_mz700_ul()) { bus_phase=BUS_ARM_HIGH;
-        bus_deadline=now_us+5000000ULL;
+        bus_deadline=now_us+(uint64_t)MZF_LOADER_MZ700_START_TIMEOUT_US;
         }
     else { bus_phase=BUS_DELAY;
-        bus_deadline=now_us+(mzf_loader_is_header_only() ? 700000ULL : 100000ULL);
+        bus_deadline=now_us+(uint64_t)(mzf_loader_is_header_only() ? MZF_LOADER_HEADER_START_DELAY_MS:MZF_LOADER_START_DELAY_MS)*1000ULL;
         }
     return true;
 }
@@ -1091,7 +1093,7 @@ bool mzf_loader_bus_step(uint64_t now_us, uint8_t write_level) {
             if (now_us<bus_deadline) return true;
             if (mzf_loader_is_header_only()) { bus_read=1;
             bus_phase=BUS_READY;
-            bus_deadline=now_us+1000;
+            bus_deadline=now_us+MZF_LOADER_HEADER_READY_DELAY_US;
             }
             else { bus_phase=BUS_PAIR_LOW;
             bus_deadline=now_us+bus_timeout();
@@ -1101,7 +1103,7 @@ bool mzf_loader_bus_step(uint64_t now_us, uint8_t write_level) {
             if (now_us<bus_deadline) return true;
             if (!bus_load()) return false;
             bus_phase=BUS_INITIAL;
-        bus_deadline=now_us+5000000ULL;
+        bus_deadline=now_us+MZF_LOADER_HEADER_INITIAL_TIMEOUT_US;
         return true;
         case BUS_INITIAL:
             if (!write_level) { bus_phase=BUS_PAIR_LOW;
@@ -1151,6 +1153,22 @@ bool mzf_loader_bus_step(uint64_t now_us, uint8_t write_level) {
     }
     return now_us<=bus_deadline ? true : bus_fail("UL TIMEOUT");
 }
+bool mzf_loader_bus_data_phase(void) {
+    if(bus_paused)return false;
+    return bus_phase==BUS_PAIR_LOW || bus_phase==BUS_PAIR_HIGH || bus_phase==BUS_END;
+}
+mzf_loader_bus_debug_t mzf_loader_bus_debug(void) {
+    static const char *const names[]={"IDLE","START_DELAY","READY_DELAY","INITIAL_WRITE_LOW",
+        "ARM_WRITE_HIGH","ARM_WRITE_LOW","PAIR_WRITE_LOW","PAIR_WRITE_HIGH","END_WRITE_LOW","DONE","FAILED"};
+    bus_phase_t phase=bus_phase==BUS_FAILED ? bus_failed_phase:bus_phase;
+    int8_t expected=-1;
+    switch(phase) {
+    case BUS_INITIAL:case BUS_ARM_LOW:case BUS_PAIR_LOW:case BUS_END:expected=0;break;
+    case BUS_ARM_HIGH:case BUS_PAIR_HIGH:expected=1;break;
+    default:break;
+    }
+    return (mzf_loader_bus_debug_t){names[phase],expected,bus_pairs};
+}
 uint8_t mzf_loader_bus_read(void) { return bus_read;
     }
 uint8_t mzf_loader_bus_sense(void) { return bus_sense;
@@ -1162,10 +1180,16 @@ bool mzf_loader_is_finished(void) { return context.finished;
 uint8_t mzf_loader_get_progress_percent(void) {
     return context.data_length ? (uint8_t)((context.transferred*100UL)/context.data_length) : 0;
 }
-const char *mzf_loader_get_error_text(void) { return context.error_text;
-    }
+const char *mzf_loader_get_error_text(void) {
+    /* Return immutable reasons so the caller can retain an error across close/reset. */
+    static const char *const reasons[]={"UL READ","UL SEEK","UL STATE","UL TIMEOUT","UL CLOCK"};
+    if(!context.error_text[0])return "";
+    for(unsigned i=0;i<sizeof(reasons)/sizeof(reasons[0]);++i)
+        if(!strcmp(context.error_text,reasons[i]))return reasons[i];
+    return "UL ERROR";
+}
 
-static void bus_reset(void) { bus_phase=BUS_IDLE;
+static void bus_reset(void) { bus_phase=BUS_IDLE;bus_failed_phase=BUS_IDLE;
     bus_paused=false;
     bus_read=0;
     bus_sense=1;

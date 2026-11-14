@@ -1,0 +1,14 @@
+{
+  "banner": "MZCMTEmu TX-TRACE r12 UL PAD TRACE S1 BYPASS INTERNAL 2026-11-13",
+  "build": "PASS",
+  "host": "4 GCC ASan/UBSan suites PASS",
+  "read_setup_us": 2,
+  "sense_hold_us": 50,
+  "trace_events": 32,
+  "ram_bytes": 156188,
+  "application_bytes": 469721,
+  "image_bytes": 470144,
+  "sha256": "06b80a3004eb8ca4a738d535eb6eb8f281e45b1aca97b9d87be1f70bc01759df",
+  "hardware_verified": false,
+  "flashed": false
+}

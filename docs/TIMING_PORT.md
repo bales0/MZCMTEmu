@@ -28,7 +28,7 @@ UL je samostatný neblokující FSM se třemi variantami, cílovými loadery, ti
 
 Výchozí edge_capture.c používá MCPWM capture timer APB80 MHz, GPIO5 obě hrany, prescale1, IRQ prioritu3. Druhý kanál bez vstupního GPIO poskytuje soft-capture snapshot pro start/pause. Událost nese hardwarový latch; ISR latence neposouvá uložený timestamp. FIFO8192 × 8 B = 65536 B je interní DRAM. 32bit wrap se rozšiřuje pomocí wall-time pouze pro určení počtu otočení při dlouhém tichu. Pauza zakáže vstupní capture, vybere pending latch a zachytí částečný tail; resume vynechá čas pauzy. Overflow či detekovaná ztráta polarity jsou chyby.
 
-CONFIG_MCPWM_ISR_CACHE_SAFE, CONFIG_MCPWM_CTRL_FUNC_IN_IRAM, CONFIG_RMT_TX_ISR_CACHE_SAFE a CONFIG_RMT_ENCODER_FUNC_IN_IRAM jsou zapnuté. [Výpis symbolů](validation/ui-metadata-symbols.txt) ověřuje encoder/helpers/capture callback v IRAM a obě FIFO v interní DRAM. Callbacky nevolají FS, malloc ani I²C. GPIO/GPTimer capture zůstává jen diagnostická alternativa CONFIG_MZ_CAPTURE_GPIO_FALLBACK. První hrana, cache stalls, skutečná ztráta hran a wrap za souběhu SD musí projít HW zkouškou.
+CONFIG_MCPWM_ISR_CACHE_SAFE, CONFIG_MCPWM_CTRL_FUNC_IN_IRAM, CONFIG_RMT_TX_ISR_CACHE_SAFE a CONFIG_RMT_ENCODER_FUNC_IN_IRAM jsou zapnuté. [Výpis symbolů](validation/play-fix-symbols.txt) ověřuje encoder/helpers/capture callback v IRAM a obě FIFO v interní DRAM. Callbacky nevolají FS, malloc ani I²C. GPIO/GPTimer capture zůstává jen diagnostická alternativa CONFIG_MZ_CAPTURE_GPIO_FALLBACK. První hrana, cache stalls, skutečná ztráta hran a wrap za souběhu SD musí projít HW zkouškou.
 
 LEP/L16 RECORD kvantizuje každý dokončený fyzický interval samostatně:
 
@@ -42,7 +42,7 @@ Capture/RMT ISR mají prioritu3 a interní metadata. Storage je statická úloha
 
 Player je na CPU0, priorita5, 8192 B stack, aktivní obsluha po1 ms; storage má vyšší task prioritu kvůli krátkému obsloužení jeho RPC. UI/record foreground je CPU1, priorita2, stack8192 B, poll5 ms. Realtime capture zůstává ISR nad těmito úlohami. Pinning a hodnoty priorit jsou implementační volba čekající na zatěžovací měření. Žádný UI mutex se nepoužívá uvnitř ISR.
 
-Browser používá přibližně2,5 MiB PSRAM, rekordové profily64 KiB, MZF payload65535 B; alokují se jednou a ISR do nich nepřistupuje. Statická interní RAM finálního buildu154348 B, aplikace461513 B; hodnoty nezahrnují runtime SDK heap/stack a PSRAM. Před akceptací změřit nejmenší volný blok, stack high-water, SD latency a FIFO watermarks při dlouhém provozu.
+Browser používá přibližně2,5 MiB PSRAM, rekordové profily64 KiB, MZF payload65535 B; alokují se jednou a ISR do nich nepřistupuje. Statická interní RAM finálního buildu155516 B, aplikace464705 B; hodnoty nezahrnují runtime SDK heap/stack a PSRAM. Před akceptací změřit nejmenší volný blok, stack high-water, SD latency a FIFO watermarks při dlouhém provozu.
 
 OLED přenáší jen změněné stránky nejvýše 20 Hz, s10 ms timeoutem a potvrzením úspěšně odeslaných stránek; analýza aktualizuje stav nejvýše 10 Hz a dovoluje STOP. Monitor je LOW při READY/WAIT/pauze/UL/idle/finalize a HIGH při aktivním RECORD nebo slyšitelném PLAY. TAP gap a LEP/L16 preroll/tail mají mute značky v transportu. GPIO41 obsluhuje foreground, takže jeho přepnutí není přesně na hranici symbolu a čeká na HW ověření latence.
 
@@ -56,4 +56,14 @@ Metadata80 B a84B atomický word store mají jediného foreground writeru, UI č
 
 OLED má jeden1024B framebuffer a128B page scratch na stacku; přesné byte porovnání/dirty retry bez druhého framebufferu, max20 renderů/s a pouze změněné I²C stránky. RX alarm používá skutečnou hodnotu, filtr pouze zpomaluje zotavení. Browser rollback znovu čte původní adresář s dočasně vypnutým cancel hookem; není druhá2MiB arena. d_type šetří stat, DT_UNKNOWN používá původní bezpečný fallback. Host10k je funkční test, nikoli SD benchmark.
 
-Aktuální statický footprint: RAM154348 B, aplikace461513 B. Runtime CPU/heap minima/largest block, stack high-water a SD latence **NEZMĚŘENO**; nutný30–60min souběh na desce. [Důkazy a HW seznam](TEST_REPORT.md).
+Aktuální statický footprint: RAM155516 B, aplikace464705 B. Runtime CPU/heap minima/largest block, stack high-water a SD latence **NEZMĚŘENO**; nutný30–60min souběh na desce. [Důkazy a HW seznam](TEST_REPORT.md).
+
+## Oprava skutečné RMT inicializace a QD session
+
+ESP-IDF6.0.1 odmítá gpio_num=-1 při rmt_new_tx_channel; GPIO4 je nyní platně uvedeno už při vytvoření, pak odpojeno do safe idle a znovu připojeno při startu. RMT/GPIO error printf běží pouze foreground. MOTOR ON=HIGH potvrzen poslední opravou uživatele.
+
+READY uchovává jediný validovaný soubor a QD index. Osm duration položek a1024B session path jsou pevné, cache je omezena na otevřený immutable handle a maže se při STOP/removal/error. Shodné leader/mark cykly se při preflight násobí; playback cycle/timing se nemění,17módové golden testy souhlasí. Při READY→PLAY není nový scan. První otevření/nový rekord mohou vyžadovat validaci/výpočet, runtime SD benchmark není k dispozici. Serial heartbeat2s aktivní/10s idle, změnový rate limit10Hz, žádná diagnostika z ISR. Viz [PLAY_DIAGNOSTICS_FIX](PLAY_DIAGNOSTICS_FIX.md).
+
+## QD náhled bez prvního duration scanu
+
+sharp_stream_preview provede bounded header/first90B metadata přípravu bez dry-run celého waveformu. duration_deferred výslovně odlišuje neznámou délku od validního času; READY progress/elapsed jsou0 a nepřebírají předchozí přehrávání. Přesný scan pouze zvoleného rekordu proběhne při PLAY, dle fyzického QD duration_deferred v referenci. Při NEXT/PREV se používá již validovaný index i u první návštěvy. Skutečný playback cycle/RMT timing se nemění. Dlouhý REC/PLAY700ms se vyhodnotí bez krátkého startu, STOP800ms a capture priority zachovány. [Aktuální audit](PINOUT_REFERENCE_AUDIT.md).

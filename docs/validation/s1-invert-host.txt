@@ -1,0 +1,6 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_route_switch
+PASS inverted S1 test HIGH=EXT LOW=INT: initial external state, bounce rejection, 40 ms transitions, no repeated event
+
+
+EXIT 0

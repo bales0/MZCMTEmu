@@ -3,7 +3,9 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <setjmp.h>
 #include "audio/player.h"
+#include "app/cmt_bus_policy.h"
 #include "audio/raw_pulse.h"
 #include "audio/raw_out.h"
 #include "audio/mzf_stream.h"
@@ -19,10 +21,17 @@ gptimer_event_callbacks_t cb;
 } timer;
 static uint8_t pin;
 static int64_t fake_now;
-int64_t esp_timer_get_time(void) { return fake_now;
+static bool scheduling_probe;
+static void (*scheduler_entry)(void *);
+static jmp_buf scheduler_exit;
+static TickType_t scheduler_start,scheduler_last;
+static unsigned scheduler_delays;
+static bool bus_owned,arm700,ul_peer_disabled,ul_ack_disabled;
+int64_t esp_timer_get_time(void) {
+if(bus_owned && mzf_stream_is_ultrafast_active())++fake_now;
+return fake_now;
 }
 static uint8_t sense=1,write_pin,monitor;
-static bool bus_owned,arm700;
 esp_err_t gpio_config(const gpio_config_t *cfg) {
     assert(cfg->pin_bit_mask==(1ULL<<4) || cfg->pin_bit_mask==(1ULL<<5));
     if(cfg->pin_bit_mask==(1ULL<<5)) { bus_owned=true;
@@ -40,7 +49,9 @@ esp_err_t gpio_set_level(int gpio,int value) {
     if(bus_owned && arm700 && !value && sense) {write_pin=0;
     arm700=false;
     } }
-    else if(gpio==7) { if(bus_owned && sense!=(uint8_t)value) write_pin=value ? 0:1;
+    else if(gpio==7) {
+    /* MZ700 peer arms on READ first; initial SENSE release is not data. */
+    if(bus_owned && !arm700 && sense!=(uint8_t)value) write_pin=(value || ul_ack_disabled) ? 0:1;
     sense=(uint8_t)value;
     }
     else { assert(gpio==41);
@@ -48,8 +59,12 @@ esp_err_t gpio_set_level(int gpio,int value) {
     }
     return ESP_OK;
 }
-int gpio_get_level(int gpio) { assert(gpio==5);
-return write_pin;
+int gpio_get_level(int gpio) {
+if(gpio==4)return pin;
+if(gpio==7)return sense;
+if(gpio==6)return 1;
+assert(gpio==5);
+return ul_peer_disabled ? 1:write_pin;
 }
 void test_reg_write(uint32_t reg, uint32_t mask) { assert(mask==(1U<<4));
 pin=(reg==1);
@@ -85,9 +100,17 @@ esp_err_t gptimer_set_alarm_action(gptimer_handle_t t,const gptimer_alarm_config
     t->alarm=a->alarm_count;
     return ESP_OK;
 }
-TickType_t xTaskGetTickCount(void) { return 1;
+TickType_t xTaskGetTickCount(void) { return (TickType_t)((fake_now/1000)/portTICK_PERIOD_MS);
 }
-void vTaskDelay(TickType_t ticks) { (void)ticks;
+void vTaskDelay(TickType_t ticks) {
+if(scheduling_probe){
+ TickType_t now=xTaskGetTickCount();
+ TickType_t since=(TickType_t)(now-(scheduler_delays ? scheduler_last:scheduler_start));
+ assert(ticks==1 && since*portTICK_PERIOD_MS>=100 && since*portTICK_PERIOD_MS<=110 && sense==1);
+ scheduler_last=now+ticks;
+ if(++scheduler_delays==2)longjmp(scheduler_exit,1);
+ fake_now+=(int64_t)ticks*portTICK_PERIOD_MS*1000;
+}
 }
 int xTaskCreatePinnedToCore(void (*entry)(void *),const char *name,unsigned stack,
                            void *arg,unsigned priority,TaskHandle_t *out,int core) {
@@ -98,8 +121,8 @@ int xTaskCreatePinnedToCore(void (*entry)(void *),const char *name,unsigned stac
     (void)priority;
     (void)out;
     (void)core;
-    assert(!"Host test must explicitly service the player");
-    return 0;
+    assert(scheduling_probe);scheduler_entry=entry;*out=&timer;
+    return 1;
 }
 SemaphoreHandle_t xSemaphoreCreateMutex(void) { return &timer;
 }
@@ -155,6 +178,14 @@ static void drain(void) {
     bool ul_pause_checked=false;
     while(player_get_state()==PLAYER_STATE_PLAYING) {
         assert(budget--);
+        /* Exercise the same automatic policy through every native region.
+         * Also simulate a stale policy attempting both levels during UL. */
+        bool ul=player_is_ultrafast_active();
+        uint8_t before=sense;
+        cmt_bus_outputs_t out=cmt_bus_outputs(false,ul,false,player_get_state(),RECORDER_STATE_IDLE,false);
+        assert(player_set_sense_level(out.sense_high)==!ul);
+        if(ul) { assert(!player_set_sense_level(!before) && sense==before); }
+        else assert(sense==0);
         if(player_is_ultrafast_active() && !ul_pause_checked) {
             player_pause_motor();
             assert(player_get_state()==PLAYER_STATE_PLAYING);
@@ -198,6 +229,14 @@ static void all_modes(void) {
         player_metadata(&metadata);
         assert(metadata.declared_size==4 && metadata.load==0x1200 && metadata.exec==0x1200 && (metadata.valid&PROGRAM_TRANSFER_MODE));
         uint64_t ticks=player_sharp_details()->total_ticks;
+        if(mode==LOADER_MODE_IC_1_4) {
+            player_pause_motor();
+            assert(player_get_state()==PLAYER_STATE_PAUSED);
+            cmt_bus_outputs_t out=cmt_bus_outputs(false,false,false,player_get_state(),RECORDER_STATE_IDLE,false);
+            assert(player_set_sense_level(out.sense_high) && sense==0);
+            player_resume_motor();
+            assert(player_get_state()==PLAYER_STATE_PLAYING && sense==0);
+        }
         player_pause_user();
         assert(player_get_state()==PLAYER_STATE_PAUSED);
         player_resume_user();
@@ -206,7 +245,7 @@ static void all_modes(void) {
         if(mode>=2 && mode<=4) assert(sense==1 && monitor==0);
     }
     assert(!remove("all.mzf"));
-    puts("PASS real Sharp/player/GPTimer integration for all 17 modes, block boundaries and simulated UL peer; safe final bus");
+    puts("PASS automatic SENSE LOW across all 17 native profiles and IC 1:4 motor pause; stale policy cannot overwrite UL; safe final bus");
 }
 static void selector(void) {
     fixture("multi.mzt",true);
@@ -264,8 +303,120 @@ static void mzt_continuation(void) {
  assert(!remove("sequence.mzt"));
  puts("PASS MZT continuous native/turbo and mixed UL records; each record keeps its profile; UL-to-UL stops per reference");
 }
-int main(void) { all_modes();
+
+static unsigned analysis_calls;
+static bool count_analysis(void *unused){(void)unused;++analysis_calls;return false;}
+static void qd_selector_session(void){
+ FILE *f=fopen("session.mzq","wb");assert(f);
+ const uint8_t count[]={0,0x16,0x16,0xa5,4,'C','R','C'};
+ const uint8_t frame_h[]={0,0x16,0x16,0xa5,0,64,0};
+ const uint8_t frame_d[]={0,0x16,0x16,0xa5,1,4,0};
+ const uint8_t data[]={0,128,1,255};
+ assert(fwrite(count,1,sizeof(count),f)==sizeof(count));
+ for(unsigned i=0;i<2;++i){
+  uint8_t h[64]={1};memcpy(h+1,i ? "SECOND":"FIRST",i ? 6:5);h[20]=4;h[23]=h[25]=0x12;
+  assert(fwrite(frame_h,1,sizeof(frame_h),f)==sizeof(frame_h) && fwrite(h,1,64,f)==64 && fwrite("CRC",1,3,f)==3);
+  assert(fwrite(frame_d,1,sizeof(frame_d),f)==sizeof(frame_d) && fwrite(data,1,4,f)==4 && fwrite("CRC",1,3,f)==3);
+ }
+ assert(!fclose(f));
+ player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));
+ analysis_calls=0;sharp_stream_set_analysis_control(count_analysis,NULL);
+ assert(player_prepare_record("session.mzq",1));
+ assert(analysis_calls>0 && !player_sharp_details()->source_reused && player_sharp_details()->duration_deferred);
+ unsigned after_first=analysis_calls;
+ assert(player_get_position_seconds()==0 && player_get_progress_percent()==0 && player_get_total_seconds()==0);
+ assert(player_prepare_record("session.mzq",2));
+ assert(player_sharp_details()->record==2 && !strcmp(player_sharp_details()->title,"SECOND") && player_sharp_details()->source_reused && player_sharp_details()->duration_deferred);
+ unsigned after_second=analysis_calls;assert(after_second==after_first); /* First-ever visit to second record performs no scan. */
+ for(unsigned i=0;i<6;++i){assert(player_prepare_record("session.mzq",i%2 ? 2:1));assert(player_sharp_details()->source_reused && player_sharp_details()->duration_deferred);}
+ assert(analysis_calls==after_second); /* No rescan or duration dry-run on revisit. */
+ assert(player_sharp_details()->total_ticks==0);
+ player_start(player_get_current_path()); /* Selected path may alias the player buffer. */
+ assert(player_get_state()==PLAYER_STATE_PLAYING && player_sharp_details()->record==2);
+ assert(analysis_calls>after_second && !player_sharp_details()->duration_deferred); /* Full duration is deferred until PLAY, as in reference. */
+ uint64_t duration=player_sharp_details()->total_ticks;
+ unsigned after_play=analysis_calls;
+ drain();assert(player_get_position_seconds()==duration/16000000ULL);
+ assert(player_prepare_record("session.mzq",1));assert(analysis_calls>after_play); /* Closed session invalidates index. */
+ player_stop();sharp_stream_set_analysis_control(NULL,NULL);assert(!remove("session.mzq"));
+ puts("PASS QD selector retains validated directory/durations, first visits and revisits avoid analysis; exact duration deferred to PLAY; STOP invalidates cache; selected-path alias safe");
+}
+
+
+static void ul_timeout_preserved(void){
+ fixture("ul-no-peer.mzf",false);
+ player_stop();assert(player_set_loader_mode(LOADER_MODE_UL_MZ800));
+ ul_peer_disabled=true;bus_owned=false;sense=1;
+ player_start("ul-no-peer.mzf");
+ assert(player_get_state()==PLAYER_STATE_PLAYING);
+ unsigned budget=100000;
+ while(player_get_state()==PLAYER_STATE_PLAYING){
+  assert(budget--);
+  if(raw_pulse_is_running()){
+   timer.now=timer.alarm;fake_now+=(int64_t)timer.alarm;
+   gptimer_alarm_event_data_t event={timer.now,timer.alarm};timer.cb.on_alarm(&timer,&event,NULL);
+  }else fake_now+=10000;
+  player_service();
+ }
+ assert(player_get_state()==PLAYER_STATE_ERROR && !strcmp(player_error_message(),"UL TIMEOUT"));
+ assert(!raw_pulse_is_running() && !pin && sense==1 && !monitor);
+ assert(!mzf_stream_error()[0]); /* Stream closed/reset; published player reason remains valid. */
+ assert(!strcmp(player_error_message(),"UL TIMEOUT"));
+ ul_peer_disabled=false;player_stop();assert(!remove("ul-no-peer.mzf"));
+ puts("PASS no UL peer: timeout reason survives stream close, safe READ/SENSE/monitor outputs, not generic SOURCE/TX error");
+}
+
+static void ul_missing_ack_timeout(void){
+ fixture("ul-no-ack.mzf",false);
+ player_stop();assert(player_set_loader_mode(LOADER_MODE_UL_MZ800));
+ ul_ack_disabled=true;bus_owned=false;sense=1;
+ player_start("ul-no-ack.mzf");
+ unsigned budget=100000;
+ while(player_get_state()==PLAYER_STATE_PLAYING){
+  assert(budget--);
+  if(raw_pulse_is_running()){
+   timer.now=timer.alarm;fake_now+=(int64_t)timer.alarm;
+   gptimer_alarm_event_data_t event={timer.now,timer.alarm};timer.cb.on_alarm(&timer,&event,NULL);
+  }else fake_now+=10000;
+  player_service();
+ }
+ assert(player_get_state()==PLAYER_STATE_ERROR && !strcmp(player_error_message(),"UL TIMEOUT"));
+ assert(sense==1 && !pin && !monitor && !raw_pulse_is_running());
+ assert(!mzf_stream_error()[0]); /* Adapter closed, immutable published reason survives. */
+ ul_ack_disabled=false;player_stop();assert(!remove("ul-no-ack.mzf"));
+ puts("PASS missing data ACK: reference 500ms timeout, safe SENSE HIGH/read/monitor and immutable error after close");
+}
+static void ul_task_schedule(void){
+ FILE *f=fopen("ul-schedule.mzf","wb");assert(f);
+ uint8_t header[128]={1};header[19]=0x80;header[21]=header[23]=0x12;
+ assert(fwrite(header,1,128,f)==128);
+ for(unsigned i=0;i<32768;++i)assert(fputc((uint8_t)i,f)!=EOF);
+ assert(!fclose(f));player_stop();assert(player_set_loader_mode(LOADER_MODE_UL_MZ800));
+ bus_owned=false;sense=1;player_start("ul-schedule.mzf");
+ unsigned budget=100000;
+ while(!mzf_stream_get_ultrafast_sent_bytes()){
+  assert(budget-- && player_get_state()==PLAYER_STATE_PLAYING);
+  if(raw_pulse_is_running()){
+   timer.now=timer.alarm;fake_now+=(int64_t)timer.alarm;
+   gptimer_alarm_event_data_t event={timer.now,timer.alarm};timer.cb.on_alarm(&timer,&event,NULL);
+  }else fake_now+=10000;
+  player_service();
+ }
+ assert(sense==1 && player_is_ultrafast_active());
+ scheduling_probe=true;scheduler_delays=0;scheduler_start=xTaskGetTickCount();
+ player_task_start();assert(scheduler_entry);
+ if(setjmp(scheduler_exit)==0)scheduler_entry(NULL);
+ scheduling_probe=false;
+ assert(scheduler_delays==2 && sense==1 && player_get_state()==PLAYER_STATE_PLAYING);
+ player_stop();assert(!remove("ul-schedule.mzf"));
+ puts("PASS real UL task loop: no per-batch sleep, periodic 1-tick idle after100-110ms of work, only at SENSE HIGH; STOP cleanup");
+}
+int main(void) { setvbuf(stdout,NULL,_IONBF,0); all_modes();
+qd_selector_session();
 selector();
 mzt_continuation();
+ul_timeout_preserved();
+ul_missing_ack_timeout();
+ul_task_schedule();
 return 0;
 }

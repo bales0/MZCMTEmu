@@ -178,3 +178,7 @@ Přesný stupeň důkazu a HW omezení viz aktuální PARITY_MATRIX/TEST_REPORT.
 ## Rozšíření UI / metadata / PCNT (13. 11. 2026)
 
 Nové GPL-3.0-only moduly: formats/program_metadata pro provenienci/validitu a kanonické Sharp/ZX údaje; formats/tape_metadata pro pasivní adaptér existujícího AutoName decoderu; audio/edge_guard pro volitelné PCNT epochy; ui/policy a ui/view pro grafiku/overlay/headroom/marquee; drivers/font3x5 pro čitelný malý font. Existující Sharp/IC/TC algoritmy a atribuce zůstaly zachované. Žádná nová transportní knihovna ani druhý64KiB payload buffer. Rozsah změn/testů a aktuální HEAD viz [TEST_REPORT](TEST_REPORT.md).
+
+Oprava PLAY: app/menu.h nově sdílí model kořenového a RECORD menu s host testem test_menu. RMT driver chybu gpio_num=-1 řeší podle skutečné SDK podmínky, bez změny kodeků či pinoutu. Detaily v [PLAY_DIAGNOSTICS_FIX](PLAY_DIAGNOSTICS_FIX.md).
+
+Následná referenční oprava: buttons.c generuje oddělené short/long PLAY/REC a app/menu.h tři nezávislé sekce. sharp_stream_preview odkládá celorecordový duration scan na PLAY. Pinout zůstal beze změn a byl porovnán i s originálním schématem; [audit](PINOUT_REFERENCE_AUDIT.md).

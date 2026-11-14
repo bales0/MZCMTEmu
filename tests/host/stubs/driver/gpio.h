@@ -21,3 +21,6 @@ int gpio_get_level(int gpio);
 #define GPIO_PULLDOWN_ENABLE 1
 
 esp_err_t gpio_reset_pin(int gpio);
+
+#define GPIO_NUM_6 6
+#define GPIO_MODE_INPUT_OUTPUT 3

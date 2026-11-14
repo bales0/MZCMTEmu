@@ -1,0 +1,23 @@
+{
+  "date": "2026-11-14",
+  "banner": "MZCMTEmu TX-TRACE r14 SD2CMT2 UL S1 BYPASS INTERNAL 2026-11-14",
+  "reference_commit": "600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb",
+  "ul_start_delay_ms": 100,
+  "ul800_start_delay_ms": 700,
+  "ul800_ready_delay_us": 1000,
+  "ul800_initial_wait_ms": 5000,
+  "legacy_data_wait_ms": 500,
+  "mz700_data_wait_ms": 1000,
+  "experimental_clock_holds_removed": true,
+  "ack_200us_cutoff_removed": true,
+  "host": "4 GCC ASan/UBSan suites PASS",
+  "host_large_transfer": "44033 bytes LOAD/EXEC1E00, first ACK8.6ms, subsequent ACK20us, byte-boundary returns and 5s user pause PASS",
+  "host_low_cmd_max_us": 8603,
+  "build": "PASS",
+  "ram_bytes": 156220,
+  "application_bytes": 470333,
+  "image_bytes": 470752,
+  "sha256": "96a06bbbada21e214993d53f7bf1c998be2b3015fced49e2461b94c629c9d79c",
+  "hardware_verified": false,
+  "flashed": false
+}

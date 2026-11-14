@@ -11,12 +11,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "driver/gpio.h"
 
 #include "audio/wav_reader.h"
 #include "audio/wav_pulse_stream.h"
 #include "audio/raw_pulse.h"
 #include "audio/mzf_stream.h"
 #include "formats/sidecar.h"
+#include "formats/mz_tape_profiles.h"
 #include "formats/tape_metadata.h"
 #include "record/record_autoname.h"
 #include "audio/edge_stream.h"
@@ -31,6 +33,7 @@
 #define PLAYER_TASK_CORE 0
 #define PLAYER_TASK_ACTIVE_DELAY_MS 1U
 #define PLAYER_TASK_IDLE_DELAY_MS 5U
+#define PLAYER_UL_IDLE_INTERVAL_MS 100U
 
 static program_metadata_store_t metadata_store;
 static program_metadata_t metadata_last;
@@ -109,6 +112,22 @@ static int s_playing = 0;
 static int s_eof = 0;
 static int s_read_error = 0;
 static player_state_t s_state = PLAYER_STATE_IDLE;
+static const char *last_error;
+static unsigned last_stop_cause;
+const char *player_state_name(player_state_t state){
+    static const char *const names[]={"IDLE","PLAYING","PAUSED","STOPPED","EOF","UNDERRUN","ERROR","READY"};
+    return (unsigned)state<sizeof(names)/sizeof(names[0]) ? names[state]:"UNKNOWN";
+}
+const char *player_stop_cause_name(void){
+    static const char *const names[]={"NONE","API_STOP","BUTTON_STOP","BUTTON_STOP_LONG","S1_EXTERNAL","SD_REMOVED","SD_REINIT","SD_RESTORE_FAILED","RECORD_START"};
+    unsigned cause=__atomic_load_n(&last_stop_cause,__ATOMIC_ACQUIRE);
+    return cause<sizeof(names)/sizeof(names[0]) ? names[cause]:"UNKNOWN";
+}
+const char *player_error_message(void){const char *s=__atomic_load_n(&last_error,__ATOMIC_ACQUIRE);return s ? s:"PLAYBACK ERROR";}
+static void player_error(const char *message){
+    __atomic_store_n(&last_error,message,__ATOMIC_RELEASE);
+    printf("player: ERROR %s\n",message);
+}
 static player_pause_reason_t s_pause_reason = PLAYER_PAUSE_NONE;
 static SemaphoreHandle_t s_player_mutex = NULL;
 static TaskHandle_t s_player_task = NULL;
@@ -141,18 +160,38 @@ static void player_unlock(void)
     }
 }
 
+/* Serialize application policy with UL ownership changes on the player task.
+ * A stale policy snapshot must never overwrite an active handshake. */
+bool player_set_sense_level(bool high)
+{
+    player_lock();
+    bool allowed=!mzf_stream_is_ultrafast_active();
+    if(allowed) gpio_set_level(GPIO_NUM_7,high);
+    player_unlock();
+    return allowed;
+}
+
 static void player_task_loop(void *arg)
 {
     (void)arg;
+    TickType_t last_idle=xTaskGetTickCount();
 
     for (;;) {
-        bool active;
+        bool active,ul_data;
         TickType_t delay_ticks;
 
         player_lock();
         player_service_locked();
         active = (s_playing != 0);
+        ul_data=active && mzf_stream_is_ultrafast_active() && mzf_stream_get_ultrafast_sent_bytes()!=0;
         player_unlock();
+
+        /* UL pump returns only at byte/HIGH boundaries. Keep feeding it like
+         * the reference foreground loop, but let the idle task run periodically (100 ms of data work). */
+        TickType_t now=xTaskGetTickCount();
+        TickType_t interval=pdMS_TO_TICKS(PLAYER_UL_IDLE_INTERVAL_MS);
+        if(!interval)interval=1;
+        if(ul_data && (TickType_t)(now-last_idle)<interval)continue;
 
         delay_ticks = pdMS_TO_TICKS(active ?
             PLAYER_TASK_ACTIVE_DELAY_MS : PLAYER_TASK_IDLE_DELAY_MS);
@@ -160,6 +199,7 @@ static void player_task_loop(void *arg)
             delay_ticks = 1;
         }
         vTaskDelay(delay_ticks);
+        last_idle=xTaskGetTickCount();
     }
 }
 
@@ -243,6 +283,8 @@ static void player_mark_pulse_source_end(void)
 
 static void player_finish_stop(player_state_t final_state)
 {
+    printf("player: finish %s -> %s completed_us=%llu path=%s\n",player_state_name(s_state),player_state_name(final_state),(unsigned long long)raw_pulse_get_completed_us(),s_current_path);
+    if(final_state==PLAYER_STATE_ERROR && !__atomic_load_n(&last_error,__ATOMIC_ACQUIRE))player_error("SOURCE / TX ERROR");
     if (s_tap_tape) s_tap_final_us = raw_pulse_get_completed_us();
     if (player_is_wav()) s_wav_final_us=raw_pulse_get_completed_us();
     if (s_binary_tape) s_binary_final_us = player_binary_elapsed_us();
@@ -427,12 +469,19 @@ void player_task_start(void)
 
 void player_start(const char *path)
 {
+    char path_copy[sizeof(s_current_path)];
+    snprintf(path_copy,sizeof(path_copy),"%s",path ? path:"");
+    path=path_copy;
     player_lock();
+    __atomic_store_n(&last_error,NULL,__ATOMIC_RELEASE);
+    __atomic_store_n(&last_stop_cause,PLAYER_STOP_NONE,__ATOMIC_RELEASE);
+    printf("player: request path=%s mode=%u/%s\n",path,(unsigned)mzf_stream_get_loader_mode(),loader_mode_name(mzf_stream_get_loader_mode()));
 
     if (s_state == PLAYER_STATE_PLAYING || s_state == PLAYER_STATE_PAUSED) {
         player_finish_stop(PLAYER_STATE_STOPPED);
     }
 
+    snprintf(s_current_path,sizeof(s_current_path),"%s",path);
     metadata_reset(file_format_detect_from_name(path));
     s_binary_tape = path_is_binary_tape(path);
     s_edge_tape = path_is_edge_tape(path);
@@ -450,27 +499,28 @@ void player_start(const char *path)
 
     if (s_binary_tape) {
         if (!mzf_stream_open(path, &s_mzf_info)) {
-            printf("player: binary tape open fail\n");
+            player_error("SHARP / IMAGE OPEN");
             s_state = PLAYER_STATE_ERROR;
             player_unlock();
             return;
         }
     } else if (s_edge_tape) {
         if (!edge_stream_open(path, &s_edge_info)) {
-            printf("player: edge tape open fail\n");
+            player_error("EDGE FILE OPEN");
             s_state = PLAYER_STATE_ERROR;
             player_unlock();
             return;
         }
     } else if (s_tap_tape) {
         if (!tap_stream_open(path, s_tap_speed, &s_tap_info)) {
+            player_error("TAP OPEN");
             s_state = PLAYER_STATE_ERROR;
             player_unlock();
             return;
         }
     } else {
         if (!wav_reader_open(path, &s_info)) {
-            printf("player: open fail\n");
+            player_error("WAV OPEN");
             s_state = PLAYER_STATE_ERROR;
             player_unlock();
             return;
@@ -479,7 +529,7 @@ void player_start(const char *path)
         if (s_info.audio_format != 1U ||
             s_info.num_channels != 1U ||
             s_info.bits_per_sample != 8U) {
-            printf("player: unsupported format\n");
+            player_error("WAV FORMAT");
             wav_reader_close();
             s_state = PLAYER_STATE_ERROR;
             player_unlock();
@@ -498,10 +548,13 @@ void player_start(const char *path)
         metadata_audio=true;
         tape_metadata_begin(file_format_detect_from_name(path));
     }
-    snprintf(s_current_path, sizeof(s_current_path), "%s", path ? path : "");
     s_bytes_queued = 0U;
 
     raw_pulse_init();
+    if(raw_pulse_error()){
+        player_error(raw_pulse_error());
+        player_finish_stop(PLAYER_STATE_ERROR);player_unlock();return;
+    }
     raw_pulse_set_output_enabled(true);
     raw_pulse_clear_underrun();
 
@@ -522,42 +575,46 @@ void player_start(const char *path)
     }
 
     if (s_read_error) {
-        printf("player: READ ERROR\n");
+        player_error("SOURCE READ");
         player_finish_stop(PLAYER_STATE_ERROR);
         player_unlock();
         return;
     }
 
     if (raw_pulse_level() == 0U) {
-        printf("player: no data\n");
+        player_error("NO PULSES");
         player_finish_stop(PLAYER_STATE_ERROR);
         player_unlock();
         return;
     }
 
     if (!raw_pulse_start()) {
-        printf("player: pulse start fail\n");
+        player_error(raw_pulse_error() ? raw_pulse_error():"TX START");
         player_finish_stop(PLAYER_STATE_ERROR);
         player_unlock();
         return;
     }
 
     if (player_uses_pulse_output() && !raw_pulse_service()) {
-        printf("player: pulse service fail\n");
+        player_error(raw_pulse_error() ? raw_pulse_error():"TX SERVICE");
         player_finish_stop(PLAYER_STATE_ERROR);
         player_unlock();
         return;
     }
 
+    printf("player: TX STARTED state=%s fifo=%lu completed_us=%llu\n",player_state_name(s_state),(unsigned long)raw_pulse_level(),(unsigned long long)raw_pulse_get_completed_us());
     player_unlock();
 }
 
-void player_stop(void)
+void player_stop_for(player_stop_cause_t cause)
 {
     player_lock();
+    __atomic_store_n(&last_stop_cause,(unsigned)cause,__ATOMIC_RELEASE);
+    printf("player: STOP cause=%s from=%s path=%s\n",player_stop_cause_name(),player_state_name(s_state),s_current_path);
     player_finish_stop(PLAYER_STATE_STOPPED);
     player_unlock();
 }
+void player_stop(void){player_stop_for(PLAYER_STOP_API);}
 
 void player_pause_user(void)
 {
@@ -721,7 +778,8 @@ static void player_service_locked(void)
     if (mzf_stream_is_ultrafast_active()) {
         mzf_stream_service_ultrafast();
         if (mzf_stream_has_error()) {
-            printf("player: ULTRA ERROR\n");
+            const char *why=mzf_stream_error();
+            player_error(why[0] ? why:"UL ERROR");
             player_finish_stop(PLAYER_STATE_ERROR);
         } else if (mzf_stream_is_eof()) {
             int next=player_continue_mzt(true);
@@ -732,7 +790,7 @@ static void player_service_locked(void)
 
     if (player_uses_pulse_output()) {
         if (!raw_pulse_service()) {
-            printf("player: PULSE SERVICE ERROR\n");
+            player_error(raw_pulse_error() ? raw_pulse_error():"TX SERVICE");
             player_finish_stop(PLAYER_STATE_ERROR);
             return;
         }
@@ -770,7 +828,7 @@ static void player_service_locked(void)
                 raw_pulse_stop();
                 raw_pulse_clear_underrun();
                 if (!mzf_stream_begin_ultrafast()) {
-                    printf("player: ULTRA START ERROR\n");
+                    player_error(mzf_stream_error()[0] ? mzf_stream_error():"UL START");
                     player_finish_stop(PLAYER_STATE_ERROR);
                 }
             } else if (s_eof) {
@@ -814,7 +872,7 @@ static void player_service_locked(void)
 
         if (s_binary_tape &&
             mzf_stream_is_ultrafast_ready() &&
-            raw_pulse_level() == 0U) {
+            raw_pulse_level() == 0U && !raw_pulse_is_running()) {
             raw_pulse_stop();
             if (!mzf_stream_begin_ultrafast()) {
                 printf("player: ULTRA START ERROR\n");
@@ -896,6 +954,7 @@ uint32_t player_get_pulses_per_second(void)
 
 uint32_t player_get_total_seconds(void)
 {
+    if(s_state==PLAYER_STATE_READY)return (uint32_t)(mzf_stream_details()->total_ticks/16000000ULL);
     if (s_binary_tape) return (uint32_t)(mzf_stream_details()->total_ticks / 16000000ULL);
     if (s_tap_tape) return (uint32_t)(s_tap_info.total_ticks / 16000000ULL);
     if (s_binary_tape) {
@@ -927,6 +986,7 @@ static uint64_t player_tap_elapsed_us(void)
 
 uint32_t player_get_position_seconds(void)
 {
+    if(s_state==PLAYER_STATE_READY)return 0;
     if(player_is_wav()) {
         uint64_t elapsed=s_state==PLAYER_STATE_EOF || s_state==PLAYER_STATE_STOPPED || s_state==PLAYER_STATE_ERROR ? s_wav_final_us:raw_pulse_get_completed_us();
         return (uint32_t)(elapsed/1000000);
@@ -974,6 +1034,7 @@ uint32_t player_get_position_seconds(void)
 
 uint8_t player_get_progress_percent(void)
 {
+    if(s_state==PLAYER_STATE_READY)return 0;
     if(player_is_wav()) {
         if(s_state==PLAYER_STATE_EOF) return 100;
         uint64_t total=s_info.sample_rate ? ((uint64_t)s_info.data_size*1000000+s_info.sample_rate/2)/s_info.sample_rate:0;
@@ -1089,7 +1150,12 @@ bool player_prepare_record(const char *path,uint16_t record) {
         snprintf(s_record_modes_path,sizeof(s_record_modes_path),"%s",path);
     }
     loader_mode_t mode=s_record_modes[record]==255 ? mzf_stream_get_loader_mode() : (loader_mode_t)s_record_modes[record];
+    __atomic_store_n(&last_error,NULL,__ATOMIC_RELEASE);
+    int64_t started=esp_timer_get_time();
     bool ok=mzf_stream_select_mode(path,record,mode);
+    printf("player: select path=%s record=%u mode=%u result=%s elapsed_ms=%lu\n",path,record,(unsigned)mode,ok ? "READY":"ERROR",(unsigned long)((esp_timer_get_time()-started)/1000));
+    if(ok)printf("player: source_reused=%u duration_cached=%u duration_deferred=%u records=%u\n",(unsigned)mzf_stream_details()->source_reused,(unsigned)mzf_stream_details()->duration_cached,(unsigned)mzf_stream_details()->duration_deferred,mzf_stream_details()->records);
+    if(!ok){player_error(sharp_stream_analysis_cancelled() ? "CANCELLED":"IMAGE FORMAT / IO");s_state=PLAYER_STATE_ERROR;}
     if(ok) {
         snprintf(s_current_path,sizeof(s_current_path),"%s",path);
         program_metadata_publish(&metadata_store,&mzf_stream_details()->metadata);

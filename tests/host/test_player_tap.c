@@ -21,6 +21,7 @@ static uint8_t pin;
 static int64_t fake_now;
 int64_t esp_timer_get_time(void) { return fake_now;
 }
+esp_err_t gpio_set_level(int gpio,int value) { assert(gpio==7 && (value==0 || value==1)); return ESP_OK; }
 static bool inverted;
 static uint64_t expected_ticks, expected_us;
 static size_t emitted;
@@ -268,10 +269,12 @@ static void test_stop_underrun(void) {
     player_pause_user();
     player_start("session.tap");
     assert(player_get_state()==PLAYER_STATE_PLAYING);
-    player_stop();
+    player_stop_for(PLAYER_STOP_S1_EXTERNAL);
     assert(player_get_state()==PLAYER_STATE_STOPPED && !pin && !timer.running);
+    assert(!strcmp(player_state_name(player_get_state()),"STOPPED") && !strcmp(player_stop_cause_name(),"S1_EXTERNAL"));
+    assert(raw_pulse_level()==0);
     player_start("session.tap");
-    assert(player_is_playing());
+    assert(player_is_playing() && !strcmp(player_stop_cause_name(),"NONE"));
     /* Do not service the producer: the real driver must report FIFO underrun. */
     unsigned budget=5000;
     while (raw_pulse_is_running()) { assert(budget--);
@@ -401,3 +404,8 @@ bool mzf_stream_next_ticks16(uint8_t *level,uint32_t *ticks) {(void)level;
 (void)ticks;
 return false;
 }
+
+/* TAP tests mock the unused Sharp source, including its cancellation status. */
+bool sharp_stream_analysis_cancelled(void){return false;}
+
+const char *mzf_stream_error(void){return "";}

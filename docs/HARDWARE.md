@@ -1,3 +1,5 @@
+> Aktuální r15 (14. 11. 2026): [UL, UL700 a UL800 podle SD2CMT2](UL_FAMILY_PERFORMANCE.md). Odstraněné 10ms čekání po každé krátké dávce UL, vypnutý detailní trace, účinné -O2. Všechny tři režimy prošly host přenosem 44 033 bajtů; Z80 přijímače LOW/HIGH a 100Hz plánování PASS, cílový build PASS. Uživatel potvrdil LOAD v r14 UL800 s nízkou rychlostí; r15 a UL700 zatím bez HW potvrzení. S1 bypass zůstává zapnutý. Následující starší záznamy jsou historie.
+
 # Hardware MZCMTEmu
 
 Pinmap je zmrazená podle zadání a existujících zdrojů; tento zásah nepřesouvá GPIO ani nemění PCB. Podklady: lokální MZCMTEmu.docx a jednostránkové schéma PCB/MZCMTEmu.pdf, vizuálně zkontrolované 12. 11. 2026. Popis DOCX je původní návrh, nikoli důkaz implementace. Pro tuto změnu rozhoduje zadání UI_RECORD_PLAY_METADATA_PCNT; dokumenty jsou technické podklady.
@@ -6,7 +8,7 @@ Pinmap je zmrazená podle zadání a existujících zdrojů; tento zásah nepře
 |---|---:|---|
 | READ | 4 | Výstup do MZ; safe idle vždy LOW, INVERT mění jen aktivní waveform |
 | WRITE | 5 | Vstup z MZ přes převod úrovní; MCPWM hardware-latched timestamp (výchozí backend) |
-| MOTOR | 6 | Vstup s pull-up; současný kód běží při HIGH, skutečnou polaritu změřit |
+| MOTOR | 6 | Vstup s pull-up; ON při HIGH dle posledního potvrzení uživatele; GPIO6 pouze vstup |
 | SENSE | 7 | Výstup; idle/READY HIGH, PLAY/PAUSE/WAIT a aktivní RECORD LOW, UL samostatná sekvence |
 | PLAY / STOP | 8 / 9 | Tlačítka proti GND, pull-up |
 | NEXT / PREV | 10 / 11 | Tlačítka proti GND, repeat |
@@ -37,4 +39,19 @@ Při nové vizuální kontrole schématu je S1D COM4 na GND, A4 na GPIO21 a B4 n
 
 CONFIG_MZ_RX_PCNT_GUARD (default n) připojuje interní PCNT přes GPIO matrix ke stejnému WRITE GPIO5 jako MCPWM, bez změny zapojení. Počítá obě hrany bez filtru; SDK accum_count a ±30000 watchpoints, IRQ3/cache-safe. Nemění MCPWM timestampy. Hranice epoch mají explicitní interval nejistoty, tail není fyzická hrana. Potvrzená ztráta končí EDGE LOSS; nespolehlivý čítač CAPTURE ERROR. Ani shodné počty neprokazují správné časování. Detaily a testy jsou v [TEST_REPORT](TEST_REPORT.md).
 
-**HW NEPROVEDENO:** deska není připojena; zbývá ověřit elektrické úrovně/reset, mechanickou kontinuitu a PCNT/MCPWM časovou shodu za zátěže. Neinvertující U1/U2 jsou údaj uživatele, jejich přesné typy a power-off chování nejsou doloženy.
+**Stav předchozí fáze UI/PCNT:** HW tehdy nebyl připojen; zbývá ověřit elektrické úrovně/reset, mechanickou kontinuitu a PCNT/MCPWM časovou shodu za zátěže. Neinvertující U1/U2 jsou údaj uživatele, jejich přesné typy a power-off chování nejsou doloženy.
+
+
+## Uživatelská HW zkouška a COM6
+
+Uživatel nyní hlásí chování běžícího zařízení a uvedl monitor COM6. Po opravě svého původního údaje potvrdil MOTOR ON = HIGH; firmware tuto polaritu zachovává. Tento údaj není nezávislé měření převodníků ani timingová HW akceptace. Nový PLAY opravný obraz nebyl tímto zásahem flashován; viz [PLAY_DIAGNOSTICS_FIX](PLAY_DIAGNOSTICS_FIX.md).
+
+
+## Úplná kontrola pinů po hlášení dlouhého REC
+
+Znovu porovnány zdroje všech backendů se závaznou tabulkou zadání, původním DOCX a schématem: žádná odchylka GPIO. REC je42 (pad35 modulu IO1), nikoli fyzický pad42. Dlouhý stisk chyběl v driveru tlačítek; nebyl způsoben jiným GPIO. [Úplná tabulka GPIO a padů](PINOUT_REFERENCE_AUDIT.md), [kontrola definic](validation/reference-fix-pinmap.txt). Motor HIGH/USB19–20/S121/monitor41 zachovány. Elektrické měření kontinuity není nahrazené tímto statickým auditem.
+
+
+## TX-TRACE r3
+
+Testovací obrácení S1 zůstává. Softwarová detekce INTERNAL proto nemusí odpovídat mechanické READ trase podle původního schématu; je nutné rozlišovat GPIO4 a konektor K1/8. Nový diagnostický dump čte konfiguraci GPIO4 bez změny zapojení, neprokazuje výstupní hrany. Uživatelský log PLAY3/TX running0 je STOPPED. Podrobnosti a neuzavřený HW problém: [TX_OUTPUT_DIAGNOSIS](TX_OUTPUT_DIAGNOSIS.md).

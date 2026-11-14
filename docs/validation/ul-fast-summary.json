@@ -1,0 +1,23 @@
+{
+  "revision": "r15",
+  "date": "2026-11-14",
+  "reference_commit": "600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb",
+  "image": ".pio/build/MZCMTEmu/firmware.bin",
+  "image_bytes": 460480,
+  "sha256": "7c02e4c2d632e1b8499306bca9793ad6f71c49f20fad9f930ba7b0d3765c4a1b",
+  "ram_bytes": 155292,
+  "application_bytes": 460063,
+  "host_suites": [
+    "test_ul_z80",
+    "test_sharp_stream",
+    "test_player_sharp",
+    "test_player_rmt"
+  ],
+  "tests": "PASS",
+  "target_build": "PASS",
+  "tick_hz": 100,
+  "ul_work_before_idle_ms": 100,
+  "trace_default": 0,
+  "flashed": false,
+  "hw_verified": false
+}

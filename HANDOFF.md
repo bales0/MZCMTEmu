@@ -1,21 +1,31 @@
-# Předání UI / RECORD / PLAY / metadata / PCNT — 13. 11. 2026
+> Aktuální r15 (14. 11. 2026): [UL, UL700 a UL800 podle SD2CMT2](docs/UL_FAMILY_PERFORMANCE.md). Odstraněné 10ms čekání po každé krátké dávce UL, vypnutý detailní trace, účinné -O2. Všechny tři režimy prošly host přenosem 44 033 bajtů; Z80 přijímače LOW/HIGH a 100Hz plánování PASS, cílový build PASS. Uživatel potvrdil LOAD v r14 UL800 s nízkou rychlostí; r15 a UL700 zatím bez HW potvrzení. S1 bypass zůstává zapnutý. Následující starší záznamy jsou historie.
 
-Uživatel autorizoval změny dle specification/MZCMTEmu_Codex_zadani_UI_RECORD_PLAY_METADATA_PCNT.md. **Bez samostatného souhlasu žádný staging, commit, push, PR ani nové větve.** Checkout main, HEAD d3f67c4a978a38dad23e49c918b145182046452b. Práce zůstává necommitnutá. Uživatelské odstranění starého zadání a nové zadání jsou zachované. Reference600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb a MZTools nejsou upravovány.
+# Nejnovější oprava reference a pinoutu
 
-## Výsledek
+Main f5cda0fa04566e4008ef40ab0c9c49480316ddac + pracovní změny. Bez commitu/větve/stagingu/push/flash. Aktuální boot banner REF-MENU-QD r2. Uživatel potvrdil MOTOR ON=HIGH a COM6, původní LOW opraveno.
 
-Grafické OLED nad jediným framebufferem: šest řádků browseru, inverzní výběr, marquee od změny kontextu, pravdivé RX FIFO/min/sticky alarmy a TX odhad časové rezervy včetně current/encoded intervalu, oddělený průběh. Overlay má priority/expiry/latch a retry dirty pages po I²C chybě. KEYMAP opravený. Browser po cancel/failed child obnoví původní adresář/výběr bez další2MiB kopie; CANCEL neshazuje SD, d_type omezuje stat.
+Dlouhé REC/PLAY700ms jsou samostatné události driveru; krátké akce až po release, žádný start transportu před dlouhým menu stiskem. Z filebrowseru REC long → RECORD MENU, PLAY long → PLAY MENU, STOP long → SETTINGS. Tři nabídky jsou nezávislé; RECORD není pod PLAY. STOP z menu ukládá a vrací browser, info má vlastní návrat. V QD selektoru jsou dlouhé menu stisky inertní jako v referenci; STOP do browseru a potom long REC. RECORD formáty a MOTOR→AUTO→MANUAL pořadí podle reference.
 
-Sdílený80B model programu/provenience/validity: původní Sharp source před generováním transportního loaderu, kanonické IC, TC až po validním prvním loader payloadu, MZT/QD změny. Pasivní WAV/LEP/L16 nad již produkovanými PLAY intervaly sdílí existující decoder s AutoName, TAP vlastní striktní ZX/XOR. Aktuální titul může přejít na další program, filename zůstane první. Neznámá pole --; ZX BASIC má AUTO LINE, nikdy vymyšlený EXEC. IC rychlý WAV44k nemusí validovat payload checksum; ověřený embedded header zůstává HEADER_VALID.
+První NEXT/PREV QD už nepočítá celý waveform. sharp_stream_preview čte validovaný header/loader metadata s bounded90B prefixem, duration_deferred označuje neznámý čas. Exact duration až při skutečném PLAY; index read-only session platí pouze do STOP/removal/error. READY elapsed/progress0. První otevření obrazu zůstává plná validace. Původní oprava RMT neplatného GPIO−1 je zachovaná.
 
-Volitelný CONFIG_MZ_RX_PCNT_GUARD default n; obě hrany GPIO5, SDK accum_count ±30000, žádná app ISR na každou hranu. Epochy mají explicitní hranicovou nejistotu, potvrzená ztráta EDGE LOSS, nespolehlivé počty CAPTURE ERROR. Shodný součet není garance timing/lossless. MCPWM časování zachováno; actual capture init call-chain je z CPU1. S1 mechanický, GPIO21 INPUT LOW=EXT/40ms: PLAY/UL stop, RECORD/SAVING abort, INTERNAL bez automatického restartu.
+Pinout všech backendů zkontrolován proti tabulce zadání (git d3f67c4), originálnímu DOCX a PDF vodičům. Žádná odchylka GPIO. REC GPIO42 je pad35 modulu IO1, ne fyzický pin42. Úplná tabulka a metodika: [PINOUT_REFERENCE_AUDIT](docs/PINOUT_REFERENCE_AUDIT.md). Jde o statickou kontrolu, nikoli proměření desky.
 
-## Ověření
+24 sad GCC14.2 ASan/UBSan PASS, target ESP-IDF6.0.1 PASS bez nových warningů. RAM155516 B, aplikace464705 B, image465136 B;92 fixture SHA256 nezměněno. [Aktuální host](docs/validation/reference-fix-host-linux.txt), [build](docs/validation/reference-fix-build.txt), [image/hash](docs/validation/reference-fix-summary.json), [pinmap](docs/validation/reference-fix-pinmap.txt). Reference600a788/MZTools neměněny, uživatelské .gitignore a odstranění zadání zachovány.
 
-23 sad (původních20 + UI policy, metadata, PCNT) v Debianu GCC14.2 s ASan/UBSan, včetně skutečných generovaných audio souborů a dodaných TAP/QD/MZQ; kompletní [log](docs/validation/ui-metadata-host-linux.txt). Cílový build ESP-IDF6.0.1/espressif32@7.0.1/GCC15.2 prošel: RAM154348 B, aplikace461513 B, image461936 B,16MB flash header a octal PSRAM config. PCNT-on guard navíc přeložen jako samostatný target objekt; celý PCNT-on image/HW tím testovaný není. Všech92 fixture má původní SHA256. Historické port-* logy zůstávají výsledkem předchozího portu.
+Nový obraz není flashován/akceptován na HW. Je nutné nové ovládání/LOAD/SAVE/napětí/reset/časování ověřit na COM6 a analyzátorem; žádný host test to nenahrazuje. Starší předání níže popisuje předchozí řešení a jeho menu/cache pravidla jsou překonaná.
 
-Windows nový test_program_metadata.exe i po uživatelem potvrzeném povolení COMODO vrací WinError5. Nastavení ochrany se neměnilo; Linux sanitizer běh je alternativní důkaz. MinGW5.1 sanitizéry nemá. [Metodika/test report](docs/TEST_REPORT.md), [parita](docs/PARITY_MATRIX.md), [časování](docs/TIMING_PORT.md), [pinmap/S1](docs/HARDWARE.md), [souhrn/hash](docs/validation/ui-metadata-summary.json), [OLED náhledy](docs/validation/ui/record.png).
+---
 
-## Zbývá skutečný HW — NEPROVEDENO
+# Předání opravy PLAY — 13. 11. 2026
 
-HW není připojený, žádný flash. U1/U2 jsou neinvertující podle uživatele, přesné typy/napájení/reset/power-off nezměřené. Ověřit mechanický S1 kontakty/polohy, boot N16R8/PSRAM a OLED. Sharp LOAD/SAVE všech17 módů a ZX TAP4, analyzátor READ/WRITE/MOTOR/SENSE, PCNT/MCPWM s generátorem za SD/OLED/cache zátěže včetně timestamp jitteru. RMT source-clock pause potřebuje důkaz retence rozpracovaného symbolu/DMA; host mock tento předpoklad pouze simuluje. SD removal/reinsert/full/readonly a S1 během všech transportních/finalize stavů. 30–60min heap minima/largest block, task stack high-water, PSRAM, SD latency a FIFO watermark stress. Statický footprint ani shodné PCNT počty tyto důkazy nenahrazují.
+Main HEAD f5cda0fa04566e4008ef40ab0c9c49480316ddac + pracovní změny. Bez stagingu/commitu/větve/push/PR. Uživatelské .gitignore a odstraněné minulého zadání zachovány. Reference600a788 a MZTools neměněny.
+
+Uživatel hlásí chyby běžícího zařízení. **Poslední oprava: MOTOR ON je HIGH**, GPIO6 input. COM6 monitor115200. Původní LOW údaj byl uživatelem opraven, firmware zachovává HIGH. Žádné flashování tohoto opravného obrazu neproběhlo;12s read-only odposlech COM6 bez resetu byl prázdný.
+
+Opravena skutečná SDK neplatnost RMT gpio_num=-1: platný GPIO4 už při vytvoření, safe idle po init, reattach při PLAY a odpojení při STOP. Doplněny konkrétní SDK chyby a jejich OLED/serial prezentace. Nový boot banner a foreground rate-limited diag obsahuje MOTOR6, režimy/WAIT, S1/SD, TX FIFO/reserve/error/heap a QD select elapsed/cache flags.
+
+QD/MZT selector drží jediný validovaný open handle/index;8položková duration cache pouze do STOP/removal/error. READY→PLAY reuse bez další analýzy. Přepočet délky přeskakuje shodné leader/mark cykly, skutečné waveformy nezměněny. Připravený kontejner používá vlastní vybranou cestu, bezpečný alias player current_path. RECORD SETUP samostatné menu FORMAT/CTRL/AUTONAME, REC zkratka v menu, STOP nahoru/uložení po opuštění kořenového menu.
+
+24 sad Debian GCC14.2 ASan/UBSan PASS (111,17 s), target ESP-IDF6.0.1/espressif32@7.0.1 PASS. RAM155548 B, aplikace464553 B, image464976 B. Všech92 fixture SHA256 nezměněno. [Report příčin a ovládání](docs/PLAY_DIAGNOSTICS_FIX.md), [test report](docs/TEST_REPORT.md), [host log](docs/validation/play-fix-host-linux.txt), [build](docs/validation/play-fix-build.txt), [hash](docs/validation/play-fix-summary.json).
+
+Další skutečné ověření vyžaduje nový obraz na desce: boot banner/COM6, MOTOR ON/OFF proti GPIO6, PLAY MANUAL/MOTOR MZF a QD, selector opakované NEXT/PREV a cache flags, RECORD menu a SAVE. Úplné Sharp LOAD/SAVE, elektrické/reset/power-off úrovně, RMT pause retence, PCNT/MCPWM timestampy, SD/OLED stress a runtime heap/stack měření stále nejsou akceptované. Starší UI/PCNT reporty mají historické HEAD/footprint a jsou tak označené.

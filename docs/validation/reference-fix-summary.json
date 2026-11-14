@@ -1,0 +1,22 @@
+{
+  "date": "2026-11-13",
+  "head": "f5cda0fa04566e4008ef40ab0c9c49480316ddac",
+  "branch": "main",
+  "working_changes": true,
+  "host_suites": 24,
+  "host_pass": true,
+  "host_sanitizers": "ASan+UBSan GCC14.2 Debian",
+  "host_seconds": 114.97,
+  "target_build_pass": true,
+  "ram_static_bytes": 155516,
+  "application_bytes": 464705,
+  "image_bytes": 465136,
+  "image_sha256": "08817cf944cca3d77014f70bafb0833b88ce95a749dd9d0b2d0f69b3c7829151",
+  "pinmap_checked": true,
+  "gpio_changes": false,
+  "fixture_files": 92,
+  "fixture_files_unchanged": true,
+  "flashed": false,
+  "new_image_hardware_tested": false,
+  "boot_banner": "MZCMTEmu REF-MENU-QD r2 2026-11-13"
+}

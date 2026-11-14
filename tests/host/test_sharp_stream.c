@@ -270,7 +270,10 @@ static void bounds(void) {
  assert(sharp_stream_service_ul(100000,1));
  assert(!sharp_stream_service_ul(600001,1));
  assert(sharp_stream_has_error() && !sharp_stream_bus_read() && sharp_stream_bus_sense());
+ const char *saved_error=sharp_stream_error();
+ assert(!strcmp(saved_error,"UL TIMEOUT"));
  sharp_stream_close();
+ assert(!strcmp(saved_error,"UL TIMEOUT"));
  assert(!remove("timeout.mzf"));
  write_file("truncated.mzf",original,127);
  assert(!sharp_stream_open("truncated.mzf",1,LOADER_MODE_NORMAL_1_1,&info));
@@ -323,6 +326,40 @@ static void qd_fixture(void) {
  assert(fwrite("CRC",1,3,f)==3);
  assert(!fclose(f));
 }
+static void ul800_startup_waits(void) {
+ fixture("ul800-start.mzf",original);
+ for(unsigned missing_ack=0;missing_ack<2;++missing_ack){
+  sharp_stream_info_t info;uint8_t level;uint32_t ticks;bool count;
+  assert(sharp_stream_open("ul800-start.mzf",1,LOADER_MODE_UL_MZ800,&info));
+  while(sharp_stream_next_pulse(&level,&ticks,&count)){}
+  assert(sharp_stream_ul_ready() && sharp_stream_begin_ul(0));
+  assert(sharp_stream_bus_read()==0 && sharp_stream_bus_sense()==1);
+  assert(sharp_stream_service_ul(699999,1) && sharp_stream_bus_read()==0);
+  assert(sharp_stream_service_ul(700000,1) && sharp_stream_bus_read()==1);
+  assert(sharp_stream_service_ul(700999,1));
+  assert(!strcmp(mzf_loader_bus_debug().phase,"READY_DELAY"));
+  assert(sharp_stream_service_ul(701000,1));
+  mzf_loader_bus_debug_t debug=mzf_loader_bus_debug();
+  assert(!strcmp(debug.phase,"INITIAL_WRITE_LOW") && debug.expected_write==0 && debug.pair==0);
+  uint64_t deadline=5701001;
+  if(missing_ack){
+   assert(sharp_stream_service_ul(701001,0));
+   assert(sharp_stream_service_ul(701002,0) && sharp_stream_bus_sense()==0);
+   debug=mzf_loader_bus_debug();
+   assert(!strcmp(debug.phase,"PAIR_WRITE_HIGH") && debug.expected_write==1 && debug.pair==0);
+   deadline=1201003;
+  }
+  assert(!sharp_stream_service_ul(deadline,missing_ack ? 0:1));
+  mzf_loader_bus_debug_t failed=mzf_loader_bus_debug();
+  assert(!strcmp(failed.phase,debug.phase) && failed.expected_write==debug.expected_write && failed.pair==debug.pair);
+  assert(!strcmp(sharp_stream_error(),"UL TIMEOUT") && sharp_stream_ul_bytes()==0);
+  assert(sharp_stream_bus_read()==0 && sharp_stream_bus_sense()==1);
+  sharp_stream_close();
+ }
+ assert(!remove("ul800-start.mzf"));
+ puts("PASS UL800 700ms startup, 1ms ready, missing first WRITE LOW versus missing first data ACK HIGH; phase diagnostics and safe failure");
+}
+
 int main(void) {
  original[0]=1;
  memcpy(original+1,"TEST\r",5);
@@ -331,6 +368,7 @@ int main(void) {
  all_modes("test.mzf");
  qd_fixture();
  all_modes("test.mzq");
+ ul800_startup_waits();
  high_loaders();
  metadata();
  bounds();
