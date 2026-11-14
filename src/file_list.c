@@ -20,13 +20,15 @@ static file_item_t *s_items;
 static char *names;
 static size_t names_used;
 static int s_count,s_selected,s_scroll_top;
+static uint32_t directory_revision;
+uint32_t file_list_revision(void){return directory_revision;}
 static char s_root_dir[PATH_BYTES],s_current_dir[PATH_BYTES],selected_path[PATH_BYTES];
 static const char *error_text="";
 static file_list_cancel_fn cancel_fn;
 static void *cancel_context;
 void file_list_set_scan_control(file_list_cancel_fn cancel,void *context) { cancel_fn=cancel;cancel_context=context; }
 const char *file_list_last_error(void) { return error_text; }
-static void clear_items(void) { s_count=s_selected=s_scroll_top=0;names_used=0; }
+static void clear_items(void) { ++directory_revision;s_count=s_selected=s_scroll_top=0;names_used=0; }
 static bool fail(const char *message) { clear_items();error_text=message;return false; }
 static bool is_at_root(void) { return !strcmp(s_root_dir,s_current_dir); }
 static bool join_path(char *out,size_t capacity,const char *directory,const char *name) {
@@ -76,8 +78,7 @@ static void clamp_scroll_bounds(void) {
     if(s_scroll_top>maximum)s_scroll_top=maximum;
 }
 static void reveal_selected(void) {
-    if(s_selected<s_scroll_top)s_scroll_top=s_selected;
-    if(s_selected>=s_scroll_top+FILE_LIST_VIEW_ROWS)s_scroll_top=s_selected-FILE_LIST_VIEW_ROWS+1;
+    s_scroll_top=s_selected-FILE_LIST_VIEW_ROWS/2;
     clamp_scroll_bounds();
 }
 static bool load(const char *select_name) {
@@ -132,88 +133,15 @@ bool file_list_reload_current_dir(void) {
     s_scroll_top=top;clamp_scroll_bounds();reveal_selected();return true;
 }
 int file_list_count(void) { return s_count; }
-bool file_list_next(void)
-{
-    if (s_count <= 0) {
-        return false;
-    }
-
-    if (s_selected >= (s_count - 1)) {
-        s_selected = 0;
-        s_scroll_top = 0;
-        clamp_scroll_bounds();
-        return true;
-    }
-
-    s_selected++;
-
-    if (s_count > FILE_LIST_VIEW_ROWS) {
-        int preview_row = FILE_LIST_VIEW_ROWS - 2;   // předposlední viditelný řádek
-        int max_scroll = s_count - FILE_LIST_VIEW_ROWS;
-        if (max_scroll < 0) {
-            max_scroll = 0;
-        }
-
-        // pokud ještě existuje další položka za výběrem,
-        // drž výběr na předposledním řádku a nech jeden soubor dopředu vidět
-        if (s_selected < (s_count - 1)) {
-            int desired_top = s_selected - preview_row;
-            if (desired_top < 0) {
-                desired_top = 0;
-            }
-            if (desired_top > max_scroll) {
-                desired_top = max_scroll;
-            }
-            if (desired_top > s_scroll_top) {
-                s_scroll_top = desired_top;
-            }
-        } else {
-            // poslední položka: už není co ukázat dopředu,
-            // tak jen skoč na poslední možné okno
-            s_scroll_top = max_scroll;
-        }
-    }
-
-    clamp_scroll_bounds();
-    return true;
+bool file_list_next(void) {
+    if(s_count<=0)return false;
+    s_selected=s_selected+1<s_count ? s_selected+1:0;
+    reveal_selected();return true;
 }
-
-bool file_list_prev(void)
-{
-    if (s_count <= 0) {
-        return false;
-    }
-
-    if (s_selected <= 0) {
-        s_selected = s_count - 1;
-        s_scroll_top = s_count - FILE_LIST_VIEW_ROWS;
-        clamp_scroll_bounds();
-        return true;
-    }
-
-    s_selected--;
-
-    if (s_count > FILE_LIST_VIEW_ROWS) {
-        int preview_row = 1;   // druhý viditelný řádek = nech jeden soubor nad výběrem
-
-        // pokud ještě existuje položka nad výběrem,
-        // drž výběr na druhém řádku a nech jeden soubor nahoře vidět
-        if (s_selected > 0) {
-            int desired_top = s_selected - preview_row;
-            if (desired_top < 0) {
-                desired_top = 0;
-            }
-            if (desired_top < s_scroll_top) {
-                s_scroll_top = desired_top;
-            }
-        } else {
-            // první položka: nahoře už není co ukázat
-            s_scroll_top = 0;
-        }
-    }
-
-    clamp_scroll_bounds();
-    return true;
+bool file_list_prev(void) {
+    if(s_count<=0)return false;
+    s_selected=s_selected>0 ? s_selected-1:s_count-1;
+    reveal_selected();return true;
 }
 
 const char *file_list_get_name(void) { return s_count ? s_items[s_selected].name:"<empty>"; }

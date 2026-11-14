@@ -1,0 +1,12 @@
+{
+  "revision": "r26 RECORD UI",
+  "bytes": 462816,
+  "sha256": "a26128aad867b5775d20b71fa2adf3e53a4fdcfc680d11eb5c8c2a746a71a26b",
+  "tests": [
+    "test_oled_ui",
+    "test_ui_policy"
+  ],
+  "result": "PASS",
+  "build": "PASS",
+  "hardware_verified": false
+}

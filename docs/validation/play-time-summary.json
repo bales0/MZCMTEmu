@@ -1,0 +1,21 @@
+{
+  "revision": "TX-TRACE r24 PLAY TIME",
+  "firmware_bytes": 462944,
+  "sha256": "d66d5a4e69498d43b346a4e1d52521c8c623b6af9c7320c25dc2ca45ab3fd5df",
+  "footer_y": [
+    56,
+    63
+  ],
+  "buffer_x": 80,
+  "buffer_format": "BUF %3u%",
+  "time_format": "elapsed/remaining, or percent when total duration is unknown",
+  "tests": [
+    "test_oled_ui",
+    "test_player_sharp",
+    "test_player_rmt",
+    "test_player_tap"
+  ],
+  "result": "PASS",
+  "hardware_verified": false,
+  "flashed": false
+}

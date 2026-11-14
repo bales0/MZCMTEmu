@@ -44,6 +44,8 @@ static uint32_t file_size,payload_start,payload_end,declared_length,stage_length
 static uint16_t loader_length,checksum;
 static uint8_t byte,bits,checksum_index;
 static uint16_t pending_high_ticks;
+static bool pending_source_byte,last_source_byte;
+bool sharp_stream_last_pulse_source_byte(void){return last_source_byte;}
 static stage_t stage;
 static step_t step;
 static bool error;
@@ -91,6 +93,7 @@ static bool locate(uint16_t wanted) {
     return count && wanted<=count ? true : fail();
 }
 static void begin_stage(stage_t next) {
+    pending_source_byte=last_source_byte=false;
     stage=next;
     step=LEADER;
     loops=0;
@@ -222,7 +225,7 @@ bool sharp_stream_ul_ready(void) {
 }
 uint32_t sharp_stream_boundary_delay_us(bool motor_low_seen) {
     if(sharp_stream_ul_ready()) return 0;
-    if((stage==TURBO || stage==PAYLOAD) && details.format==FILE_FORMAT_MZT && details.record<details.records)
+    if((stage==TURBO || stage==PAYLOAD) && file_format_is_record_container(details.format) && details.record<details.records)
         return motor_low_seen ? 0:120000;
     if(stage==TURBO || stage==EXTRA || (stage==PAYLOAD &&
         (file_format_is_record_container(details.format) || payload_end==file_size))) return 0;
@@ -246,15 +249,19 @@ bool sharp_stream_advance(void) {
     return !error;
 }
 bool sharp_stream_next_pulse(uint8_t *level,uint32_t *ticks,bool *count) {
+    last_source_byte=false;
     if(!fp || error || !level || !ticks || !count || stage==FINISHED || stage==UL) return false;
     if(pending_high_ticks) { *level=1;
         *ticks=pending_high_ticks;
         *count=true;
         pending_high_ticks=0;
+        last_source_byte=pending_source_byte;pending_source_byte=false;
         return true;
         }
+    bool data_byte=(stage==PAYLOAD || stage==TURBO || stage==EXTRA) && step==STOP_BIT;
     uint16_t high,low;
     if(!cycle(&high,&low)) return false;
+    pending_source_byte=data_byte;
     /* Fixed reference connector inversion: logical HIGH is first physical LOW. */
     *level=0;
     *ticks=high;
@@ -263,7 +270,7 @@ bool sharp_stream_next_pulse(uint8_t *level,uint32_t *ticks,bool *count) {
     return true;
 }
 void sharp_stream_close(void) {
-    open_path[0]=0;
+    open_path[0]=0;pending_source_byte=last_source_byte=false;
     memset(duration_cache,0,sizeof(duration_cache));
     duration_next=0;
     quickdisk_close();
@@ -308,6 +315,9 @@ static bool prepare_record(const char *path,loader_mode_t requested,sharp_stream
     }
     details.metadata.transfer_loader_mode=details.effective;details.metadata.valid|=PROGRAM_TRANSFER_MODE;
     details.ultrafast=mzf_loader_is_ul_active();
+    details.transfer_bytes=declared_length;
+    if(!file_format_is_record_container(details.format) && !mzf_loader_is_active())
+        details.transfer_bytes+=file_size-payload_end;
     begin_stage(HEADER);
     /* Reuse duration only within the same validated open source session. */
     bool cached=false;
@@ -377,18 +387,27 @@ bad:
 }
 bool sharp_stream_open(const char *path,uint16_t record,loader_mode_t requested,sharp_stream_info_t *info){return open_source(path,record,requested,info,true);}
 bool sharp_stream_preview(const char *path,uint16_t record,loader_mode_t requested,sharp_stream_info_t *info){return open_source(path,record,requested,info,false);}
-bool sharp_stream_continue_mzt(const char *path,loader_mode_t requested,sharp_stream_info_t *info) {
-    if(!fp || error || stage!=FINISHED || details.format!=FILE_FORMAT_MZT ||
-       details.record>=details.records || (unsigned)requested>=LOADER_MODE_COUNT) return false;
+/* Advance an already validated MZT/QD session without reopening or rescanning. */
+bool sharp_stream_continue_record(const char *path,loader_mode_t requested,sharp_stream_info_t *info) {
+    if(!fp || error || stage!=FINISHED || !path || strcmp(path,open_path) ||
+       !file_format_is_record_container(details.format) || details.record>=details.records ||
+       (unsigned)requested>=LOADER_MODE_COUNT) return false;
+    file_format_t format=details.format;
     uint16_t record=details.record+1,records=details.records;
-    uint32_t position=payload_end;
-    if(position>file_size || file_size-position<128 || cmt_fseek(fp,(long)position,SEEK_SET) || cmt_fread(header,1,128,fp)!=128) return fail();
-    declared_length=le16(header+18);
-    payload_start=position+128;
-    if(declared_length>file_size-payload_start) return fail();
-    payload_end=payload_start+declared_length;
+    if(qd_source){
+        if(!quickdisk_select(record,header,&declared_length))return fail();
+        payload_start=0;payload_end=declared_length;qd_position=0;
+    } else {
+        uint32_t position=payload_end;
+        if(position>file_size || file_size-position<128 || cmt_fseek(fp,(long)position,SEEK_SET) ||
+           cmt_fread(header,1,128,fp)!=128)return fail();
+        declared_length=le16(header+18);payload_start=position+128;
+        if(declared_length>file_size-payload_start)return fail();
+        payload_end=payload_start+declared_length;
+    }
     memset(&details,0,sizeof(details));
-    details.format=FILE_FORMAT_MZT;details.record=record;details.records=records;details.requested=requested;details.source_reused=true;
+    details.format=format;details.record=record;details.records=records;
+    details.requested=requested;details.source_reused=true;
     mzf_loader_reset();
     return prepare_record(path,requested,info,false,true);
 }

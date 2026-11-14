@@ -1,0 +1,15 @@
+{
+  "revision": "r28 WAV PREFILL",
+  "bytes": 462880,
+  "sha256": "1ad1ebed6933bbe6be8a025a6c70157a544b7d133d38a09ef2243a93a303de8a",
+  "tests": [
+    "test_player_rmt",
+    "test_raw_rmt",
+    "test_player_tap"
+  ],
+  "result": "PASS",
+  "build": "PASS",
+  "regression_before": "44.1kHz silence: source_done at initial RMT encode; reproduced",
+  "regression_after": "44.1/48/96kHz silence and silent intro: exact duration and EOF100; PASS",
+  "hardware_verified": false
+}

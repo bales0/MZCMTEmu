@@ -8,3 +8,6 @@ loader_mode_t sidecar_resolve(const char *path,uint16_t record,loader_mode_t req
 
 /* Creates metadata for a closed canonical MZF. Existing metadata is preserved. */
 bool sidecar_write_mzf(const char *path,loader_mode_t mode);
+
+/* Presence only, including invalid/manual profiles; no payload parsing. */
+bool sidecar_exists(const char *tape_path);

@@ -201,16 +201,24 @@ static void high_loaders(void) {
  puts("PASS reference HIGH-placement loader vectors: saved stack, header relocators, MZ700 runtime and unsafe IC refusal");
 }
 static void metadata(void) {
+ assert(!sidecar_exists(NULL) && !sidecar_exists("name.mzf") && !sidecar_exists("name.mzt"));
+ write_text("invalid.MFI","BROKEN SIDECAR");
+ loader_mode_t rejected;assert(sidecar_exists("invalid.mzf") && !sidecar_read("invalid.mzf",1,&rejected));
+ assert(!sidecar_exists("invalid.qd") && !sidecar_exists("invalid.wav"));assert(!remove("invalid.MFI"));
+ write_text("lower.m2i","TYPE=NORMAL\nSPEED=1:1\n");assert(sidecar_exists("lower.m12"));assert(!remove("lower.m2i"));
  loader_mode_t mode=LOADER_MODE_UL;
  bool used=true;
  assert(sidecar_resolve("name.mzf",1,LOADER_MODE_AUTO,&used)==LOADER_MODE_NORMAL_1_1 && !used);
  write_text("name.MFI","TYPE=ic\r\nSPEED=1:3\r\n");
+ assert(sidecar_exists("name.mzf"));
  assert(sidecar_read("name.mzf",1,&mode) && mode==LOADER_MODE_IC_1_3);
  assert(sidecar_resolve("name.mzf",1,LOADER_MODE_TC_1_2,&used)==LOADER_MODE_TC_1_2 && !used);
  assert(!sidecar_read("name.m12",1,&mode));
  write_text("name.M2I","TYPE=UL_MZ700\n");
+ assert(sidecar_exists("name.m12"));
  assert(sidecar_read("name.m12",1,&mode) && mode==LOADER_MODE_UL_MZ700);
  write_text("name.MTI","RECORD=1\nTYPE=NORMAL\nSPEED=1:4\nRECORD=2\nTYPE=TC\nSPEED=1:4\nRECORD=3\nTYPE=UL_MZ800");
+ assert(sidecar_exists("name.mzt"));
  assert(sidecar_read("name.mzt",1,&mode) && mode==LOADER_MODE_NORMAL_1_4);
  assert(sidecar_resolve("name.mzt",2,LOADER_MODE_AUTO,&used)==LOADER_MODE_NORMAL_1_1 && !used);
  assert(sidecar_read("name.mzt",3,&mode) && mode==LOADER_MODE_UL_MZ800);
@@ -218,6 +226,7 @@ static void metadata(void) {
  assert(!sidecar_read("name.mzt",1,&mode));
  assert(!sidecar_read("name.mzt",0,&mode));
  assert(!remove("name.MFI") && !remove("name.M2I") && !remove("name.MTI"));
+ assert(!sidecar_exists("name.mzf") && !sidecar_exists("name.m12") && !sidecar_exists("name.mzt"));
  write_text("name.MZI","TYPE=UL\n");
  assert(!sidecar_read("name.mzf",1,&mode));
  assert(!remove("name.MZI"));

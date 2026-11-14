@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 static bool fields(const char *type,const char *speed,loader_mode_t *out) {
     if (!strcasecmp(type,"UL")) { *out=LOADER_MODE_UL;
@@ -113,21 +114,32 @@ static bool multi(cmt_file_t *fp,uint16_t wanted,loader_mode_t *mode) {
         }
     }
 }
-bool sidecar_read(const char *path,uint16_t record,loader_mode_t *mode) {
-    if (!path || !mode || !record) return false;
+static bool info_path(const char *path,char name[1024]) {
+    if(!path)return false;
     file_format_t format=file_format_detect_from_name(path);
-    const char *ext=format==FILE_FORMAT_MZF ? "MFI" : format==FILE_FORMAT_M12 ? "M2I" : format==FILE_FORMAT_MZT ? "MTI" : NULL;
-    if (!ext) return false;
-    char name[1024];
+    const char *ext=format==FILE_FORMAT_MZF ? "MFI":format==FILE_FORMAT_M12 ? "M2I":format==FILE_FORMAT_MZT ? "MTI":NULL;
     size_t n=strlen(path);
-    if (n<4 || n>=sizeof(name)) return false;
-    memcpy(name,path,n+1);
-    memcpy(name+n-3,ext,3);
+    if(!ext || n<4 || n>=1024)return false;
+    memcpy(name,path,n+1);memcpy(name+n-3,ext,3);return true;
+}
+static void lower_info_extension(char *name) {
+    size_t n=strlen(name);
+    for(size_t i=n-3;i<n;++i)if(name[i]>='A' && name[i]<='Z')name[i]=(char)(name[i]+32);
+}
+bool sidecar_exists(const char *path) {
+    char name[1024];struct stat st;
+    if(!info_path(path,name))return false;
+    if(!cmt_stat(name,&st) && S_ISREG(st.st_mode))return true;
+    lower_info_extension(name);
+    return !cmt_stat(name,&st) && S_ISREG(st.st_mode);
+}
+bool sidecar_read(const char *path,uint16_t record,loader_mode_t *mode) {
+    char name[1024];
+    if(!mode || !record || !info_path(path,name))return false;
+    file_format_t format=file_format_detect_from_name(path);
     cmt_file_t *fp=cmt_fopen(name,"rb");
-    if (!fp) { for(unsigned i=0;i<3;++i) name[n-3+i]=(char)(ext[i]>='A'&&ext[i]<='Z' ? ext[i]+32 : ext[i]);
-        fp=cmt_fopen(name,"rb");
-        }
-    if (!fp) return false;
+    if(!fp){lower_info_extension(name);fp=cmt_fopen(name,"rb");}
+    if(!fp)return false;
     loader_mode_t resolved=LOADER_MODE_NORMAL_1_1;
     bool ok=format==FILE_FORMAT_MZT ? multi(fp,record,&resolved) : single(fp,&resolved);
     if(cmt_fclose(fp)) ok=false;

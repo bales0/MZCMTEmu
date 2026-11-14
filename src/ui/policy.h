@@ -9,3 +9,6 @@ typedef enum {UI_BUFFER_OK,UI_BUFFER_LOW,UI_BUFFER_CRITICAL,UI_BUFFER_BAD} ui_bu
 ui_buffer_alarm_t ui_buffer_alarm(uint8_t actual);
 typedef struct {uint32_t key,changed_at;bool valid;} ui_marquee_t;
 size_t ui_marquee_offset(ui_marquee_t *,const char *text,size_t width,uint32_t now_ms,uint32_t context);
+
+/* Fit a path into a text field; abbreviate omitted ancestors with ../. */
+void ui_compact_path(char *out,size_t capacity,const char *path,size_t columns);

@@ -1,4 +1,6 @@
-> Aktuální r15 (14. 11. 2026): [UL, UL700 a UL800 podle SD2CMT2](UL_FAMILY_PERFORMANCE.md). Odstraněné 10ms čekání po každé krátké dávce UL, vypnutý detailní trace, účinné -O2. Všechny tři režimy prošly host přenosem 44 033 bajtů; Z80 přijímače LOW/HIGH a 100Hz plánování PASS, cílový build PASS. Uživatel potvrdil LOAD v r14 UL800 s nízkou rychlostí; r15 a UL700 zatím bez HW potvrzení. S1 bypass zůstává zapnutý. Následující starší záznamy jsou historie.
+> Aktuální r28 (14. 11. 2026): [oprava předplnění WAV](WAV_PREFILL_FIX.md). Reprodukováno předčasné RMT ukončení při tichém úvodu; před startem WAV nyní minimálně 256 intervalů vedle časové zásoby. Regrese 44,1/48/96 kHz, tři host sady a cílový build PASS; bez nahrání a HW ověření. Ikona RECORD a MIN z r27 zachovány. Následující starší záznamy jsou historie.
+
+ Aktuální r15 (14. 11. 2026): [UL, UL700 a UL800 podle SD2CMT2](UL_FAMILY_PERFORMANCE.md). Odstraněné 10ms čekání po každé krátké dávce UL, vypnutý detailní trace, účinné -O2. Všechny tři režimy prošly host přenosem 44 033 bajtů; Z80 přijímače LOW/HIGH a 100Hz plánování PASS, cílový build PASS. Uživatel potvrdil LOAD v r14 UL800 s nízkou rychlostí; r15 a UL700 zatím bez HW potvrzení. S1 bypass zůstává zapnutý. Následující starší záznamy jsou historie.
 
 # Matice funkční parity
 

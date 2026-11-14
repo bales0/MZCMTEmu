@@ -1,0 +1,1 @@
+PASS all 16 actual SD2CMT2 sidecar profile texts: MFI, M2I and MTI record 2; manual priority; QD unsupported as in reference

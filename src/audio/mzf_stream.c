@@ -71,6 +71,7 @@ static void trace_dump(void) { puts("ul: TRACE disabled"); }
 static uint16_t selected_record=1;
 static loader_mode_t selected_mode;
 static char selected_path[1024];
+static void release_bus(void);
 
 bool mzf_stream_set_loader_mode(loader_mode_t mode) {
     if((unsigned)mode>=LOADER_MODE_COUNT) return false;
@@ -82,6 +83,8 @@ loader_mode_t mzf_stream_get_loader_mode(void) { return requested;
 const sharp_stream_info_t *mzf_stream_details(void) { return &current;
     }
 bool mzf_stream_select_mode(const char *path,uint16_t record,loader_mode_t mode) {
+    /* STOP may reselect an interrupted UL record without closing its source. */
+    release_bus();
     sharp_stream_info_t info;
     if(!sharp_stream_preview(path,record,mode,&info)){prepared=false;opened=false;local_error=true;return false;}
     prepared=true;
@@ -98,7 +101,10 @@ bool mzf_stream_open(const char *path,mzf_stream_info_t *info) {
     if(!reuse)mzf_stream_close();
     uint16_t record=path && !strcmp(path,selected_path) ? selected_record : 1;
     loader_mode_t mode=path && !strcmp(path,selected_path) ? selected_mode : requested;
-    if((!reuse || current.duration_deferred) && !sharp_stream_open(path,record,mode,&current)) { local_error=true;
+    /* MZF starts from a bounded header/loader preview, with no waveform dry run. */
+    bool fast=file_format_detect_from_name(path)==FILE_FORMAT_MZF;
+    if((!reuse || current.duration_deferred) &&
+       !(fast ? sharp_stream_preview(path,record,mode,&current):sharp_stream_open(path,record,mode,&current))) { local_error=true;
         return false;
         }
     prepared=false;
@@ -114,8 +120,8 @@ bool mzf_stream_open(const char *path,mzf_stream_info_t *info) {
     }
     return true;
 }
-bool mzf_stream_continue_mzt(const char *path,loader_mode_t mode,mzf_stream_info_t *info) {
-    if(!opened || ul_active || !sharp_stream_continue_mzt(path,mode,&current)) { local_error=true;return false; }
+bool mzf_stream_continue_record(const char *path,loader_mode_t mode,mzf_stream_info_t *info) {
+    if(!opened || ul_active || !sharp_stream_continue_record(path,mode,&current)) { local_error=true;return false; }
     selected_record=current.record;selected_mode=mode;snprintf(selected_path,sizeof(selected_path),"%s",path);
     emitted_ticks=emitted_us=0;ul_sent=0;ul_started=0;
     uint64_t us=(current.total_ticks+8)/16;
@@ -302,3 +308,6 @@ bool mzf_stream_select(const char *path,uint16_t record) { return mzf_stream_sel
 void mzf_stream_pause_ul(bool pause) { if(ul_active) sharp_stream_pause_ul((uint64_t)esp_timer_get_time(),pause); }
 
 const char *mzf_stream_error(void){return local_error_text ? local_error_text:sharp_stream_error();}
+
+bool mzf_stream_last_pulse_source_byte(void){return sharp_stream_last_pulse_source_byte();}
+uint32_t mzf_stream_transfer_bytes(void){return current.transfer_bytes;}

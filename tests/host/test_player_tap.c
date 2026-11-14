@@ -394,7 +394,7 @@ test_driver_clock();
 return 0;
 }
 
-bool mzf_stream_continue_mzt(const char *path,loader_mode_t mode,mzf_stream_info_t *info) { (void)path;
+bool mzf_stream_continue_record(const char *path,loader_mode_t mode,mzf_stream_info_t *info) { (void)path;
 (void)mode;
 (void)info;
 return false;
@@ -409,3 +409,6 @@ return false;
 bool sharp_stream_analysis_cancelled(void){return false;}
 
 const char *mzf_stream_error(void){return "";}
+
+bool mzf_stream_last_pulse_source_byte(void){return false;}
+uint32_t mzf_stream_transfer_bytes(void){return 0;}

@@ -88,3 +88,6 @@ const char *player_state_name(player_state_t state);
 
 /* Physical connector level; false return means UL retains ownership. */
 bool player_set_sense_level(bool high);
+
+/* Stop QD output and retain the validated image for the record selector. */
+bool player_stop_to_selector(void);

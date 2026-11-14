@@ -13,7 +13,7 @@ typedef struct {
     bool sidecar, fallback, ultrafast;
     bool source_reused,duration_cached,duration_deferred; /* Diagnostics for open-session reuse. */
     uint64_t total_ticks;
-    uint32_t payload_bytes;
+    uint32_t payload_bytes,transfer_bytes;
 } sharp_stream_info_t;
 bool sharp_stream_open(const char *path,uint16_t record,loader_mode_t requested,sharp_stream_info_t *info);
 void sharp_stream_close(void);
@@ -38,10 +38,13 @@ typedef bool (*sharp_analysis_cancel_fn)(void *context);
 void sharp_stream_set_analysis_control(sharp_analysis_cancel_fn cancel,void *context);
 bool sharp_stream_analysis_cancelled(void);
 
-bool sharp_stream_continue_mzt(const char *path,loader_mode_t mode,sharp_stream_info_t *info);
+bool sharp_stream_continue_record(const char *path,loader_mode_t mode,sharp_stream_info_t *info);
 
 /* Header/loader metadata only; no complete waveform or body duration scan. */
 bool sharp_stream_preview(const char *path,uint16_t record,loader_mode_t requested,sharp_stream_info_t *info);
 
 /* Immutable failure reason, safe to retain after stream close. */
 const char *sharp_stream_error(void);
+
+/* True only on the final physical half of an original data-byte stop bit. */
+bool sharp_stream_last_pulse_source_byte(void);

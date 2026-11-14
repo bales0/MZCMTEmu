@@ -25,6 +25,7 @@
 #include "file_list.h"
 #include "audio/raw_out.h"
 #include "formats/mz_tape_profiles.h"
+#include "formats/sidecar.h"
 #include "config/settings.h"
 #include "config/loader_choice.h"
 #include "esp_heap_caps.h"
@@ -300,55 +301,13 @@ static void ui_copy_scroll_text(char *dst, size_t dst_size, const char *src)
     dst[i] = '\0';
 }
 
-static void ui_copy_path_text(char *dst, size_t dst_size, const char *path)
+static void ui_copy_path_text(char *dst,size_t size,const char *path)
 {
-    const char *display_path = path;
-    size_t len;
-    size_t max_len;
-
-    if (dst == NULL || dst_size == 0) {
-        return;
+    const char *display=path && path[0] ? path:"/";
+    if(!strncmp(display,"/sd",3) && (!display[3] || display[3]=='/')){
+        display+=3;if(!display[0])display="/";
     }
-
-    if (display_path == NULL || display_path[0] == '\0') {
-        snprintf(dst, dst_size, "/");
-        return;
-    }
-
-    if (strncmp(display_path, "/sd", 3) == 0 &&
-        (display_path[3] == '\0' || display_path[3] == '/')) {
-        display_path += 3;
-        if (display_path[0] == '\0') {
-            display_path = "/";
-        }
-    }
-
-    if (strcmp(display_path, "/") == 0) {
-        snprintf(dst, dst_size, "/");
-        return;
-    }
-
-    len = strlen(display_path);
-    max_len = dst_size - 1;
-
-    if (display_path[len - 1] == '/') {
-        if (len <= max_len) {
-            memcpy(dst, display_path, len + 1);
-            return;
-        }
-    } else if ((len + 1U) <= max_len) {
-        memcpy(dst, display_path, len);
-        dst[len] = '/';
-        dst[len + 1U] = '\0';
-        return;
-    }
-
-    const char *name = basename_ptr(display_path);
-    if (name[0] != '\0') {
-        snprintf(dst, dst_size, "../%s/", name);
-    } else {
-        ui_copy_scroll_text(dst, dst_size, display_path);
-    }
+    ui_compact_path(dst,size,display,size ? size-1:0);
 }
 
 
@@ -820,13 +779,27 @@ static bool ui_should_show_playback_screen(void)
     return player_screen_active(player_get_state());
 }
 
+/* App-task cache: no filesystem probes on every OLED refresh. Directory
+ * reload/media remount invalidates the result even when the path is unchanged. */
+static bool ui_has_sidecar(const char *path)
+{
+    static char checked_path[1024];static uint32_t revision;static bool valid,present;
+    uint32_t current=file_list_revision();
+    if(!s_sd_ready || !path || !path[0]){valid=false;return false;}
+    if(!valid || revision!=current || strcmp(path,checked_path)){
+        present=sidecar_exists(path);snprintf(checked_path,sizeof(checked_path),"%s",path);
+        revision=current;valid=true;
+    }
+    return present;
+}
 static void ui_build_playback_model(void)
 {
     ui_transport_view_t view={0};player_state_t state=player_get_state();
     const char *path=play_wait_motor && state!=PLAYER_STATE_READY ? file_list_get_path():player_get_current_path();
     player_metadata(&view.program);if(play_wait_motor && state!=PLAYER_STATE_READY)program_metadata_reset(&view.program,file_format_detect_from_name(path));
     view.filename=basename_ptr(path);
-    view.seconds=player_get_position_seconds();view.progress=player_get_progress_percent();
+    view.has_info_sidecar=ui_has_sidecar(path);
+    view.seconds=player_get_position_seconds();view.total_seconds=player_get_total_seconds();view.progress=player_get_progress_percent();
     view.sample_rate=player_get_sample_rate();view.playback_baud=player_is_tap() ? (uint16_t)player_get_baud_rate():0;
     raw_pulse_status(&view.tx);view.tx_expected=state==PLAYER_STATE_PLAYING && view.tx.running && !view.tx.paused && !player_is_ultrafast_active();
     view.session=(uint32_t)view.program.format;
@@ -844,14 +817,14 @@ static void ui_build_playback_model(void)
 
 static void ui_build_browser_model(void)
 {
-    const char *rows[6];int selected=-1;unsigned directories=0;
+    const char *rows[FILE_LIST_VIEW_ROWS];int selected=-1;unsigned directories=0;
     ui_copy_path_text(ui_path,sizeof(ui_path),file_list_get_current_dir());ui_model.line[0]=ui_path;
-    for(int row=0;row<6;++row){
+    for(int row=0;row<FILE_LIST_VIEW_ROWS;++row){
         rows[row]=file_list_get_visible_name(row);
         if(file_list_is_visible_selected(row))selected=row;
         if(file_list_get_visible_type(row)==FILE_ITEM_DIR || file_list_get_visible_type(row)==FILE_ITEM_PARENT)directories|=1U<<row;
     }
-    ui_set_browser_view(rows,selected,directories,(unsigned)file_list_get_selected_index(),(unsigned)file_list_count());
+    ui_set_browser_view(rows,selected,directories,(unsigned)file_list_get_selected_index(),(unsigned)file_list_count(),ui_has_sidecar(file_list_get_path()));
 }
 
 static void start_selected_file(void)
@@ -946,7 +919,6 @@ static bool cancel_image_analysis(void *context)
     (void)context;
     static int64_t yielded_at,shown_at,external_since;
     static unsigned spinner;
-    static char status[32];
     btn_event_t event=buttons_poll();
     if(event==BTN_STOP || event==BTN_STOP_LONG || gpio_get_level(GPIO_NUM_47)) return true;
     int64_t now=esp_timer_get_time();
@@ -954,8 +926,8 @@ static bool cancel_image_analysis(void *context)
     else if(!external_since)external_since=now;
     else if(now-external_since>=40000)return true;
     if(now-shown_at>=100000) {
-        shown_at=now;snprintf(status,sizeof(status),"ANALYZING %c","|/-\\"[spinner++%4]);
-        ui_use_text_view();ui_model_t model={{status,"","SD / TAPE PREFLIGHT","","STOP TO CANCEL","","",""}};ui_render(&model);
+        shown_at=now;ui_set_analysis_view(spinner++);
+        ui_model_t model={{"ANALYZING","","SD / TAPE PREFLIGHT","","STOP TO CANCEL","","",""}};ui_render(&model);
     }
     if(now-yielded_at>=20000) { yielded_at=now; vTaskDelay(1); }
     return false;
@@ -1240,9 +1212,11 @@ static void app_task(void *arg)
                 bool container=file_format_is_record_container(file_format_detect_from_name(player_get_current_path()));
                 uint16_t record=player_sharp_details()->record;
                 char path[1024]; snprintf(path,sizeof(path),"%s",player_get_current_path());
-                player_stop_for(PLAYER_STOP_BUTTON);
-                if(container && st!=PLAYER_STATE_READY && s_sd_ready)
-                    (void)player_prepare_record(path,record);
+                if(!(container && st!=PLAYER_STATE_READY && s_sd_ready && player_stop_to_selector())){
+                    player_stop_for(PLAYER_STOP_BUTTON);
+                    if(container && st!=PLAYER_STATE_READY && s_sd_ready)
+                        (void)player_prepare_record(path,record);
+                }
             }
             else if (s_sd_ready) {
                 if (!file_list_go_parent()) {
@@ -1388,7 +1362,7 @@ static void app_task(void *arg)
 void app_main(void)
 {
     setvbuf(stdout,NULL,_IOLBF,0);
-    printf("MZCMTEmu TX-TRACE r15 SD2CMT2 UL FAST S1 BYPASS INTERNAL 2026-11-14; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
+    printf("MZCMTEmu TX-TRACE r28 WAV PREFILL S1 BYPASS INTERNAL 2026-11-14; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
     // Give the USB console time to enumerate.
     vTaskDelay(pdMS_TO_TICKS(500));
     fflush(stdout);

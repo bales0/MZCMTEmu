@@ -7,13 +7,14 @@
 #include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
-static enum {TEXT,BROWSER,PLAY,RECORD} mode;
+static enum {TEXT,BROWSER,PLAY,RECORD,ANALYSIS} mode;
 static ui_transport_view_t transport;
-static const char *rows[6];
+static const char *rows[FILE_LIST_VIEW_ROWS];
 static int selected;
 static unsigned directories,item,total;
-static bool external;
-static ui_marquee_t marquee;
+static bool external,browser_has_info;
+static unsigned analysis_phase;
+static ui_marquee_t marquee,details_marquee;
 static ui_headroom_t recovery;
 static char overlay[48];
 static uint32_t overlay_started,overlay_duration;
@@ -23,20 +24,24 @@ static uint32_t now_ms(void){return (uint32_t)(xTaskGetTickCount()*portTICK_PERI
 void ui_use_text_view(void){if(mode!=TEXT)marquee.valid=false;
 mode=TEXT;
 }
+void ui_set_analysis_view(unsigned phase){
+ if(mode!=ANALYSIS)marquee.valid=false;
+ mode=ANALYSIS;analysis_phase=phase&7U;
+}
 void ui_set_external(bool value){external=value;
 }
-void ui_set_browser_view(const char *const names[6],int current,unsigned dirs,unsigned index,unsigned count){
+void ui_set_browser_view(const char *const names[FILE_LIST_VIEW_ROWS],int current,unsigned dirs,unsigned index,unsigned count,bool has_info_sidecar){
  if(mode!=BROWSER)marquee.valid=false;
  mode=BROWSER;
- for(unsigned i=0;i<6;++i)rows[i]=names[i];
+ for(unsigned i=0;i<FILE_LIST_VIEW_ROWS;++i)rows[i]=names[i];
  selected=current;
  directories=dirs;
  item=index;
- total=count;
+ total=count;browser_has_info=has_info_sidecar;
 }
 void ui_set_transport_view(bool record,const ui_transport_view_t *view){
  if(transport.session!=view->session || mode!=(record ? RECORD:PLAY)){recovery.valid=false;
- marquee.valid=false;
+ marquee.valid=false;details_marquee.valid=false;
  }
  transport=*view;
  mode=record ? RECORD:PLAY;
@@ -58,18 +63,23 @@ return overlay[0] ? overlay:NULL;
 }
 void ui_view_reset(void){mode=TEXT;
 memset(&marquee,0,sizeof(marquee));
+memset(&details_marquee,0,sizeof(details_marquee));
 memset(&recovery,0,sizeof(recovery));
 memset(&transport,0,sizeof(transport));
 overlay[0]=0;
-external=false;
+external=false;browser_has_info=false;analysis_phase=0;
 }
 static void icon(int kind){
- if(kind==1){for(int x=0;x<6;++x)oled_rect(x,3+x/2,1,7-x,false,true);
+ if(kind==1){const uint8_t width[]={1,3,5,6,5,3,1};
+  for(int y=0;y<7;++y)oled_rect(0,1+y,width[y],1,true,true);
  }
  else if(kind==2){oled_rect(0,1,2,7,true,true);
  oled_rect(4,1,2,7,true,true);
  }
- else if(kind==3){oled_rect(1,2,5,5,true,true);
+ else if(kind==3){const uint8_t width[]={3,5,7,7,7,5,3};
+  for(int y=0;y<7;++y)oled_rect((7-width[y])/2,1+y,width[y],1,true,true);
+ }
+ else if(kind==4){oled_rect(1,2,5,5,true,true);
  }
  else {oled_rect(0,0,7,8,false,true);
  oled_pixel(3,2,true);
@@ -87,108 +97,137 @@ case FILE_FORMAT_L16:return "L16";
 case FILE_FORMAT_TAP:return "TAP";
 default:return "--";
 }}
+/* Both browser and QD reserve the rightmost cells for their index. */
+static void context_header(int x,const char *label,unsigned index,unsigned count,bool path,bool has_info){
+ char number[24],text[32];
+ snprintf(number,sizeof(number),external ? "E %u%c%u":"%u%c%u",index,has_info ? 'I':'/',count);
+ int cell=6;
+ int right=128-(int)strlen(number)*cell;
+ unsigned room=right>x+4 ? (unsigned)(right-x-4)/(unsigned)cell:0;
+ if(path)ui_compact_path(text,sizeof(text),label,room);
+ else snprintf(text,sizeof(text),"%.*s",(int)room,label ? label:"");
+ oled_text_xy(x,0,text,1,true);
+ oled_text_xy(right,0,number,1,true);
+}
+/* 128x64 = eight rows of readable 6x8 text. Row 7 is always the footer. */
+static void row_text(unsigned row,const char *text){oled_text_xy(0,(int)row*8,text,1,true);}
+static const char *compact_loader(loader_mode_t value){
+ static const char *const names[]={"N1:1","AUTO","UL","UL800","UL700","700x3","IC1:4","IC1:3","IC1:2","TC1:3","TC1:2","N1:2","N1:3","700x1","N1:4","IC1:1","TC1:1"};
+ return (unsigned)value<sizeof(names)/sizeof(names[0]) ? names[value]:"--";
+}
 static void draw_transport(uint32_t now){
  const ui_transport_view_t *v=&transport;
  const program_metadata_t *m=&v->program;
- char line[48],load[8],exec[16];
- const char *state=external ? "EXTERNAL":v->status ? v->status:"";
- icon(strstr(state,"PAUSE") || strstr(state,"WAIT") ? 2:mode==RECORD ? 3:1);
- char caption[16];
- if(v->playback_baud)snprintf(caption,sizeof(caption),"TAP %uBD",v->playback_baud);
- else if(m->format==FILE_FORMAT_WAV && v->sample_rate)snprintf(caption,sizeof(caption),"WAV %luK",(unsigned long)(v->sample_rate/1000));
- else snprintf(caption,sizeof(caption),"%s",format(m->format));
- if(m->records)snprintf(line,sizeof(line),"%s %s %lu/%lu",state,caption,(unsigned long)m->record,(unsigned long)m->records);
- else if(m->record)snprintf(line,sizeof(line),"%s %s #%lu",state,caption,(unsigned long)m->record);
- else snprintf(line,sizeof(line),"%s %s",state,caption);
- oled_text_xy(9,1,line,0,true);
- oled_rect(0,8,128,1,true,true);
+ char line[80],load[8],exec[12],caption[20];
+ const char *status=v->status ? v->status:"";
+ const char *state=external ? "EXTERNAL":status;
+ bool qd=mode==PLAY && m->format==FILE_FORMAT_MZQ;
+ bool stopped=!external && (!strcmp(status,"FINISHED") || !strcmp(status,"SAVED") || !strcmp(status,"CANCELLED") || !strcmp(status,"STOPPED") || !strcmp(status,"SELECT RECORD"));
+ bool failed=strstr(state,"ERROR") || strstr(state,"UNDERRUN") || external;
+ int symbol=stopped ? 4:failed ? 0:strstr(state,"PAUSE") || strstr(state,"WAIT") ? 2:mode==RECORD ? 3:1;
+ icon(symbol);
+ if(qd)context_header(9,v->filename ? v->filename:"QD",m->record,m->records,false,v->has_info_sidecar);
+ else {
+  if(v->playback_baud)snprintf(caption,sizeof(caption),"TAP %u",v->playback_baud);
+  else if(m->format==FILE_FORMAT_WAV && v->sample_rate)snprintf(caption,sizeof(caption),"WAV %luK",(unsigned long)(v->sample_rate/1000));
+  else snprintf(caption,sizeof(caption),"%s",format(m->format));
+  const char *header_state=!strcmp(state,"BETWEEN BLOCKS") ? "WAIT":state;
+  if(!strcmp(state,"PLAY") || (mode==RECORD && !strcmp(state,"REC")))snprintf(line,sizeof(line),"%s",caption);
+  else snprintf(line,sizeof(line),"%s %s",header_state,caption);
+  if(m->records)context_header(9,line,m->record,m->records,false,v->has_info_sidecar);
+  else oled_text_xy(9,0,line,1,true);
+ }
  const char *title=(m->valid&PROGRAM_TITLE) ? m->title:v->filename ? v->filename:"DETECTING...";
  if(m->confidence==PROGRAM_LOADER_ONLY)title="LOADER / WAIT PROGRAM";
- size_t offset=ui_marquee_offset(&marquee,title,21,now,(uint32_t)mode^v->session^m->record);
- oled_text_xy(0,10,title+offset,1,true);
- const char *type=program_metadata_type(m);
- char rawtype[12];
- if(!strcmp(type,"TYPE")){snprintf(rawtype,sizeof(rawtype),"TYPE %02X",m->file_type);
- type=rawtype;
- }
+ uint32_t context=(uint32_t)mode^v->session^m->record;
+ size_t offset=ui_marquee_offset(&marquee,title,21,now,context);
+ row_text(1,title+offset);
+ const char *type=program_metadata_type(m);char rawtype[12];
+ if(!strcmp(type,"TYPE")){snprintf(rawtype,sizeof(rawtype),"TYPE %02X",m->file_type);type=rawtype;}
  const char *loader="--";
- if(mode==PLAY && (m->valid&PROGRAM_TRANSFER_MODE))loader=loader_mode_name(m->transfer_loader_mode);
- else if(m->valid&PROGRAM_RECORDED_MODE)loader=loader_mode_name(m->recorded_loader_mode);
  bool transfer=mode==PLAY && (m->valid&PROGRAM_TRANSFER_MODE);
- snprintf(line,sizeof(line),"%s %s %s",type,transfer ? "TX":"SRC",loader);
- if(transfer && (m->valid&PROGRAM_RECORDED_MODE))snprintf(line,sizeof(line),"%s TX %s SRC %s",type,loader,loader_mode_name(m->recorded_loader_mode));
- if(m->confidence==PROGRAM_WAITING)snprintf(line,sizeof(line),"DETECTING... / FILE");
- else if(m->confidence==PROGRAM_UNKNOWN)snprintf(line,sizeof(line),"UNKNOWN / FILENAME");
- else if(m->confidence==PROGRAM_LOADER_ONLY)snprintf(line,sizeof(line),"LOADER ONLY / WAIT PROGRAM");
- else if(m->confidence==PROGRAM_INVALID)snprintf(line,sizeof(line),"INVALID HEADER / DATA");
- oled_text_xy(0,20,line,0,true);
- if(m->valid&PROGRAM_LOAD)snprintf(load,sizeof(load),"%04X",m->load);
- else strcpy(load,"--");
+ if(transfer)loader=compact_loader(m->transfer_loader_mode);
+ else if(m->valid&PROGRAM_RECORDED_MODE)loader=compact_loader(m->recorded_loader_mode);
+ if(transfer && (m->valid&PROGRAM_RECORDED_MODE) && m->transfer_loader_mode!=m->recorded_loader_mode)
+  snprintf(line,sizeof(line),"%s %s SRC %s",type,loader,compact_loader(m->recorded_loader_mode));
+ else snprintf(line,sizeof(line),"%s %s %s",type,transfer ? "TX":"SRC",loader);
+ if(m->confidence==PROGRAM_WAITING)strcpy(line,"DETECTING...");
+ else if(m->confidence==PROGRAM_UNKNOWN)strcpy(line,"UNKNOWN / FILENAME");
+ else if(m->confidence==PROGRAM_LOADER_ONLY)strcpy(line,"LOADER / WAIT DATA");
+ else if(m->confidence==PROGRAM_INVALID)strcpy(line,"INVALID HEADER / DATA");
+ offset=ui_marquee_offset(&details_marquee,line,21,now,context^0x400000U);
+ row_text(2,line+offset);
+ if(m->valid&PROGRAM_SIZE)snprintf(line,sizeof(line),"SIZE %lu",(unsigned long)m->declared_size);
+ else strcpy(line,"SIZE --");
+ row_text(3,line);
+ if(m->valid&PROGRAM_LOAD)snprintf(load,sizeof(load),"%04X",m->load);else strcpy(load,"--");
  if(m->valid&PROGRAM_AUTOSTART)snprintf(exec,sizeof(exec),"AUTO %u",m->autostart);
  else if(m->valid&PROGRAM_EXEC)snprintf(exec,sizeof(exec),"EXEC %04X",m->exec);
  else strcpy(exec,"EXEC --");
- if(m->valid&PROGRAM_SIZE)snprintf(line,sizeof(line),"SIZE %lu B  LOAD %s",(unsigned long)m->declared_size,load);
- else snprintf(line,sizeof(line),"SIZE --  LOAD %s",load);
- oled_text_xy(0,27,line,0,true);
- snprintf(line,sizeof(line),"%s  %02lu:%02lu",exec,(unsigned long)(v->seconds/60),(unsigned long)(v->seconds%60));
- oled_text_xy(0,34,line,0,true);
- unsigned progress=v->progress;
- if(mode==RECORD && (m->valid&PROGRAM_SIZE))progress=m->declared_size ? m->received_bytes*100U/m->declared_size:100;
- oled_text_xy(0,41,mode==RECORD ? "D":"P",0,true);
- oled_bar(8,42,88,5,progress);
- snprintf(line,sizeof(line),"%u%%",progress>100 ? 100:progress);
- oled_text_xy(100,41,line,0,true);
- unsigned reserve=0;
+ snprintf(line,sizeof(line),"LOAD %s %s",load,exec);row_text(4,line);
  ui_buffer_alarm_t alarm=UI_BUFFER_OK;
- if(mode==RECORD){
-  reserve=recovery.shown;
-  alarm=v->record_active ? ui_buffer_alarm(v->rx_free):UI_BUFFER_OK;
-  snprintf(line,sizeof(line),"RX FREE %u%% MIN %u%%",v->rx_free,v->rx_min);
+ unsigned fill=v->tx.fifo_capacity ? (unsigned)((uint64_t)v->tx.fifo_used*100/v->tx.fifo_capacity):0;
+ if(fill>100)fill=100;
+ if(mode==RECORD){if(v->record_active)alarm=ui_buffer_alarm(v->rx_free);}
+ else if(v->tx_expected){unsigned reserve=v->tx.time_valid ? (v->tx.reserve_us>=100000 ? 100:(unsigned)(v->tx.reserve_us/1000)):fill;
+  alarm=ui_buffer_alarm((uint8_t)reserve);
  }
-else if(!v->tx_expected && strstr(state,"UL")){strcpy(line,"UL HANDSHAKE");
+ /* QD keeps its filename in the header; row 5 carries its status. */
+ if(mode==RECORD)snprintf(line,sizeof(line),"MIN %3u%%",v->rx_min);
+ else snprintf(line,sizeof(line),"%s",qd && strcmp(state,"PLAY") ? state:"");
+ if(v->warning && v->warning[0])row_text(5,v->warning);
+ else {
+  if(alarm!=UI_BUFFER_OK){const char *label=alarm==UI_BUFFER_BAD ? "BAD":alarm==UI_BUFFER_CRITICAL ? "CRIT":"LOW";
+   char clipped[17];snprintf(clipped,sizeof(clipped),"%.15s",line);row_text(5,clipped);
+   oled_text_xy(128-(int)strlen(label)*6,40,label,1,true);
+  }else row_text(5,line);
  }
- else if(v->tx.time_valid){
-  reserve=v->tx.reserve_us>=100000 ? 100:(unsigned)(v->tx.reserve_us/1000);
-  if(v->tx_expected)alarm=ui_buffer_alarm((uint8_t)reserve);
-  snprintf(line,sizeof(line),"TX %lu ms SW %lu%%",(unsigned long)(v->tx.reserve_us/1000),
-    v->tx.fifo_capacity ? (unsigned long)(v->tx.fifo_used*100U/v->tx.fifo_capacity):0UL);
+ unsigned progress=v->progress;
+ if(mode==RECORD && (m->valid&PROGRAM_SIZE))progress=m->declared_size ? (unsigned)((uint64_t)m->received_bytes*100/m->declared_size):100;
+ oled_bar(0,49,128,6,progress);
+ /* Shared footer: time/progress at left, fixed BUF at x=80. RX uses free space. */
+ {
+  char buffer[16];
+  if(mode==RECORD)snprintf(buffer,sizeof(buffer),"BUF %3u%%",v->rx_free);
+  else if(strstr(state,"UL") || !v->tx.fifo_capacity)strcpy(buffer,"BUF  -- ");
+  else snprintf(buffer,sizeof(buffer),"BUF %3u%%",fill);
+  if(mode==RECORD)snprintf(line,sizeof(line),"%02lu:%02lu",(unsigned long)(v->seconds/60),(unsigned long)(v->seconds%60));
+  else if(v->total_seconds){
+   uint32_t total=v->total_seconds;
+   if(v->seconds<6000 && total<6000)
+    snprintf(line,sizeof(line),"%02lu:%02lu/%02lu:%02lu",(unsigned long)(v->seconds/60),(unsigned long)(v->seconds%60),(unsigned long)(total/60),(unsigned long)(total%60));
+   else /* Keep long recordings within the 13-character left field. */
+    snprintf(line,sizeof(line),"%luh%02lu/%luh%02lu",(unsigned long)(v->seconds/3600),(unsigned long)(v->seconds/60%60),(unsigned long)(total/3600),(unsigned long)(total/60%60));
+  }else snprintf(line,sizeof(line),"%u %%",progress>100 ? 100:progress);
+  char left[14];snprintf(left,sizeof(left),"%.13s",line);
+  row_text(7,left);oled_text_xy(80,56,buffer,1,true);
  }
-else {reserve=v->tx.fifo_capacity ? v->tx.fifo_used*100U/v->tx.fifo_capacity:0;
- snprintf(line,sizeof(line),"TX SW FIFO %u%%",reserve);
- }
- oled_text_xy(0,49,line,0,true);
- oled_bar(0,57,128,6,reserve);
- if(alarm!=UI_BUFFER_OK){const char *label=alarm==UI_BUFFER_BAD ? "BAD":alarm==UI_BUFFER_CRITICAL ? "CRIT":"LOW";
- oled_rect(108,48,20,7,true,false);
- oled_text_xy(108,49,label,0,true);
- }
- if(v->warning && v->warning[0]){oled_rect(0,33,128,7,true,false);
- oled_text_xy(0,34,v->warning,0,true);
- }
+
 }
 void ui_view_draw(const ui_model_t *model,uint32_t now){
  if(mode==BROWSER){
-  oled_text_xy(0,0,model->line[0],1,true);
-  oled_rect(0,8,128,1,true,true);
-  for(unsigned i=0;i<6;++i){int y=9+(int)i*8;
-  bool active=(int)i==selected;
+  context_header(0,model->line[0],total ? item+1:0,total,true,browser_has_info);
+  for(unsigned i=0;i<FILE_LIST_VIEW_ROWS;++i){int y=8+(int)i*8;
+   bool active=(int)i==selected;
    if(active)oled_rect(0,y,125,8,true,true);
    const char *name=rows[i] ? rows[i]:"";
    size_t offset=active ? ui_marquee_offset(&marquee,name,19,now,item^0x100000U):0;
    if(directories&(1U<<i))oled_rect(1,y+2,5,4,false,!active);
-   char visible[20];
-   snprintf(visible,sizeof(visible),"%.19s",name+offset);
+   char visible[20];snprintf(visible,sizeof(visible),"%.19s",name+offset);
    oled_text_xy(7,y,visible,1,!active);
   }
-  char status[32];
-  snprintf(status,sizeof(status),"%u/%u%s",total ? item+1:0,total,external ? " EXTERNAL":"");
-  oled_text_xy(0,58,status,0,true);
-  if(total>6){int top=10+(int)((uint64_t)item*43/(total-1));
-  oled_rect(126,9,2,47,false,true);
-  oled_rect(126,top,2,4,true,true);
+  if(total>FILE_LIST_VIEW_ROWS){
+   int top=9+(int)((uint64_t)item*50/(total-1));
+   oled_rect(126,8,2,56,false,true);oled_rect(126,top,2,4,true,true);
   }
  }
 else if(mode==PLAY || mode==RECORD)draw_transport(now);
+ else if(mode==ANALYSIS){
+  for(unsigned row=0;row<8;++row)oled_text_xy(0,(int)row*8,model->line[row],1,true);
+  static const int8_t point[8][2]={{0,-3},{2,-2},{3,0},{2,2},{0,3},{-2,2},{-3,0},{-2,-2}};
+  for(unsigned i=0;i<8;++i)oled_pixel(112+point[i][0],4+point[i][1],true);
+  oled_rect(111+point[analysis_phase][0],3+point[analysis_phase][1],3,3,true,true);
+ }
  else for(unsigned row=0;row<8;++row)oled_text_xy(0,(int)row*8,model->line[row],1,true);
  const char *message=ui_overlay_current(now);
  if(message){
@@ -200,6 +239,6 @@ else if(mode==PLAY || mode==RECORD)draw_transport(now);
   memcpy(first,message,a);
   first[a]=0;
   oled_text_xy(1,46,first,1,true);
-  if(n>21)oled_text_xy(1,55,message+21,0,true);
+  if(n>21)oled_text_xy(1,54,message+21,1,true);
  }
 }

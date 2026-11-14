@@ -1,0 +1,7 @@
+{
+  "revision": "r25 CURRENT TOTAL",
+  "bytes": 462896,
+  "sha256": "4a8909b8f295aeffe6e3e6eeb52169bf96c2868ba202455d5d38083088a7540b",
+  "test": "test_oled_ui ASan/UBSan PASS; PlatformIO build PASS",
+  "hardware_verified": false
+}

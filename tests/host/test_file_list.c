@@ -20,10 +20,17 @@ return cancelled;
 static void touch(const char *path) { FILE *f=fopen(path,"wb");
 assert(f && !fclose(f));
 }
+static void check_centered(void) {
+ int count=file_list_count(),index=file_list_get_selected_index(),top=file_list_get_scroll_top();
+ if(count<=7 || index<3)assert(top==0);
+ else if(index>=count-3)assert(top==count-7);
+ else assert(file_list_is_visible_selected(3));
+ assert(file_list_is_visible_selected(index-top));
+}
 static void select_name(const char *name) {
  unsigned budget=(unsigned)file_list_count()+1;
  while(strcmp(file_list_get_name(),name)) {assert(budget--);
- assert(file_list_next());
+ assert(file_list_next());check_centered();
  }
 }
 int main(void) {
@@ -42,14 +49,17 @@ int main(void) {
  assert(!strcmp(file_list_get_name(),"adir") && file_list_get_type()==FILE_ITEM_DIR && !file_list_get_path());
  assert(file_list_next() && !strcmp(file_list_get_name(),"Zdir"));
  assert(file_list_next() && !strcmp(file_list_get_name(),"file0000.MzQ"));
- for(unsigned i=1;i<1000;++i){assert(file_list_next());
+ for(unsigned i=1;i<1000;++i){assert(file_list_next());check_centered();
  char name[32];
  snprintf(name,sizeof(name),"file%04u.MzQ",i);
  assert(!strcmp(file_list_get_name(),name));
  }
+ for(int i=0;i<file_list_count();++i){assert(file_list_prev());check_centered();}
  select_name("sample.TAP");
  int top=file_list_get_scroll_top();
+ uint32_t revision=file_list_revision();
  assert(file_list_reload_current_dir() && !strcmp(file_list_get_name(),"sample.TAP") && file_list_get_scroll_top()==top);
+ assert(file_list_revision()!=revision);
  assert(!file_list_go_parent());
  select_name("adir");
  assert(file_list_enter_selected());
@@ -110,13 +120,15 @@ int main(void) {
  assert(!delete_dir("browser"));
  assert(!make_dir("small"));
  assert(file_list_init("small") && !file_list_count());
- for(unsigned n=1;n<=8;++n){snprintf(path,sizeof(path),"small/%u.tap",n);
+ for(unsigned n=1;n<=15;++n){snprintf(path,sizeof(path),"small/%u.tap",n);
  touch(path);
  assert(file_list_reload_current_dir() && file_list_count()==(int)n);
   assert(file_list_prev() && file_list_get_selected_index()==(int)n-1);
   assert(file_list_next() && file_list_get_selected_index()==0);
+  for(unsigned i=0;i<n;++i){check_centered();assert(file_list_next());}
+  for(unsigned i=0;i<n;++i){assert(file_list_prev());check_centered();}
  }
- for(unsigned n=1;n<=8;++n){snprintf(path,sizeof(path),"small/%u.tap",n);
+ for(unsigned n=1;n<=15;++n){snprintf(path,sizeof(path),"small/%u.tap",n);
  assert(!remove(path));
  }
 assert(!delete_dir("small"));
@@ -130,6 +142,7 @@ assert(!delete_dir("small"));
  assert(!remove(path));
  }
  assert(!delete_dir("large"));
+ puts("PASS seven-row centered browser in both directions, clamped start/end, short lists and wrap");
  puts("PASS browser 10000 files, cancelled/failed child restores previous directory and selection with lifetime allocation count stable");
  puts("PASS browser 1000+ files, case-insensitive stem/extension sort, hidden metadata, parent selection, retained scroll, path construction and cancel/retry");
  puts("PASS browser PSRAM index/name arena allocated exactly twice across repeated initialization and scans; no per-entry allocation");

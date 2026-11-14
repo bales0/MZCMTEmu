@@ -1,0 +1,8 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_ui_policy
+PASS path ../ compaction: component boundaries, long leaf suffix, narrow fields, empty input and capacity limits
+PASS RX immediate drop/recovery/actual critical thresholds; marquee starts on selection/context; PCNT epoch brackets, odd/even loss, overflow and pending-ISR ambiguity
+RUN test_oled_ui
+PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; long durations; FINISHED once with STOP; QD filename, unified RECORD layout with RX min and state/warning priority, overlays and eight animation phases
+PASS actual OLED/UI: SSD1306 page mode, bounded batched packets, 20Hz dirty refresh, clipped text, no unchanged writes, missing-device timeout and command/data failure retry
+

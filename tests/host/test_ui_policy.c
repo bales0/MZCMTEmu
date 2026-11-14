@@ -1,8 +1,20 @@
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "ui/policy.h"
 #include "audio/edge_guard.h"
 int main(void){
+ char path[32];
+ ui_compact_path(path,sizeof(path),"/MZF",20);assert(!strcmp(path,"/MZF"));
+ ui_compact_path(path,sizeof(path),"/sd/games/action/SHARP",15);assert(!strcmp(path,"../action/SHARP"));
+ ui_compact_path(path,sizeof(path),"/sd/games/action/SHARP",12);assert(!strcmp(path,"../SHARP"));
+ ui_compact_path(path,sizeof(path),"/sd/0123456789ABCDEF",12);assert(!strcmp(path,"../789ABCDEF"));
+ ui_compact_path(path,5,"/sd/games/SHARP",20);assert(!strcmp(path,"../P"));
+ ui_compact_path(path,sizeof(path),"/sd",2);assert(!strcmp(path,".."));
+ ui_compact_path(path,sizeof(path),"/sd",0);assert(!path[0]);
+ ui_compact_path(path,sizeof(path),NULL,12);assert(!path[0]);
+ strcpy(path,"unchanged");ui_compact_path(path,0,"/sd/games",4);assert(!strcmp(path,"unchanged"));
+ puts("PASS path ../ compaction: component boundaries, long leaf suffix, narrow fields, empty input and capacity limits");
  ui_headroom_t h={0};
  assert(ui_headroom_update(&h,100,0)==100);
  assert(ui_headroom_update(&h,20,1)==20);

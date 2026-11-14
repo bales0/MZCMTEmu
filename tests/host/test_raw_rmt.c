@@ -447,11 +447,15 @@ static void large_ul800_fixture(void) {
  for(uint32_t i=0;i<44033;++i)assert(fputc(ul_expected_byte(i),f)!=EOF);
  assert(!fclose(f));
 }
+static uint64_t played_records,record_ticks;
 static void drain_player(void) {
+ played_records=record_ticks=0;
  unsigned budget=250000;
  bool paused_once=false,paused_data_once=false;
  while(player_get_state()==PLAYER_STATE_PLAYING) {
   assert(budget--);
+  unsigned record=player_sharp_details()->record;
+  if(record<64 && !(played_records&(1ULL<<record))){played_records|=1ULL<<record;record_ticks+=player_sharp_details()->total_ticks;}
   if(!paused_once) {
    unsigned held=remaining;
    uint8_t level=pin;
@@ -476,24 +480,139 @@ static void drain_player(void) {
    }
   } /* Whole-byte return. */
  }
- assert(player_get_state()==PLAYER_STATE_EOF && !tx.running && !pin && !routed && player_get_progress_percent()==100);
+ if(player_sharp_details()->format==FILE_FORMAT_MZQ)assert(player_get_state()==PLAYER_STATE_READY);
+ else assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100);
+ assert(!tx.running && !pin && !routed);
+}
+static unsigned qd_scan_calls;
+static bool qd_count_scan(void *unused){(void)unused;++qd_scan_calls;return false;}
+static void qd_rmt_sequence(void){
+ FILE *f=fopen("rmt.qd","wb");assert(f);
+ const uint8_t count[]={0,0x16,0x16,0xa5,6,'C','R','C'},fh[]={0,0x16,0x16,0xa5,0,64,0},fd[]={0,0x16,0x16,0xa5,1,0,1};
+ uint8_t data[256];for(unsigned i=0;i<sizeof(data);++i)data[i]=(uint8_t)i;
+ assert(fwrite(count,1,sizeof(count),f)==sizeof(count));
+ for(unsigned i=0;i<3;++i){uint8_t h[64]={1};h[1]=(uint8_t)('A'+i);h[21]=1;h[23]=h[25]=0x12;
+  assert(fwrite(fh,1,sizeof(fh),f)==sizeof(fh) && fwrite(h,1,64,f)==64 && fwrite("CRC",1,3,f)==3);
+  assert(fwrite(fd,1,sizeof(fd),f)==sizeof(fd) && fwrite(data,1,sizeof(data),f)==sizeof(data) && fwrite("CRC",1,3,f)==3);
+ }
+ assert(!fclose(f));
+ const loader_mode_t modes[][3]={{LOADER_MODE_NORMAL_1_1,LOADER_MODE_IC_1_4,LOADER_MODE_TC_1_3},
+  {LOADER_MODE_UL,LOADER_MODE_UL_MZ800,LOADER_MODE_UL_MZ700}};
+ for(unsigned pass=0;pass<2;++pass){
+  player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));bus_owned=false;sense=1;
+  for(unsigned i=0;i<3;++i){assert(player_prepare_record("rmt.qd",i+1));assert(player_set_record_mode(modes[pass][i]));}
+  assert(player_prepare_record("rmt.qd",1));
+  qd_scan_calls=0;sharp_stream_set_analysis_control(qd_count_scan,NULL);
+  player_start(player_get_current_path());unsigned scans=qd_scan_calls;
+  if(pass){unsigned budget=100000;
+   while(!mzf_stream_get_ultrafast_sent_bytes()){
+    assert(budget-- && player_get_state()==PLAYER_STATE_PLAYING);
+    if(tx.running && RMT.clock)advance(remaining);else wall_ticks+=1000ULL*16;
+    player_service();
+   }
+   assert(player_is_ultrafast_active());
+  }else player_pause_user();
+  assert(player_stop_to_selector() && player_get_state()==PLAYER_STATE_READY);
+  assert(!routed && !pin && !tx.running && sense==1 && !player_is_ultrafast_active() && qd_scan_calls==scans);
+  assert(player_sharp_details()->record==1);
+  player_start(player_get_current_path());assert(qd_scan_calls==scans);
+  uint64_t before=active_ticks;drain_player();
+  assert(qd_scan_calls==scans);sharp_stream_set_analysis_control(NULL,NULL);
+  assert(played_records==14 && active_ticks-before==record_ticks);
+  assert(player_sharp_details()->record==3 && !strcmp(player_sharp_details()->title,"C") && player_get_state()==PLAYER_STATE_READY);
+ }
+ player_stop();assert(!remove("rmt.qd"));
+ puts("PASS actual RMT QD continuation: three native/turbo and three UL records, exact waveform duration, pause preserved, final selector without wrap");
+}
+static void fast_mzf_rmt_progress(void){
+ const char *path="fast-rmt.mzf";FILE *f=fopen(path,"wb");assert(f);
+ uint8_t h[128]={1};h[19]=4;h[21]=h[23]=0x12;
+ assert(fwrite(h,1,128,f)==128);for(unsigned i=0;i<1280;++i)assert(fputc((uint8_t)i,f)!=EOF);assert(!fclose(f));
+ player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));
+ qd_scan_calls=0;sharp_stream_set_analysis_control(qd_count_scan,NULL);
+ player_start(path);unsigned first=transmits;assert(!qd_scan_calls && mzf_stream_transfer_bytes()==1280 && !player_get_progress_percent());
+ unsigned budget=100000;bool payload=false,extra=false,paused=false;
+ while(player_get_state()==PLAYER_STATE_PLAYING){
+  assert(budget--);
+  unsigned stage=transmits-first;uint32_t bytes=raw_pulse_completed_source_bytes();
+  assert(stage<=2);
+  uint32_t done=stage==0 ? 0:stage==1 ? bytes:1024+bytes;
+  unsigned percent=done*100/1280;if(percent>=100)percent=99;
+  assert(player_get_progress_percent()==percent);
+  if(stage==1 && bytes>100 && !paused){
+   player_pause_user();uint8_t held=player_get_progress_percent();advance(5000000ULL*16);player_service();
+   assert(player_get_state()==PLAYER_STATE_PAUSED && player_get_progress_percent()==held && raw_pulse_completed_source_bytes()==bytes);
+   player_resume_user();paused=true;
+  }
+  if(stage==1 && bytes>100)payload=true;
+  if(stage==2 && bytes>100)extra=true;
+  if(tx.running && RMT.clock)advance(remaining);else wall_ticks+=10000ULL*16;
+  player_service();
+ }
+ assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100 && payload && extra && paused && !qd_scan_calls);
+ player_start(path);first=transmits;budget=100000;
+ while(transmits-first<2 || raw_pulse_completed_source_bytes()<20){
+  assert(budget-- && player_get_state()==PLAYER_STATE_PLAYING);
+  if(tx.running && RMT.clock)advance(remaining);else wall_ticks+=10000ULL*16;
+  player_service();
+ }
+ uint8_t held=player_get_progress_percent();player_stop();advance(1000000ULL*16);player_service();
+ assert(player_get_progress_percent()==held && !qd_scan_calls && !tx.running && !pin);
+ sharp_stream_set_analysis_control(NULL,NULL);assert(!remove(path));
+ f=fopen("empty.mzf","wb");h[19]=0;assert(f && fwrite(h,1,128,f)==128 && !fclose(f));
+ player_start("empty.mzf");assert(!mzf_stream_transfer_bytes() && !player_get_progress_percent());drain_player();
+ assert(player_get_progress_percent()==100);player_stop();assert(!remove("empty.mzf"));
+ puts("PASS actual RMT fast MZF: no analysis, completed payload/append bytes across RMT resets, pause/STOP freeze, EOF100 and zero-length file");
+}
+/* A sparse WAV prefill must outlast RMT's initial 128-symbol lookahead. */
+static void wav_sparse_prefill(void) {
+ const unsigned rates[]={44100,48000,96000};
+ uint8_t block[256];
+ for(unsigned r=0;r<sizeof(rates)/sizeof(rates[0]);++r)for(unsigned signal=0;signal<2;++signal){
+  unsigned rate=rates[r],length=rate*3+137,written=0;
+  assert(wav_writer_open("sparse.wav",rate,8,1));
+  while(written<length){unsigned n=length-written;if(n>sizeof(block))n=sizeof(block);
+   for(unsigned i=0;i<n;++i){unsigned sample=written+i;block[i]=signal && sample>=rate*2 ? ((sample/11)%2 ? 235:20):128;}
+   assert(wav_writer_write(block,n)==n);written+=n;
+  }
+  assert(wav_writer_finalize());
+  uint64_t before=active_ticks;
+  player_start("sparse.wav");
+  assert(player_get_state()==PLAYER_STATE_PLAYING);
+  /* This file is longer than the bounded prefill: encoding must remain open. */
+  assert(!source_done);
+  unsigned budget=1000;
+  while(player_get_state()==PLAYER_STATE_PLAYING){
+   assert(budget--);advance(10000ULL*16);player_service();
+  }
+  assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100);
+  assert(!raw_pulse_is_underrun() && active_ticks-before==((uint64_t)length*16000000+rate/2)/rate);
+  assert(!remove("sparse.wav"));
+ }
+ puts("PASS sparse WAV 44.1/48/96kHz: silence and two-second silent intro, open RMT prefill, 10ms service, exact physical duration and EOF100");
 }
 int main(void) {
  setvbuf(stdout,NULL,_IONBF,0);
  player_init();
+ qd_rmt_sequence();
+ fast_mzf_rmt_progress();
  fixture("dma.mzf");
  for(unsigned mode=0;mode<LOADER_MODE_COUNT;++mode) {
   assert(player_set_loader_mode((loader_mode_t)mode));
   bus_owned=false;
   sense=1;
   uint64_t before=active_ticks;
+  sharp_stream_info_t reference;assert(sharp_stream_open("dma.mzf",1,(loader_mode_t)mode,&reference));
+  uint64_t expected=reference.total_ticks;sharp_stream_close();
+  qd_scan_calls=0;sharp_stream_set_analysis_control(qd_count_scan,NULL);
   player_start("dma.mzf");
-  assert(player_get_state()==PLAYER_STATE_PLAYING);
-  uint64_t expected=player_sharp_details()->total_ticks;
+  assert(!qd_scan_calls);
+  assert(player_get_state()==PLAYER_STATE_PLAYING && player_sharp_details()->duration_deferred && !player_sharp_details()->total_ticks);
   drain_player();
-  assert(active_ticks-before==expected);
+  assert(active_ticks-before==expected && !qd_scan_calls);sharp_stream_set_analysis_control(NULL,NULL);
   if(mode>=2 && mode<=4)assert(sense==1 && !monitor);
  }
+ puts("PASS MZF all 17 modes: zero preflight analysis callbacks, exact output durations unchanged against measured codec");
  assert(!remove("dma.mzf"));
  large_ul800_fixture();
  for(unsigned mode=LOADER_MODE_UL;mode<=LOADER_MODE_UL_MZ700;++mode){
@@ -528,6 +647,7 @@ int main(void) {
   assert(active_ticks-before==info.total_ticks);
  }
  assert(!remove("dma.tap"));
+ wav_sparse_prefill();
  uint8_t samples[6001];
  for(unsigned i=0;i<sizeof(samples);++i)samples[i]=(i/11)%2 ? 235:20;
  assert(wav_writer_open("dma.wav",44100,8,1) && wav_writer_write(samples,sizeof(samples))==sizeof(samples) && wav_writer_finalize());
@@ -540,9 +660,17 @@ int main(void) {
  f=fopen("dma.l16","wb");
  assert(f && fwrite(edge_data,1,sizeof(edge_data),f)==sizeof(edge_data) && !fclose(f));
  player_start("dma.l16");
+ assert(player_get_total_seconds()==0);
  drain_player();
  assert(!remove("dma.l16"));
- puts("PASS actual player/RMT DMA integration for all 17 Sharp modes including simulated UL peer, all four TAP speeds, WAV and L16; exact active duration, user-pause precedence and safe GPIO handoff");
+ f=fopen("dma.lep","wb");
+ assert(f && fwrite(edge_data,1,sizeof(edge_data),f)==sizeof(edge_data) && !fclose(f));
+ player_start("dma.lep");
+ assert(player_get_state()==PLAYER_STATE_PLAYING && player_get_total_seconds()==0);
+ drain_player();
+ assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100);
+ assert(!remove("dma.lep"));
+ puts("PASS actual player/RMT DMA integration for all 17 Sharp modes including simulated UL peer, all four TAP speeds, WAV, L16 and LEP with unknown duration/EOF100; exact active duration, user-pause precedence and safe GPIO handoff");
  return 0;
 }
 #endif

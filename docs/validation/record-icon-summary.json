@@ -1,0 +1,8 @@
+{
+  "revision": "r27 REC ICON",
+  "bytes": 462896,
+  "sha256": "ade69ad5665a57ccfd670aac3b6e060e817bcd644b978e48eee00ad14c8dbf4d",
+  "tests": "test_oled_ui ASan/UBSan PASS",
+  "build": "PASS",
+  "hardware_verified": false
+}

@@ -1,0 +1,23 @@
+{
+  "revision": "r22",
+  "date": "2026-11-14",
+  "base_head": "b76a9e017092e187a9b351a7d60ef4ee4de5d11b",
+  "image": ".pio/build/MZCMTEmu/firmware.bin",
+  "image_bytes": 462288,
+  "sha256": "4e7ebcf83bdbef466d9cb66a6ea3aaeec6af7d51695ad30fdb9ea8aed42ccf88",
+  "ram_bytes": 156300,
+  "application_bytes": 461863,
+  "host_suites": [
+    "test_oled_ui",
+    "test_player_sharp",
+    "test_player_rmt",
+    "test_sharp_stream",
+    "test_player_tap"
+  ],
+  "tests": "PASS GCC14.2 ASan/UBSan; focused RMT and footer checks PASS",
+  "mzf_modes_without_analysis": 17,
+  "target_build": "PASS",
+  "visual_review": "PASS",
+  "flashed": false,
+  "hw_verified": false
+}

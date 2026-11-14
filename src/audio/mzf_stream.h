@@ -37,8 +37,12 @@ void mzf_stream_pause_ul(bool pause);
 }
 #endif
 
-bool mzf_stream_continue_mzt(const char *path,loader_mode_t mode,mzf_stream_info_t *info);
+bool mzf_stream_continue_record(const char *path,loader_mode_t mode,mzf_stream_info_t *info);
 
 bool mzf_stream_next_ticks16(uint8_t *level,uint32_t *ticks);
 
 const char *mzf_stream_error(void);
+
+/* Logical source data, independent of header/loader and queued future pulses. */
+bool mzf_stream_last_pulse_source_byte(void);
+uint32_t mzf_stream_transfer_bytes(void);

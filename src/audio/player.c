@@ -28,6 +28,10 @@
 
 #define PULSE_CHUNK 256U
 #define PULSE_PREFILL_PULSES (PULSE_CHUNK * 12U)
+/* RMT primes 128 symbols (up to 256 source intervals). Sparse WAV must
+ * leave data for its next refill instead of terminating at initial encode. */
+#define WAV_PREFILL_MIN_PULSES 256U
+#define WAV_PREFILL_US 300000ULL
 #define PLAYER_TASK_STACK_WORDS 8192U
 #define PLAYER_TASK_PRIORITY 5U
 #define PLAYER_TASK_CORE 0
@@ -101,12 +105,14 @@ static tap_speed_t s_tap_speed = TAP_SPEED_1400;
 static tap_stream_info_t s_tap_info;
 static uint64_t s_tap_ticks, s_tap_queued_us, s_tap_final_us;
 static uint64_t s_binary_elapsed_us, s_binary_final_us;
+static uint32_t s_binary_source_bytes,s_binary_final_bytes;
 /* 64 KiB UI metadata, allocated once in PSRAM at init, never used by ISR/DMA. */
 static uint8_t *s_record_modes;
 static char s_record_modes_path[1024];
 static bool s_binary_waiting, s_binary_motor_low_seen;
 static int64_t s_binary_wait_until, s_binary_pause_remaining;
 static uint64_t player_binary_elapsed_us(void);
+static uint32_t player_binary_completed_bytes(void);
 static bool s_ultrafast_enabled = false;
 static int s_playing = 0;
 static int s_eof = 0;
@@ -287,11 +293,22 @@ static void player_finish_stop(player_state_t final_state)
     if(final_state==PLAYER_STATE_ERROR && !__atomic_load_n(&last_error,__ATOMIC_ACQUIRE))player_error("SOURCE / TX ERROR");
     if (s_tap_tape) s_tap_final_us = raw_pulse_get_completed_us();
     if (player_is_wav()) s_wav_final_us=raw_pulse_get_completed_us();
-    if (s_binary_tape) s_binary_final_us = player_binary_elapsed_us();
+    if (s_binary_tape) {s_binary_final_us=player_binary_elapsed_us();s_binary_final_bytes=player_binary_completed_bytes();}
     raw_pulse_stop();
 
     wav_reader_close();
-    mzf_stream_close();
+    /* QD completion or the transport STOP returns to its selector while
+     * retaining the source/index. Leaving the image/error/removal closes it. */
+    if((final_state==PLAYER_STATE_EOF || final_state==PLAYER_STATE_READY) &&
+       s_binary_tape && mzf_stream_details()->format==FILE_FORMAT_MZQ){
+        uint16_t record=mzf_stream_details()->record;
+        loader_mode_t mode=mzf_stream_details()->requested;
+        if(mzf_stream_select_mode(s_current_path,record,mode)){
+            gpio_set_level(GPIO_NUM_7,1); /* Release the cassette button in READY. */
+            program_metadata_publish(&metadata_store,&mzf_stream_details()->metadata);
+            final_state=PLAYER_STATE_READY;
+        } else {mzf_stream_close();player_error("QD SELECT");final_state=PLAYER_STATE_ERROR;}
+    } else mzf_stream_close();
     edge_stream_close();
     tap_stream_close();
 
@@ -373,7 +390,8 @@ static bool player_fill_pulse_pending(void)
         pulse_buf[count].count_pulse = count_pulse ? RAW_PULSE_COUNT : 0U;
         if((s_edge_tape && edge_stream_monitor_muted()) || (!count_pulse && s_tap_tape && duration_us >= (native ? 1600000U:100000U)))
             pulse_buf[count].count_pulse |= RAW_PULSE_MONITOR_MUTE;
-        if(s_edge_tape && !edge_stream_monitor_muted())pulse_buf[count].count_pulse|=RAW_PULSE_SOURCE_BYTE;
+        if((s_edge_tape && !edge_stream_monitor_muted()) ||
+           (s_binary_tape && mzf_stream_last_pulse_source_byte()))pulse_buf[count].count_pulse|=RAW_PULSE_SOURCE_BYTE;
         pulse_buf[count].duration_us = duration_us == 0U ? 1U : duration_us;
         count++;
     }
@@ -440,6 +458,7 @@ void player_init(void)
     memset(&s_tap_info, 0, sizeof(s_tap_info));
     s_tap_ticks = s_tap_queued_us = s_tap_final_us = 0;
     s_binary_elapsed_us = s_binary_final_us = 0;
+    s_binary_source_bytes=s_binary_final_bytes=0;
     s_binary_waiting = s_binary_motor_low_seen = false;
     memset(&s_info, 0, sizeof(s_info));
     memset(&s_mzf_info, 0, sizeof(s_mzf_info));
@@ -489,6 +508,7 @@ void player_start(const char *path)
     memset(&s_tap_info, 0, sizeof(s_tap_info));
     s_tap_ticks = s_tap_queued_us = s_tap_final_us = 0;
     s_binary_elapsed_us = s_binary_final_us = 0;
+    s_binary_source_bytes=s_binary_final_bytes=0;
     s_binary_waiting = s_binary_motor_low_seen = false;
     memset(&s_info, 0, sizeof(s_info));
     memset(&s_mzf_info, 0, sizeof(s_mzf_info));
@@ -570,7 +590,8 @@ void player_start(const char *path)
 
     /* Prefill bounded source work before starting the physical output. */
     while (raw_pulse_level()<PULSE_PREFILL_PULSES && !s_read_error &&
-           (!player_is_wav() || wav_pulse_stream_queued_us()<300000)) {
+           (!player_is_wav() || raw_pulse_level()<WAV_PREFILL_MIN_PULSES ||
+            wav_pulse_stream_queued_us()<WAV_PREFILL_US)) {
         if(!player_feed_one_pulse_chunk()) break;
     }
 
@@ -613,6 +634,20 @@ void player_stop_for(player_stop_cause_t cause)
     printf("player: STOP cause=%s from=%s path=%s\n",player_stop_cause_name(),player_state_name(s_state),s_current_path);
     player_finish_stop(PLAYER_STATE_STOPPED);
     player_unlock();
+}
+/* Called by the first STOP while a QD transport is open. A second STOP in
+ * READY uses player_stop_for(), leaving the image and invalidating its index. */
+bool player_stop_to_selector(void) {
+    player_lock();
+    bool handled=s_binary_tape && mzf_stream_details()->format==FILE_FORMAT_MZQ &&
+        (s_state==PLAYER_STATE_PLAYING || s_state==PLAYER_STATE_PAUSED ||
+         s_state==PLAYER_STATE_EOF || s_state==PLAYER_STATE_READY);
+    if(handled){
+        __atomic_store_n(&last_stop_cause,PLAYER_STOP_BUTTON,__ATOMIC_RELEASE);
+        if(s_state!=PLAYER_STATE_READY)player_finish_stop(PLAYER_STATE_READY);
+    }
+    player_unlock();
+    return handled;
 }
 void player_stop(void){player_stop_for(PLAYER_STOP_API);}
 
@@ -743,20 +778,21 @@ bool player_is_ultrafast_active(void)
     return mzf_stream_is_ultrafast_active();
 }
 
-/* Normal/turbo MZT continues record-by-record. An UL record only continues
- * into a non-UL profile, matching the reference loader's return contract. */
-static int player_continue_mzt(bool after_ul) {
+/* MZT follows the reference continuation contract; QD additionally plays
+ * through its validated record index, as requested by the user. */
+static int player_continue_record(bool after_ul) {
     const sharp_stream_info_t *current=mzf_stream_details();
-    if(current->format!=FILE_FORMAT_MZT || current->record>=current->records) return 0;
+    if(!file_format_is_record_container(current->format) || current->record>=current->records) return 0;
     uint16_t next=current->record+1;
     loader_mode_t mode=mzf_stream_get_loader_mode();
     if(s_record_modes && !strcmp(s_record_modes_path,s_current_path) && s_record_modes[next]!=255)
         mode=(loader_mode_t)s_record_modes[next];
     loader_mode_t resolved=sidecar_resolve(s_current_path,next,mode,NULL);
-    if(after_ul && (resolved==LOADER_MODE_UL || resolved==LOADER_MODE_UL_MZ800 || resolved==LOADER_MODE_UL_MZ700)) return 0;
-    if(!mzf_stream_continue_mzt(s_current_path,mode,&s_mzf_info)) return -1;
+    if(after_ul && current->format==FILE_FORMAT_MZT && (resolved==LOADER_MODE_UL || resolved==LOADER_MODE_UL_MZ800 || resolved==LOADER_MODE_UL_MZ700)) return 0;
+    if(!mzf_stream_continue_record(s_current_path,mode,&s_mzf_info)) return -1;
     program_metadata_publish(&metadata_store,&mzf_stream_details()->metadata);
     s_binary_elapsed_us=s_binary_final_us=0;
+    s_binary_source_bytes=s_binary_final_bytes=0;
     s_binary_waiting=false;
     s_binary_motor_low_seen=false;
     s_eof=s_read_error=0;
@@ -782,7 +818,7 @@ static void player_service_locked(void)
             player_error(why[0] ? why:"UL ERROR");
             player_finish_stop(PLAYER_STATE_ERROR);
         } else if (mzf_stream_is_eof()) {
-            int next=player_continue_mzt(true);
+            int next=player_continue_record(true);
             if(next<=0) player_finish_stop(next<0 ? PLAYER_STATE_ERROR:PLAYER_STATE_EOF);
         }
         return;
@@ -845,6 +881,7 @@ static void player_service_locked(void)
             !mzf_stream_is_ultrafast_ready() && raw_pulse_level() == 0U) {
             if (!s_binary_waiting) {
                 s_binary_elapsed_us += raw_pulse_get_completed_us();
+                s_binary_source_bytes += raw_pulse_completed_source_bytes();
                 raw_pulse_stop();
                 s_binary_wait_until = esp_timer_get_time() +
                     mzf_stream_boundary_delay_us(s_binary_motor_low_seen);
@@ -855,7 +892,7 @@ static void player_service_locked(void)
             return;
             }
             if (mzf_stream_is_eof()) {
-                int next=player_continue_mzt(false);
+                int next=player_continue_record(false);
                 if(next<=0) player_finish_stop(next<0 ? PLAYER_STATE_ERROR:PLAYER_STATE_EOF);
                 return;
             }
@@ -954,8 +991,12 @@ uint32_t player_get_pulses_per_second(void)
 
 uint32_t player_get_total_seconds(void)
 {
-    if(s_state==PLAYER_STATE_READY)return (uint32_t)(mzf_stream_details()->total_ticks/16000000ULL);
-    if (s_binary_tape) return (uint32_t)(mzf_stream_details()->total_ticks / 16000000ULL);
+    if(s_state==PLAYER_STATE_READY || s_binary_tape) {
+        const sharp_stream_info_t *details=mzf_stream_details();
+        /* UL timing covers only the loader; deferred timing is not a duration. */
+        if(details->ultrafast || details->duration_deferred)return 0;
+        return (uint32_t)(details->total_ticks/16000000ULL);
+    }
     if (s_tap_tape) return (uint32_t)(s_tap_info.total_ticks / 16000000ULL);
     if (s_binary_tape) {
         return s_mzf_info.total_seconds;
@@ -976,6 +1017,12 @@ static uint64_t player_binary_elapsed_us(void)
 {
     if (s_state != PLAYER_STATE_PLAYING && s_state != PLAYER_STATE_PAUSED) return s_binary_final_us;
     return s_binary_elapsed_us + (s_binary_waiting ? 0 : raw_pulse_get_completed_us());
+}
+
+static uint32_t player_binary_completed_bytes(void)
+{
+    if(s_state!=PLAYER_STATE_PLAYING && s_state!=PLAYER_STATE_PAUSED)return s_binary_final_bytes;
+    return s_binary_source_bytes+(s_binary_waiting ? 0:raw_pulse_completed_source_bytes());
 }
 
 static uint64_t player_tap_elapsed_us(void)
@@ -1048,6 +1095,15 @@ uint8_t player_get_progress_percent(void)
         if (!total_us) return 0U;
         uint64_t percent = player_tap_elapsed_us() * 100U / total_us;
         return percent >= 100U ? 99U : (uint8_t)percent;
+    }
+    if(s_binary_tape && !mzf_stream_details()->ultrafast && mzf_stream_details()->duration_deferred){
+        player_lock();
+        bool eof=s_state==PLAYER_STATE_EOF;
+        uint32_t total=mzf_stream_transfer_bytes(),done=player_binary_completed_bytes();
+        player_unlock();
+        if(eof)return 100;
+        uint64_t percent=total ? (uint64_t)done*100/total:0;
+        return percent>=100 ? 99:(uint8_t)percent;
     }
     if (s_binary_tape && !mzf_stream_details()->ultrafast) {
         if (s_state == PLAYER_STATE_EOF) return 100U;

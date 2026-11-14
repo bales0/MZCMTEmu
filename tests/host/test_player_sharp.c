@@ -171,16 +171,20 @@ static void fixture(const char *name,bool two) {
     }
     assert(!fclose(f));
 }
+static uint64_t drained_records;
 static void drain(void) {
+    drained_records=0;
     unsigned budget=600000;
     uint16_t previous_record=0;
     uint8_t previous=0;
     bool ul_pause_checked=false;
     while(player_get_state()==PLAYER_STATE_PLAYING) {
         assert(budget--);
+        if(player_sharp_details()->record<64)drained_records|=1ULL<<player_sharp_details()->record;
         /* Exercise the same automatic policy through every native region.
          * Also simulate a stale policy attempting both levels during UL. */
         bool ul=player_is_ultrafast_active();
+        if(ul)assert(player_get_total_seconds()==0);
         uint8_t before=sense;
         cmt_bus_outputs_t out=cmt_bus_outputs(false,ul,false,player_get_state(),RECORDER_STATE_IDLE,false);
         assert(player_set_sense_level(out.sense_high)==!ul);
@@ -213,7 +217,9 @@ static void drain(void) {
         }
         player_service();
     }
-    assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100 && !pin && !timer.running);
+    if(player_sharp_details()->format==FILE_FORMAT_MZQ)assert(player_get_state()==PLAYER_STATE_READY);
+    else assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100);
+    assert(!pin && !timer.running);
 }
 static void all_modes(void) {
     fixture("all.mzf",false);
@@ -223,12 +229,15 @@ static void all_modes(void) {
         assert(player_set_loader_mode((loader_mode_t)mode));
         bus_owned=false;
         sense=1;
+        sharp_stream_info_t reference;
+        assert(sharp_stream_open("all.mzf",1,(loader_mode_t)mode,&reference));
+        uint64_t ticks=reference.total_ticks;sharp_stream_close();
         player_start("all.mzf");
         assert(player_get_state()==PLAYER_STATE_PLAYING);
         program_metadata_t metadata;
         player_metadata(&metadata);
         assert(metadata.declared_size==4 && metadata.load==0x1200 && metadata.exec==0x1200 && (metadata.valid&PROGRAM_TRANSFER_MODE));
-        uint64_t ticks=player_sharp_details()->total_ticks;
+        assert(player_sharp_details()->total_ticks==0 && player_sharp_details()->duration_deferred);
         if(mode==LOADER_MODE_IC_1_4) {
             player_pause_motor();
             assert(player_get_state()==PLAYER_STATE_PAUSED);
@@ -336,12 +345,128 @@ static void qd_selector_session(void){
  assert(analysis_calls>after_second && !player_sharp_details()->duration_deferred); /* Full duration is deferred until PLAY, as in reference. */
  uint64_t duration=player_sharp_details()->total_ticks;
  unsigned after_play=analysis_calls;
- drain();assert(player_get_position_seconds()==duration/16000000ULL);
- assert(player_prepare_record("session.mzq",1));assert(analysis_calls>after_play); /* Closed session invalidates index. */
+ drain();assert(player_get_position_seconds()==0 && duration>0 && drained_records==(1ULL<<2));
+ assert(player_prepare_record("session.mzq",1));assert(analysis_calls==after_play); /* EOF selector retains index. */
+ player_start(player_get_current_path());after_play=analysis_calls;drain();
+ assert(drained_records==((1ULL<<1)|(1ULL<<2)) && analysis_calls==after_play);
+ player_stop();assert(player_prepare_record("session.mzq",1) && analysis_calls>after_play);
  player_stop();sharp_stream_set_analysis_control(NULL,NULL);assert(!remove("session.mzq"));
- puts("PASS QD selector retains validated directory/durations, first visits and revisits avoid analysis; exact duration deferred to PLAY; STOP invalidates cache; selected-path alias safe");
+ puts("PASS QD selector retains validated directory/durations, first visits and revisits avoid analysis; EOF/auto-continuation reuse the index; STOP invalidates cache; selected-path alias safe");
 }
 
+
+static void fast_mzf_start(void){
+ const char *path="fast.mzf";const unsigned payload_size=16384;
+ FILE *f=fopen(path,"wb");assert(f);uint8_t h[128]={1};h[19]=payload_size>>8;h[21]=h[23]=0x12;
+ assert(fwrite(h,1,128,f)==128);for(unsigned i=0;i<payload_size;++i)assert(fputc((uint8_t)i,f)!=EOF);assert(!fclose(f));
+ player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));analysis_calls=0;sharp_stream_set_analysis_control(count_analysis,NULL);
+ player_start(path);assert(player_get_state()==PLAYER_STATE_PLAYING && !analysis_calls && !player_get_progress_percent());
+ assert(player_sharp_details()->duration_deferred && !player_sharp_details()->total_ticks);
+ assert(player_get_total_seconds()==0);
+ assert(mzf_stream_transfer_bytes()==payload_size);
+ unsigned budget=500000;bool checked_pause=false,checked_data=false;
+ while(player_get_state()==PLAYER_STATE_PLAYING){
+  assert(budget--);
+  if(raw_pulse_is_running()){timer.now=timer.alarm;fake_now+=(int64_t)timer.alarm;
+   gptimer_alarm_event_data_t e={timer.now,timer.alarm};timer.cb.on_alarm(&timer,&e,NULL);
+  }else fake_now+=10000;
+  player_service();
+  if(!raw_pulse_is_running() || player_get_state()!=PLAYER_STATE_PLAYING)continue;
+  uint32_t done=raw_pulse_completed_source_bytes();uint8_t progress=player_get_progress_percent();
+  /* Header and future prefetched payload cannot advance the data bar. */
+  if(!done)assert(!progress);
+  if(done>100 && done<payload_size/2){
+   assert(progress==(uint64_t)done*100/payload_size);checked_data=true;
+   if(!checked_pause){player_pause_user();uint8_t held=player_get_progress_percent();uint32_t bytes=raw_pulse_completed_source_bytes();
+    fake_now+=5000000;player_service();assert(player_get_progress_percent()==held && raw_pulse_completed_source_bytes()==bytes);
+    player_resume_user();checked_pause=true;
+   }
+  }
+ }
+ assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100 && checked_data && checked_pause && !analysis_calls);
+ player_stop();sharp_stream_set_analysis_control(NULL,NULL);assert(!remove(path));
+ /* Truncated declared data is rejected before output despite fast start. */
+ f=fopen("fast-bad.mzf","wb");assert(f && fwrite(h,1,128,f)==128 && !fclose(f));
+ player_start("fast-bad.mzf");assert(player_get_state()==PLAYER_STATE_ERROR && !raw_pulse_is_running());
+ player_stop();assert(!remove("fast-bad.mzf"));
+ puts("PASS fast MZF: no preflight analysis, queued/header pulses excluded from data progress, exact completed bytes, pause freeze, EOF100 and truncated-file refusal");
+}
+
+static void qd_stop_reuse(void){
+ const char *path="stop.mzq";FILE *f=fopen(path,"wb");assert(f);
+ const uint8_t count[]={0,0x16,0x16,0xa5,6,'C','R','C'},fh[]={0,0x16,0x16,0xa5,0,64,0},fd[]={0,0x16,0x16,0xa5,1,0,1};
+ uint8_t data[256];for(unsigned i=0;i<sizeof(data);++i)data[i]=(uint8_t)i;
+ assert(fwrite(count,1,sizeof(count),f)==sizeof(count));
+ for(unsigned i=0;i<3;++i){uint8_t h[64]={1};h[1]=(uint8_t)('A'+i);h[21]=1;h[23]=h[25]=0x12;
+  assert(fwrite(fh,1,sizeof(fh),f)==sizeof(fh) && fwrite(h,1,64,f)==64 && fwrite("CRC",1,3,f)==3);
+  assert(fwrite(fd,1,sizeof(fd),f)==sizeof(fd) && fwrite(data,1,sizeof(data),f)==sizeof(data) && fwrite("CRC",1,3,f)==3);
+ }
+ assert(!fclose(f));
+ const loader_mode_t modes[]={LOADER_MODE_NORMAL_1_1,LOADER_MODE_NORMAL_1_1,LOADER_MODE_UL_MZ800,LOADER_MODE_UL_MZ700};
+ player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));analysis_calls=0;
+ sharp_stream_set_analysis_control(count_analysis,NULL);
+ for(unsigned pass=0;pass<4;++pass){
+  bus_owned=false;sense=1;
+  assert(player_prepare_record(path,2) && player_set_record_mode(modes[pass]));
+  player_start(player_get_current_path());unsigned after_start=analysis_calls;
+  if(pass>=2){unsigned budget=100000;
+   while(!mzf_stream_get_ultrafast_sent_bytes()){
+    assert(budget-- && player_get_state()==PLAYER_STATE_PLAYING);
+    if(raw_pulse_is_running()){timer.now=timer.alarm;fake_now+=(int64_t)timer.alarm;
+     gptimer_alarm_event_data_t e={timer.now,timer.alarm};timer.cb.on_alarm(&timer,&e,NULL);
+    }else fake_now+=10000;
+    player_service();
+   }
+  }
+  if(pass>=2)assert(player_is_ultrafast_active());
+  if(pass==1 || pass==3)player_pause_user();
+  assert(player_stop_to_selector());
+  assert(player_get_state()==PLAYER_STATE_READY && !raw_pulse_is_running() && !player_is_ultrafast_active());
+  assert(!pin && sense==1 && analysis_calls==after_start && player_sharp_details()->record==2);
+  assert(player_sharp_details()->source_reused && player_sharp_details()->effective==modes[pass]);
+  assert(!strcmp(player_stop_cause_name(),"BUTTON_STOP"));
+  assert(player_stop_to_selector() && analysis_calls==after_start); /* EOF/STOP race already reached READY. */
+  assert(player_prepare_record(path,1) && player_prepare_record(path,2) && analysis_calls==after_start);
+  player_start(player_get_current_path());assert(analysis_calls==after_start);
+  assert(player_stop_to_selector() && analysis_calls==after_start);
+  /* Leaving the selector/media removal must still discard the source. */
+  player_stop_for(pass&1 ? PLAYER_STOP_SD_REMOVED:PLAYER_STOP_BUTTON);
+  assert(!player_stop_to_selector());
+  assert(player_prepare_record(path,2) && analysis_calls>after_start && !player_sharp_details()->source_reused);
+ }
+ player_stop();sharp_stream_set_analysis_control(NULL,NULL);assert(!remove(path));
+ puts("PASS QD PLAY/STOP/replay and paused/active UL STOP retain index/profile without analysis; READ/SENSE released; selector exit and media removal invalidate");
+}
+
+static void qd_auto_sequence(void){
+ FILE *f=fopen("auto.mzq","wb");assert(f);
+ const uint8_t count[]={0,0x16,0x16,0xa5,6,'C','R','C'};
+ const uint8_t frame_h[]={0,0x16,0x16,0xa5,0,64,0},frame_d[]={0,0x16,0x16,0xa5,1,4,0};
+ const char *titles[]={"FIRST","SECOND","THIRD"};const uint8_t data[]={0,128,1,255};
+ assert(fwrite(count,1,sizeof(count),f)==sizeof(count));
+ for(unsigned i=0;i<3;++i){uint8_t h[64]={1};memcpy(h+1,titles[i],strlen(titles[i]));h[20]=4;h[23]=h[25]=0x12;
+  assert(fwrite(frame_h,1,sizeof(frame_h),f)==sizeof(frame_h) && fwrite(h,1,64,f)==64 && fwrite("CRC",1,3,f)==3);
+  assert(fwrite(frame_d,1,sizeof(frame_d),f)==sizeof(frame_d) && fwrite(data,1,4,f)==4 && fwrite("CRC",1,3,f)==3);
+ }
+ assert(!fclose(f));
+ qd_stop_reuse();
+ const loader_mode_t profiles[][3]={{LOADER_MODE_NORMAL_1_1,LOADER_MODE_IC_1_4,LOADER_MODE_TC_1_3},
+  {LOADER_MODE_UL_MZ800,LOADER_MODE_NORMAL_1_1,LOADER_MODE_UL_MZ700},
+  {LOADER_MODE_UL,LOADER_MODE_UL_MZ800,LOADER_MODE_NORMAL_1_1}};
+ for(unsigned pass=0;pass<3;++pass){
+  player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));bus_owned=false;sense=1;
+  analysis_calls=0;sharp_stream_set_analysis_control(count_analysis,NULL);
+  for(unsigned i=0;i<3;++i){assert(player_prepare_record("auto.mzq",i+1));assert(player_set_record_mode(profiles[pass][i]));}
+  assert(player_prepare_record("auto.mzq",1));player_start(player_get_current_path());unsigned after_start=analysis_calls;
+  drain();assert(drained_records==14 && analysis_calls==after_start);
+  assert(player_get_state()==PLAYER_STATE_READY && player_sharp_details()->record==3 && !strcmp(player_sharp_details()->title,"THIRD"));
+  assert(player_sharp_details()->effective==profiles[pass][2] && player_sharp_details()->source_reused);
+  program_metadata_t m;player_metadata(&m);assert(m.record==3 && m.records==3);
+  assert(player_prepare_record("auto.mzq",2) && analysis_calls==after_start);
+ }
+ player_stop();sharp_stream_set_analysis_control(NULL,NULL);assert(!remove("auto.mzq"));
+ puts("PASS QD auto-continuation: three records, individual NORMAL/IC/TC/UL profiles including UL-to-UL, no analysis between records or on final selector, no wrap");
+}
 
 static void ul_timeout_preserved(void){
  fixture("ul-no-peer.mzf",false);
@@ -412,7 +537,9 @@ static void ul_task_schedule(void){
  puts("PASS real UL task loop: no per-batch sleep, periodic 1-tick idle after100-110ms of work, only at SENSE HIGH; STOP cleanup");
 }
 int main(void) { setvbuf(stdout,NULL,_IONBF,0); all_modes();
+fast_mzf_start();
 qd_selector_session();
+qd_auto_sequence();
 selector();
 mzt_continuation();
 ul_timeout_preserved();

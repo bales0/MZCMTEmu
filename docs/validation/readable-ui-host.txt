@@ -1,0 +1,5 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_oled_ui
+PASS uniform 6x8 UI: eight populated PLAY rows; TX/BUF only on physical last row; FINISHED once with STOP; QD filename, RX min, overlays and eight animation phases
+PASS actual OLED/UI: SSD1306 page mode, bounded batched packets, 20Hz dirty refresh, clipped text, no unchanged writes, missing-device timeout and command/data failure retry
+

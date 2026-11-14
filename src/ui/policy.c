@@ -29,3 +29,19 @@ size_t ui_marquee_offset(ui_marquee_t *s,const char *text,size_t width,uint32_t 
  size_t offset=(phase-700)/180;
  return offset>steps ? steps:offset;
 }
+
+void ui_compact_path(char *out,size_t capacity,const char *path,size_t columns){
+ if(!out || !capacity)return;
+ size_t limit=columns<capacity-1 ? columns:capacity-1;
+ const char *text=path ? path:"";size_t n=strlen(text);
+ if(n<=limit){memcpy(out,text,n+1);return;}
+ if(limit<3){memcpy(out,"..",limit);out[limit]=0;return;}
+ size_t available=limit-3;
+ const char *tail=text+n-available;
+ if(available && tail>text && tail[-1]!='/'){
+  const char *slash=strchr(tail,'/');
+  if(slash && slash[1])tail=slash+1;
+ }
+ memcpy(out,"../",3);size_t left=strlen(tail);
+ memcpy(out+3,tail,left);out[3+left]=0;
+}

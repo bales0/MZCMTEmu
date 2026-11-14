@@ -1,8 +1,9 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
-#define FILE_LIST_VIEW_ROWS 6
+#define FILE_LIST_VIEW_ROWS 7
 
 typedef enum {
     FILE_ITEM_NONE = 0,
@@ -48,3 +49,6 @@ void file_list_set_scan_control(file_list_cancel_fn cancel,void *context);
 const char *file_list_last_error(void);
 
 bool file_list_error_requires_reinit(void);
+
+/* Changes whenever the directory index is reset/rebuilt. */
+uint32_t file_list_revision(void);

@@ -1,0 +1,27 @@
+{
+  "revision": "r19",
+  "date": "2026-11-14",
+  "base_head": "b76a9e017092e187a9b351a7d60ef4ee4de5d11b",
+  "reference_commit": "600a78807e0e5080ae3d59d8d9afa8d99bf3b8fb",
+  "image": ".pio/build/MZCMTEmu/firmware.bin",
+  "image_bytes": 460832,
+  "sha256": "d5cf6bb51109050fef83cf681119b14ec08800a9368fc4bf5ba59cef53d5cbf9",
+  "ram_bytes": 155292,
+  "application_bytes": 460407,
+  "host_suites": [
+    "test_oled_ui",
+    "test_quickdisk",
+    "test_player_sharp",
+    "test_sharp_stream",
+    "test_player_rmt",
+    "test_file_list",
+    "test_player_tap"
+  ],
+  "tests": "PASS GCC14.2 ASan/UBSan",
+  "sidecar_profiles": 16,
+  "sidecar_read_vectors": 48,
+  "sidecar_production_changed": false,
+  "target_build": "PASS",
+  "flashed": false,
+  "hw_verified": false
+}
