@@ -448,6 +448,7 @@ static void large_ul800_fixture(void) {
  assert(!fclose(f));
 }
 static uint64_t played_records,record_ticks;
+static const loader_mode_t *expected_qd_modes;
 static void drain_player(void) {
  played_records=record_ticks=0;
  unsigned budget=250000;
@@ -455,6 +456,7 @@ static void drain_player(void) {
  while(player_get_state()==PLAYER_STATE_PLAYING) {
   assert(budget--);
   unsigned record=player_sharp_details()->record;
+  if(expected_qd_modes && record>=1 && record<=3)assert(player_sharp_details()->effective==expected_qd_modes[record-1]);
   if(record<64 && !(played_records&(1ULL<<record))){played_records|=1ULL<<record;record_ticks+=player_sharp_details()->total_ticks;}
   if(!paused_once) {
    unsigned held=remaining;
@@ -497,14 +499,19 @@ static void qd_rmt_sequence(void){
  }
  assert(!fclose(f));
  const loader_mode_t modes[][3]={{LOADER_MODE_NORMAL_1_1,LOADER_MODE_IC_1_4,LOADER_MODE_TC_1_3},
-  {LOADER_MODE_UL,LOADER_MODE_UL_MZ800,LOADER_MODE_UL_MZ700}};
- for(unsigned pass=0;pass<2;++pass){
+  {LOADER_MODE_UL,LOADER_MODE_UL_MZ800,LOADER_MODE_UL_MZ700},
+  {LOADER_MODE_AUTO,LOADER_MODE_AUTO,LOADER_MODE_AUTO}};
+ for(unsigned pass=0;pass<3;++pass){
+  if(pass==2){FILE *profile=fopen("rmt.qd.QDI","wb");assert(profile);
+   assert(fputs("RECORD=1\nTYPE=NORMAL\nSPEED=1:1\nRECORD=2\nTYPE=IC\nSPEED=1:4\nRECORD=3\nTYPE=TC\nSPEED=1:3\n",profile)>=0 && !fclose(profile));
+  }
+  expected_qd_modes=pass==2 ? modes[0]:NULL;
   player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));bus_owned=false;sense=1;
   for(unsigned i=0;i<3;++i){assert(player_prepare_record("rmt.qd",i+1));assert(player_set_record_mode(modes[pass][i]));}
   assert(player_prepare_record("rmt.qd",1));
   qd_scan_calls=0;sharp_stream_set_analysis_control(qd_count_scan,NULL);
   player_start(player_get_current_path());unsigned scans=qd_scan_calls;
-  if(pass){unsigned budget=100000;
+  if(pass==1){unsigned budget=100000;
    while(!mzf_stream_get_ultrafast_sent_bytes()){
     assert(budget-- && player_get_state()==PLAYER_STATE_PLAYING);
     if(tx.running && RMT.clock)advance(remaining);else wall_ticks+=1000ULL*16;
@@ -521,8 +528,8 @@ static void qd_rmt_sequence(void){
   assert(played_records==14 && active_ticks-before==record_ticks);
   assert(player_sharp_details()->record==3 && !strcmp(player_sharp_details()->title,"C") && player_get_state()==PLAYER_STATE_READY);
  }
- player_stop();assert(!remove("rmt.qd"));
- puts("PASS actual RMT QD continuation: three native/turbo and three UL records, exact waveform duration, pause preserved, final selector without wrap");
+ expected_qd_modes=NULL;player_stop();assert(!remove("rmt.qd") && !remove("rmt.qd.QDI"));
+ puts("PASS actual RMT QD continuation: three native/turbo and three UL records plus QDI AUTO per-record profiles, exact waveform duration, pause preserved, final selector without wrap");
 }
 static void fast_mzf_rmt_progress(void){
  const char *path="fast-rmt.mzf";FILE *f=fopen(path,"wb");assert(f);

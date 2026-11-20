@@ -6,7 +6,11 @@ int main(void) {
  cmt_bus_outputs_t o;
  for(int p=PLAYER_STATE_IDLE;p<=PLAYER_STATE_READY;++p) {
   o=cmt_bus_outputs(true,true,true,p,RECORDER_STATE_RECORDING,true);
-  assert(o.sense_high && !o.monitor_enabled && !o.ul_owns_sense);
+  assert(o.sense_high && o.monitor_enabled && !o.ul_owns_sense);
+ }
+ for(int r=RECORDER_STATE_IDLE;r<=RECORDER_STATE_ERROR;++r){
+  o=cmt_bus_outputs(true,true,true,PLAYER_STATE_PLAYING,(recorder_state_t)r,true);
+  assert(o.sense_high && o.monitor_enabled==(r==RECORDER_STATE_RECORDING) && !o.ul_owns_sense);
  }
  o=cmt_bus_outputs(false,true,false,PLAYER_STATE_PLAYING,RECORDER_STATE_IDLE,true);
  assert(o.ul_owns_sense && !o.monitor_enabled);
@@ -27,15 +31,20 @@ int main(void) {
  }
  o=cmt_bus_outputs(false,false,false,PLAYER_STATE_PLAYING,RECORDER_STATE_FINISHED,true);
  assert(o.sense_high && !o.monitor_enabled);
- assert(ROUTE_FORCE_INTERNAL && !route_switch_is_external(true) && !route_switch_is_external(false));
+ assert(!ROUTE_FORCE_INTERNAL && !route_switch_is_external(true) && route_switch_is_external(false));
  route_switch_t s={0};
  assert(route_switch_update(&s,true,0)==ROUTE_INTERNAL && !s.external);
- const uint64_t times[]={1,30000,40000,79999,80000,100000,140000,999999};
- for(unsigned i=0;i<sizeof(times)/sizeof(times[0]);++i)
-  assert(route_switch_update(&s,(i&1)!=0,times[i])==ROUTE_UNCHANGED && !s.external);
+ assert(route_switch_update(&s,false,1)==ROUTE_UNCHANGED && !s.external);
+ assert(route_switch_update(&s,false,40000)==ROUTE_UNCHANGED && !s.external);
+ assert(route_switch_update(&s,false,40001)==ROUTE_EXTERNAL && s.external);
+ assert(route_switch_update(&s,true,50000)==ROUTE_UNCHANGED && s.external);
+ assert(route_switch_update(&s,false,60000)==ROUTE_UNCHANGED && s.external);
+ assert(route_switch_update(&s,true,70000)==ROUTE_UNCHANGED && s.external);
+ assert(route_switch_update(&s,true,109999)==ROUTE_UNCHANGED && s.external);
+ assert(route_switch_update(&s,true,110000)==ROUTE_INTERNAL && !s.external);
  route_switch_t low_at_boot={0};
- assert(route_switch_update(&low_at_boot,false,0)==ROUTE_INTERNAL && !low_at_boot.external);
+ assert(route_switch_update(&low_at_boot,false,0)==ROUTE_EXTERNAL && low_at_boot.external);
  assert(route_switch_update(NULL,true,0)==ROUTE_UNCHANGED);
- puts("PASS S1 bypass: HIGH/LOW and startup both remain INTERNAL, no external event/transport abort; bus output policies preserved");
+ puts("PASS physical S1 GPIO21: LOW external/HIGH internal, 40ms debounce and bounce restart, both boot states; external blocks TX only; recording monitor and capture remain available");
  return 0;
 }

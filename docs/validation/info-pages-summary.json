@@ -1,0 +1,18 @@
+{
+  "revision": "r32 INFO PAGES",
+  "date": "2026-11-20",
+  "firmware_bytes": 475488,
+  "sha256": "ab18e17526c0f3cef7afd3393b3acc75d43955481c09b58672c0797625a558b1",
+  "tests": [
+    "test_menu",
+    "test_oled_ui"
+  ],
+  "test_result": "PASS GCC14 ASan/UBSan",
+  "build": "PASS",
+  "removed_from_info_pages": [
+    "NEXT/PREV: MORE",
+    "STOP: BACK"
+  ],
+  "functional_button_map_preserved": true,
+  "hardware_verified": false
+}

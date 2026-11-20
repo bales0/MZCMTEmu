@@ -1,0 +1,26 @@
+{
+  "revision": "r34 COMPACT EDITOR",
+  "date": "2026-11-20",
+  "base_commit": "1dfdeffb2cc4ea506b706b376f7dfe4a82fb542e",
+  "changes": [
+    "Three choices: RECORD, LOADER, SAVE / CANCEL; selected last row uses PLAY SAVE and STOP CANCEL icons",
+    "Direct profile acceptance on SPEED OK or UL family OK; no comparison or ACCEPT IN RAM",
+    "Single last-row dialog hints; key icons including KEYMAP and ANALYZING"
+  ],
+  "host_suites": [
+    "test_menu",
+    "test_oled_ui",
+    "test_sidecar_faults",
+    "test_sidecar_editor"
+  ],
+  "host_result": "PASS GCC 14 ASan/UBSan",
+  "target_build": "PASS PlatformIO MZCMTEmu",
+  "ram_bytes": 167292,
+  "flash_program_bytes": 473527,
+  "firmware_bytes": 473952,
+  "firmware_sha256": "cae8e8383d12af1ac05fe73c96ae2886383d00ee9e6f42a9e0a38989789a5d20",
+  "warning": "Existing unused ui_copy_scroll_text in main.c",
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false
+}

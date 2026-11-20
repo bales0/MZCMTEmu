@@ -1,3 +1,15 @@
+> Aktuální r35 (20. 11. 2026): [sidecar editor](SIDECAR_EDITOR.md). SAVE/CANCEL je třetí položka menu hned pod LOADER se stejným kurzorem a trvalými ikonami tlačítek. SAVING… během zápisu, po úspěchu přímo návrat do editoru bez SAVED. Tři host sady s ASan/UBSan i cílový build PASS. Bez commitu a nahrání; HW ověření zbývá.
+
+> Aktuální r33 (20. 11. 2026): [zjednodušený sidecar editor](SIDECAR_EDITOR.md). Jeden řádek LOADER s rychlostí; SAVE CHANGES rovnou spouští bezpečnou transakci bez přehledu a CREATE/UPDATE dialogu. Potvrzení profilu zachováno. Tři host sady a cílový build PASS; HW ověření zbývá.
+
+> r32 (20. 11. 2026): ze všech stránek ABOUT/KEYMAP odstraněny navigační patičky NEXT/PREV: MORE a STOP: BACK. Zbývající mapování tlačítek se skládá od horního řádku; trailing řádky se vymažou. test_menu a test_oled_ui s ASan/UBSan i cílový build PASS. [Výsledek](validation/info-pages-summary.json). Bez nahrání a HW ověření.
+
+> Aktuální r31 (20. 11. 2026): [náhled názvu rekordu v editoru](SIDECAR_EDITOR.md). Při listování se zobrazuje název kandidáta bez změny profilu, CHOOSE LOADER bez rychlosti. ABOUT bez spodní navigační nápovědy. Oprava zásobníku sidecar_find zachována; čtyři host sady a cílový build PASS, HW ověření zbývá.
+
+> Aktuální r30 (20. 11. 2026): [jedno potvrzení profilu editoru](SIDECAR_EDITOR.md). LOADER → SPEED → CONFIRM PROFILE; UL bez kroku rychlosti, SAVE nezávislý. INTERNAL i EXTERNAL CMT mají hlášku na 1,2 s. Tři host sady a cílový build PASS; QD/MOTOR návrat do browseru zatím v diagnostice, bez změny PLAY. HW ověření zbývá.
+
+> Aktuální r29 (20. 11. 2026): [editor sidecarů a S1](SIDECAR_EDITOR.md). MFI/M2I/MTI a nové QDI, potvrzení každého pole a samostatný SAVE, transakce s obnovou. S1 opět aktivní: LOW=EXTERNAL, HIGH=INTERNAL; EXTERNAL blokuje pouze PLAY a dovoluje RECORD i editor. HW ověření a nahrání zbývají. Následující starší záznamy jsou historie.
+
 > Aktuální r28 (14. 11. 2026): [oprava předplnění WAV](WAV_PREFILL_FIX.md). Reprodukováno předčasné RMT ukončení při tichém úvodu; před startem WAV nyní minimálně 256 intervalů vedle časové zásoby. Regrese 44,1/48/96 kHz, tři host sady a cílový build PASS; bez nahrání a HW ověření. Ikona RECORD a MIN z r27 zachovány. Následující starší záznamy jsou historie.
 
  Aktuální r15 (14. 11. 2026): [UL, UL700 a UL800 podle SD2CMT2](UL_FAMILY_PERFORMANCE.md). Odstraněné 10ms čekání po každé krátké dávce UL, vypnutý detailní trace, účinné -O2. Všechny tři režimy prošly host přenosem 44 033 bajtů; Z80 přijímače LOW/HIGH a 100Hz plánování PASS, cílový build PASS. Uživatel potvrdil LOAD v r14 UL800 s nízkou rychlostí; r15 a UL700 zatím bez HW potvrzení. S1 bypass zůstává zapnutý. Následující starší záznamy jsou historie.

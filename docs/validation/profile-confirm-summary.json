@@ -1,0 +1,17 @@
+{
+  "revision": "r30 PROFILE CONFIRM",
+  "date": "2026-11-20",
+  "bytes": 475424,
+  "sha256": "ac782dc9b87ad011e9c84c264f24f9665e70d48ef90b3b23de5f7de2bc5c8f76",
+  "tests": [
+    "test_sidecar_editor",
+    "test_oled_ui",
+    "test_route_switch"
+  ],
+  "result": "PASS ASan/UBSan",
+  "build": "PASS",
+  "ram_bytes": 167292,
+  "flash_app_bytes": 475007,
+  "qd_diagnosis": "pending; supplied log contains IDLE only; no playback change",
+  "hardware_verified": false
+}

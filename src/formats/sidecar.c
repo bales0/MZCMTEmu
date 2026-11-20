@@ -114,34 +114,55 @@ static bool multi(cmt_file_t *fp,uint16_t wanted,loader_mode_t *mode) {
         }
     }
 }
-static bool info_path(const char *path,char name[1024]) {
-    if(!path)return false;
+bool sidecar_build_path(const char *path,char *out,size_t capacity) {
+    if(!path || !out)return false;
     file_format_t format=file_format_detect_from_name(path);
     const char *ext=format==FILE_FORMAT_MZF ? "MFI":format==FILE_FORMAT_M12 ? "M2I":format==FILE_FORMAT_MZT ? "MTI":NULL;
-    size_t n=strlen(path);
-    if(!ext || n<4 || n>=1024)return false;
-    memcpy(name,path,n+1);memcpy(name+n-3,ext,3);return true;
+    bool qd=format==FILE_FORMAT_MZQ;
+    size_t n=strlen(path),length=n+(qd ? 4:0);
+    const char *leaf=strrchr(path,'/');leaf=leaf ? leaf+1:path;
+    if((!ext && !qd) || n<4 || length>=1024 || length>=capacity || strlen(leaf)+(qd ? 4:0)>255)return false;
+    memmove(out,path,n+1);
+    if(qd)memcpy(out+n,".QDI",5);else memcpy(out+n-3,ext,3);
+    return true;
 }
-static void lower_info_extension(char *name) {
-    size_t n=strlen(name);
-    for(size_t i=n-3;i<n;++i)if(name[i]>='A' && name[i]<='Z')name[i]=(char)(name[i]+32);
+bool sidecar_find(const char *path,char *out,size_t capacity,bool *exists) {
+    if(!exists || !sidecar_build_path(path,out,capacity))return false;
+    char *leaf=strrchr(out,'/');leaf=leaf ? leaf+1:out;
+    size_t prefix=(size_t)(leaf-out);
+    DIR *dir;
+    if(prefix){
+        /* cmt_opendir is synchronous. Reuse the output path for its parent,
+         * including the final slash so / and drive roots remain valid. */
+        char first=*leaf;*leaf=0;dir=cmt_opendir(out);*leaf=first;
+    }else dir=cmt_opendir(".");
+    if(!dir)return false;
+    unsigned count=0;struct dirent *entry;
+    while((entry=cmt_readdir(dir))!=NULL)if(!strcasecmp(entry->d_name,leaf)){
+        size_t length=strlen(entry->d_name);
+        if(length>=capacity-prefix){cmt_closedir(dir);return false;}
+        /* Case-only matches have the same length; the first actual spelling
+         * is also a valid comparison key when detecting a second alias. */
+        memcpy(leaf,entry->d_name,length+1);++count;
+    }
+    if(cmt_closedir(dir) || count>1)return false;
+    *exists=count!=0;
+    if(*exists){struct stat st;if(cmt_stat(out,&st) || !S_ISREG(st.st_mode))return false;}
+    return true;
 }
 bool sidecar_exists(const char *path) {
-    char name[1024];struct stat st;
-    if(!info_path(path,name))return false;
-    if(!cmt_stat(name,&st) && S_ISREG(st.st_mode))return true;
-    lower_info_extension(name);
-    return !cmt_stat(name,&st) && S_ISREG(st.st_mode);
+    char name[1024];bool exists=false;
+    return sidecar_find(path,name,sizeof(name),&exists) && exists;
 }
 bool sidecar_read(const char *path,uint16_t record,loader_mode_t *mode) {
     char name[1024];
-    if(!mode || !record || !info_path(path,name))return false;
+    bool exists=false;
+    if(!mode || !record || !sidecar_find(path,name,sizeof(name),&exists) || !exists)return false;
     file_format_t format=file_format_detect_from_name(path);
     cmt_file_t *fp=cmt_fopen(name,"rb");
-    if(!fp){lower_info_extension(name);fp=cmt_fopen(name,"rb");}
     if(!fp)return false;
     loader_mode_t resolved=LOADER_MODE_NORMAL_1_1;
-    bool ok=format==FILE_FORMAT_MZT ? multi(fp,record,&resolved) : single(fp,&resolved);
+    bool ok=file_format_is_record_container(format) ? multi(fp,record,&resolved) : single(fp,&resolved);
     if(cmt_fclose(fp)) ok=false;
     if(ok) *mode=resolved;
     return ok;
@@ -173,9 +194,8 @@ bool sidecar_write_mzf(const char *path,loader_mode_t mode) {
     case LOADER_MODE_TC_1_3: type="TC";speed=3;break;
     default: return false;
     }
-    char name[1024];size_t n=strlen(path);
-    if(n<4 || n>=sizeof(name)) return false;
-    memcpy(name,path,n+1);memcpy(name+n-3,"MFI",3);
+    char name[1024];bool exists=false;
+    if(!sidecar_find(path,name,sizeof(name),&exists) || exists)return false;
     cmt_file_t *out=record_file_create(name,sizeof(name));
     if(!out)return false;
     bool ok=cmt_fprintf(out,"TYPE=%s\nSPEED=1:%u\n",type,speed)>0 && !cmt_fflush(out);

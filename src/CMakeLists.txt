@@ -34,6 +34,8 @@ idf_component_register(
         "formats/mz_tape_profiles.c"
         "formats/mz_loader_profiles.c"
         "formats/sidecar.c"
+        "formats/sidecar_edit.c"
+        "ui/sidecar_editor.c"
         "play/mzf_loader.c"
         "play/mz700_fast3.c"
         "config/settings_codec.c"

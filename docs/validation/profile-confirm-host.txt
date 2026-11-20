@@ -1,0 +1,12 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_oled_ui
+PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; long durations; FINISHED once with STOP; QD filename, round RECORD versus square STOP, MIN without RX, unified RECORD layout and state/warning priority, overlays and eight animation phases
+PASS actual OLED/UI: SSD1306 page mode, bounded batched packets, 20Hz dirty refresh, clipped text, no unchanged writes, missing-device timeout and command/data failure retry
+RUN test_sidecar_editor
+PASS sidecar names MFI/M2I/MTI and collision-free appended QDI; path limits and supported families
+PASS all sidecar formats CREATE/UPDATE; 12-record MTI and 50-record QDI preserve other profiles; sparse sections, UL without SPEED, AUTO/manual and immutable images
+PASS malformed/unknown/duplicate/out-of-range/oversized sidecars rejected; mixed case spelling preserved; stale document cannot overwrite changed SD metadata
+PASS power interruption after journal/new/backup/install/commit for CREATE and UPDATE: old or verified new recovered without changing image
+PASS real editor: navigation/proposals/STOP do not modify profiles or SD; LOADER then SPEED followed by one whole-profile consent, record preservation and separate CREATE confirmation
+RUN test_route_switch
+PASS physical S1 GPIO21: LOW external/HIGH internal, 40ms debounce and bounce restart, both boot states; external blocks TX only; recording monitor and capture remain available

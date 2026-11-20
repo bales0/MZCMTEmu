@@ -7,6 +7,22 @@
 #include <string.h>
 #include "font6x8.h"
 #include "font3x5.h"
+#include "ui/key_icons.h"
+
+/* Five button glyphs share the readable 6x8 cell and its spacing. */
+static const uint8_t key_glyphs[5][6]={
+ {0xfe,0x7c,0x38,0x38,0x10,0}, /* PLAY */
+ {0x7c,0x7c,0x7c,0x7c,0x7c,0}, /* STOP */
+ {0x38,0x7c,0x7c,0x7c,0x38,0}, /* RECORD */
+ {0xfe,0x10,0x38,0x7c,0xfe,0}, /* PREVIOUS */
+ {0xfe,0x7c,0x38,0x10,0xfe,0}  /* NEXT */
+};
+static bool key_glyph(unsigned char c){return c>=UI_KEY_PLAY_CODE && c<=UI_KEY_NEXT_CODE;}
+static const uint8_t *text_glyph(unsigned char c){
+ if(key_glyph(c))return key_glyphs[c-UI_KEY_PLAY_CODE];
+ if(c<32 || c>127)c=' ';
+ return font6x8[c-32];
+}
 
 #define ADDR 0x3C
 #define OLED_I2C_TIMEOUT_MS 10U
@@ -110,11 +126,11 @@ void oled_draw_text(int row, const char *text)
 
     while (*text && x < 122) {
         unsigned char c = (unsigned char)*text++;
-        if (c < 32 || c > 127) {
+        if (!key_glyph(c) && (c < 32 || c > 127)) {
             c = ' ';
         }
 
-        const uint8_t *glyph = font6x8[c - 32];
+        const uint8_t *glyph = text_glyph(c);
         for (int i = 0; i < 6; i++) {
             fb[page * 128 + x] = glyph[i];
             x++;
@@ -160,14 +176,15 @@ void oled_text_xy(int x,int y,const char *text,int size,bool white){
  int width=size==0 ? 4:size==2 ? 12:6,height=size==0 ? 6:size==2 ? 16:8;
  for(;*text && x+width<=128;text++,x+=width){
   unsigned char c=(unsigned char)*text;
-  if(c<32 || c>127)c=' ';
-  const uint8_t *glyph=font6x8[c-32];
+  bool button=key_glyph(c);
+  if(!button && (c<32 || c>127))c=' ';
+  const uint8_t *glyph=text_glyph(c);
   for(int j=0;j<height;++j)for(int i=0;i<width;++i){
-   if(size==0){
+   if(size==0 && !button){
     unsigned char upper=c>='a' && c<='z' ? (unsigned char)(c-'a'+'A'):c;
     if(i<3 && j<5 && (mini_font[upper-32] & (1U<<(j*3+i))))oled_pixel(x+i,y+j,white);
    }else {
-    int gx=size==2 ? i/2:i,gy=size==2 ? j/2:j;
+    int gx=button ? i*6/width:size==2 ? i/2:i,gy=button ? j*8/height:size==2 ? j/2:j;
     if(glyph[gx] & (1U<<gy))oled_pixel(x+i,y+j,white);
    }
   }

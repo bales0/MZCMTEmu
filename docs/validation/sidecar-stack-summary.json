@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-20",
+  "label": "r30 sidecar_find stack fix",
+  "firmware_bytes": 475232,
+  "firmware_sha256": "7f289de4ae6b15c54a5ff5f4df377846d2747d28bc3f4378386c8265774291c1",
+  "elf_sha256": "9e03c8d874dd79aae6ae785d1bbe263e8ad172b8f8c0b9cacdc985a86fe00eb4",
+  "preserved_elf": ".tmp/sidecar-stack-firmware.elf",
+  "sidecar_find_stack_before": 2464,
+  "sidecar_find_stack_after": 144,
+  "stack_reduction": 2320,
+  "app_stack_unchanged": 8192,
+  "static_ram_unchanged": 167292,
+  "flash_app_bytes": 474811,
+  "suites": [
+    "test_player_rmt",
+    "test_writer_io",
+    "test_sidecar_faults",
+    "test_sidecar_editor",
+    "test_player_sharp",
+    "test_sharp_stream",
+    "test_recorder"
+  ],
+  "result": "PASS GCC14 ASan/UBSan",
+  "build": "PASS",
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false
+}

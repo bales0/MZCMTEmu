@@ -1,0 +1,8 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_sidecar_editor
+PASS sidecar names MFI/M2I/MTI and collision-free appended QDI; path limits and supported families
+PASS all sidecar formats CREATE/UPDATE; 12-record MTI and 50-record QDI preserve other profiles; sparse sections, UL without SPEED, AUTO/manual and immutable images
+PASS malformed/unknown/duplicate/out-of-range/oversized sidecars rejected; mixed case spelling preserved; stale document cannot overwrite changed SD metadata
+PASS power interruption after journal/new/backup/install/commit for CREATE and UPDATE: old or verified new recovered without changing image
+PASS real editor: navigation/proposals/STOP do not modify profiles or SD; LOADER then SPEED followed by one whole-profile consent, record preservation and separate CREATE confirmation
+PASS one profile confirmation: TC allows 1/2/3 after IC1:4, MZ700 skips invalid speeds, UL skips SPEED, STOP cancels both fields and SAVE stays separate

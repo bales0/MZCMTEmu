@@ -33,6 +33,8 @@
 #include "sdkconfig.h"
 #include "app/route_switch.h"
 #include "app/menu.h"
+#include "ui/sidecar_editor.h"
+#include "ui/key_icons.h"
 #include "app/cmt_bus_policy.h"
 #include "ui/view.h"
 #include "ui/policy.h"
@@ -190,6 +192,12 @@ static bool sd_detect_card_inserted(void)
     return (gpio_get_level(SD_DETECT_GPIO) == SD_DETECT_ACTIVE_LEVEL);
 }
 
+static bool metadata_preparing;
+static bool prepare_record_preview(const char *path,uint16_t record){
+    metadata_preparing=true;
+    bool ok=player_prepare_record(path,record);
+    metadata_preparing=false;return ok;
+}
 static cmt_bus_outputs_t bus_outputs(void)
 {
     return cmt_bus_outputs(switch_ext_mode,player_is_ultrafast_active(),play_wait_motor,
@@ -208,7 +216,7 @@ static void service_monitor_output(void)
 static void ui_show_overlay(const char *text,uint32_t duration_ms)
 {
     unsigned priority=strstr(text,"ERROR") || strstr(text,"LOSS") || strstr(text,"OVERRUN") ? 3:
-        strstr(text,"EXTERNAL") || strstr(text,"NO SD") ? 2:1;
+        strstr(text,"EXTERNAL") || strstr(text,"INTERNAL") || strstr(text,"NO SD") ? 2:1;
     ui_overlay_show(text,duration_ms,priority);
 }
 static void ui_clear_overlay(void){ui_overlay_clear(false);}
@@ -387,8 +395,8 @@ static bool sd_runtime_try_mount(void)
     s_sd_next_mount_retry = 0;
 
     if(s_sd_recover_path[0]) {
-        if(!recorder_is_active() && !switch_ext_mode) {
-            if(!player_prepare_record(s_sd_recover_path,s_sd_recover_record))player_stop_for(PLAYER_STOP_SD_RESTORE_FAILED);
+        if(!recorder_is_active()) {
+            if(!prepare_record_preview(s_sd_recover_path,s_sd_recover_record))player_stop_for(PLAYER_STOP_SD_RESTORE_FAILED);
             else ui_show_overlay("SELECTOR RESTORED",1200);
         }
         s_sd_recover_path[0]=0;
@@ -439,6 +447,7 @@ static void sd_runtime_on_removed(void)
 
 static void service_sd_detect(void)
 {
+    if(sc_editor_busy())return; /* Do not unmount under an in-flight storage job. */
     bool raw_present = sd_detect_card_inserted();
 
     if (raw_present != s_sd_present_last_raw) {
@@ -498,7 +507,7 @@ static void menu_enter(app_menu_section_t section)
 {
     s_menu_active = true;
     s_menu_info_page=0;
-    s_menu=(app_menu_t){.section=section};
+    s_menu=(app_menu_t){.section=section,.edit_sidecar=file_format_is_sharp_tape(file_format_detect_from_name(file_list_get_path()))};
     s_menu_selected=app_menu_selected(&s_menu);
     s_menu_pre_wrap_next = false;
     s_menu_pre_wrap_prev = false;
@@ -547,10 +556,27 @@ static const char *rec_format_to_text(recorder_format_t format)
     }
 }
 
+static bool s_editor_selector;
+static uint16_t s_editor_return_record,s_editor_preview;
+static void editor_open(bool selector) {
+    player_state_t state=player_get_state();
+    if(!s_sd_ready || recorder_is_active() || play_wait_motor || state==PLAYER_STATE_PLAYING || state==PLAYER_STATE_PAUSED){ui_show_overlay("EDITOR UNAVAILABLE",1500);return;}
+    const char *path=selector ? player_get_current_path():file_list_get_path();
+    if(!file_format_is_sharp_tape(file_format_detect_from_name(path)))return;
+    char source[1024];snprintf(source,sizeof(source),"%s",path);
+    uint16_t record=selector ? player_sharp_details()->record:1;
+    if(!prepare_record_preview(source,record)){ui_show_overlay("INVALID SOURCE",1500);return;}
+    s_editor_selector=selector;s_editor_return_record=record;s_editor_preview=record;
+    if(sc_editor_open(source,player_sharp_details()->records,record)){
+        program_metadata_t metadata;player_metadata(&metadata);sc_editor_metadata(&metadata);
+    }else ui_show_overlay("EDITOR OPEN ERROR",1500);
+}
+
 static void menu_activate_selected(void)
 {
     if(s_menu_info_page)return;
     switch ((menu_item_t)s_menu_selected) {
+        case MENU_ITEM_EDIT_SIDECAR: editor_open(false);break;
         case MENU_ITEM_MODE:
             s_setting_motor_auto = !s_setting_motor_auto;
             if (!s_setting_motor_auto) {
@@ -634,12 +660,17 @@ static void ui_build_info_model(void)
 {
     ui_use_text_view();
     static const char *const keys[4][8]={
-      {"BROWSER KEYS","PLAY: OPEN / START","HOLD PLAY: PLAY MENU","REC: ARM RECORD","HOLD REC: RECORD MENU","STOP: PARENT","HOLD STOP: SETTINGS","NEXT/PREV: MORE"},
-      {"PLAY KEYS","PLAY: USER PAUSE","PLAY: RESUME","STOP: END / SELECT","HOLD STOP: END","MOTOR: AUTO PAUSE","NEXT/PREV: MORE","STOP: BACK"},
-      {"RECORD KEYS","REC: START / ARM","PLAY: PAUSE/RESUME","STOP: SAVE","HOLD STOP: DELETE","AUTO: IDLE STOP 5s","NEXT/PREV: MORE","STOP: BACK"},
-      {"IMAGE SELECTOR KEYS","NEXT/PREV: RECORD","REC: RECORD PROFILE","PLAY: START RECORD","STOP: BACK TO BROWSER","MZT: AUTO CONTINUE","NEXT/PREV: MORE","STOP: BACK"}};
+      {"BROWSER KEYS",UI_KEY_PLAY ": OPEN / START","HOLD " UI_KEY_PLAY ": PLAY MENU",UI_KEY_REC ": ARM RECORD","HOLD " UI_KEY_REC ": RECORD MENU",UI_KEY_STOP ": PARENT","HOLD " UI_KEY_STOP ": SETTINGS",""},
+      {"PLAY KEYS",UI_KEY_PLAY ": USER PAUSE",UI_KEY_PLAY ": RESUME",UI_KEY_STOP ": END / SELECT","HOLD " UI_KEY_STOP ": END","MOTOR: AUTO PAUSE","",""},
+      {"RECORD KEYS",UI_KEY_REC ": START / ARM",UI_KEY_PLAY ": PAUSE/RESUME",UI_KEY_STOP ": SAVE","HOLD " UI_KEY_STOP ": DELETE","AUTO: IDLE STOP 5s","",""},
+      {"IMAGE SELECTOR KEYS",UI_KEY_PREV "/" UI_KEY_NEXT ": RECORD",UI_KEY_REC ": RECORD PROFILE",UI_KEY_PLAY ": START RECORD",UI_KEY_STOP ": BACK TO BROWSER","MZT: AUTO CONTINUE","",""}};
     if(s_menu_info_page>=2) {
-        for(unsigned row=0;row<8;++row)ui_model.line[row]=keys[s_menu_info_page-2][row];
+        unsigned shown=0;
+        for(unsigned row=0;row<8;++row){
+            const char *text=keys[s_menu_info_page-2][row];
+            if(text[0])ui_model.line[shown++]=text;
+        }
+        while(shown<UI_NUM_LINES)ui_model.line[shown++]="";
         return;
     }
     snprintf(ui_header,sizeof(ui_header),"MZCMTEmu ESP32-S3");
@@ -647,18 +678,19 @@ static void ui_build_info_model(void)
     snprintf(ui_menu_item1,sizeof(ui_menu_item1),"INT FREE %uK",(unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)/1024));
     snprintf(ui_menu_item2,sizeof(ui_menu_item2),"INT MIN %uK",(unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)/1024));
     snprintf(ui_menu_item3,sizeof(ui_menu_item3),"PSRAM FREE %uK",(unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)/1024));
+    snprintf(ui_menu_item4,sizeof(ui_menu_item4),"PSRAM MIN %uK",(unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM)/1024));
     ui_model.line[0]=ui_header;ui_model.line[1]="PORT / REF 2.0.3";
     ui_model.line[2]=ui_menu_item0;ui_model.line[3]=ui_menu_item1;ui_model.line[4]=ui_menu_item2;ui_model.line[5]=ui_menu_item3;
+    ui_model.line[6]=ui_menu_item4;
 #ifdef CONFIG_MZ_CAPTURE_GPIO_FALLBACK
-    ui_model.line[6]="RX GPIO FALLBACK";
+    ui_model.line[7]="RX GPIO FALLBACK";
 #else
 #if CONFIG_MZ_RX_PCNT_GUARD
-    ui_model.line[6]="RX MCPWM + PCNT";
+    ui_model.line[7]="RX MCPWM + PCNT";
 #else
-    ui_model.line[6]="RX MCPWM CAPTURE";
+    ui_model.line[7]="RX MCPWM CAPTURE";
 #endif
 #endif
-    ui_model.line[7]="STOP BACK / NEXT MORE";
 }
 static void ui_build_menu_model(void)
 {
@@ -705,11 +737,10 @@ static void ui_build_menu_model(void)
     snprintf(ui_menu_item10,sizeof(ui_menu_item10),"%cABOUT / MEMORY",s_menu_selected==MENU_ITEM_ABOUT ? '}':' ');
     snprintf(ui_menu_item11,sizeof(ui_menu_item11),"%cKEYMAP",s_menu_selected==MENU_ITEM_KEYMAP ? '}':' ');
     const char *rows[MENU_ITEM_COUNT]={ui_menu_item0,ui_menu_item1,ui_menu_item2,ui_menu_item3,
-        ui_menu_item4,ui_menu_item5,ui_menu_item6,ui_menu_item7,ui_menu_item8,ui_menu_item9,ui_menu_item10,ui_menu_item11};
-    unsigned index=app_menu_index(&s_menu),first=index>5 ? index-5:0;
-    ui_model.line[0]=ui_header;
-    ui_model.line[1]=s_settings_error ? "SETTINGS ERROR":"PLAY CHANGE STOP BACK";
-    for(unsigned row=0;row<6;++row){menu_item_t id=app_menu_item(&s_menu,first+row);ui_model.line[row+2]=id<MENU_ITEM_COUNT ? rows[id]:"";}
+        ui_menu_item4,ui_menu_item5,ui_menu_item6,ui_menu_item7,ui_menu_item8,ui_menu_item9,ui_menu_item10,ui_menu_item11,s_menu_selected==MENU_ITEM_EDIT_SIDECAR ? "}EDIT SIDECAR":" EDIT SIDECAR"};
+    unsigned index=app_menu_index(&s_menu),first=index>6 ? index-6:0;
+    ui_model.line[0]=s_settings_error ? "SETTINGS ERROR":ui_header;
+    for(unsigned row=0;row<7;++row){menu_item_t id=app_menu_item(&s_menu,first+row);ui_model.line[row+1]=id<MENU_ITEM_COUNT ? rows[id]:"";}
 
 }
 
@@ -896,13 +927,13 @@ static void service_route_switch(void)
     switch_ext_mode=route.external;
     if(event==ROUTE_EXTERNAL) {
         play_wait_motor_clear();
-        player_stop_for(PLAYER_STOP_S1_EXTERNAL);
-        recorder_state_t state=recorder_get_state();
-        if(state==RECORDER_STATE_FINALIZING || state==RECORDER_STATE_RECORDING || state==RECORDER_STATE_WAIT_MOTOR ||
-           state==RECORDER_STATE_PAUSED_USER || state==RECORDER_STATE_PAUSED_MOTOR)
-            recorder_handle_abort();
-        gpio_set_level(READ_GPIO,0);gpio_set_level(SENSE_GPIO,1);gpio_set_level(MONITOR_GPIO,0);
+        if(player_get_state()==PLAYER_STATE_PLAYING || player_get_state()==PLAYER_STATE_PAUSED)
+            player_stop_for(PLAYER_STOP_S1_EXTERNAL);
+        gpio_set_level(READ_GPIO,0);gpio_set_level(SENSE_GPIO,1);
+        gpio_set_level(MONITOR_GPIO,bus_outputs().monitor_enabled);
         ui_show_overlay("EXTERNAL CMT",1200);
+    }else if(event==ROUTE_INTERNAL){
+        ui_show_overlay("INTERNAL CMT",1200);
     }
 }
 static void ui_mark_external_route(void)
@@ -922,12 +953,12 @@ static bool cancel_image_analysis(void *context)
     btn_event_t event=buttons_poll();
     if(event==BTN_STOP || event==BTN_STOP_LONG || gpio_get_level(GPIO_NUM_47)) return true;
     int64_t now=esp_timer_get_time();
-    if(!route_switch_is_external(switch_signal_is_high()))external_since=0;
+    if(metadata_preparing || sc_editor_active() || !route_switch_is_external(switch_signal_is_high()))external_since=0;
     else if(!external_since)external_since=now;
     else if(now-external_since>=40000)return true;
     if(now-shown_at>=100000) {
         shown_at=now;ui_set_analysis_view(spinner++);
-        ui_model_t model={{"ANALYZING","","SD / TAPE PREFLIGHT","","STOP TO CANCEL","","",""}};ui_render(&model);
+        ui_model_t model={{"ANALYZING","","SD / TAPE PREFLIGHT","","","","",UI_KEY_STOP " CANCEL"}};ui_render(&model);
     }
     if(now-yielded_at>=20000) { yielded_at=now; vTaskDelay(1); }
     return false;
@@ -939,7 +970,7 @@ static void selector_move(int delta)
     uint16_t next=delta>0 ? (info->record==info->records ? 1 : info->record+1) :
         (info->record==1 ? info->records : info->record-1);
     char path[1024]; snprintf(path,sizeof(path),"%s",player_get_current_path());
-    if(!player_prepare_record(path,next)) ui_show_overlay(sharp_stream_analysis_cancelled() ? "CANCELLED":"RECORD ERROR",1000);
+    if(!prepare_record_preview(path,next)) ui_show_overlay(sharp_stream_analysis_cancelled() ? "CANCELLED":"RECORD ERROR",1000);
 }
 
 static void activate_selected_item(bool motor_high)
@@ -959,11 +990,11 @@ static void activate_selected_item(bool motor_high)
     }
 
     if (type == FILE_ITEM_WAV || type == FILE_ITEM_TAPE) {
-        if(switch_ext_mode) { ui_show_overlay("EXTERNAL CMT",1000); return; }
         if (file_format_is_record_container(file_format_detect_from_name(file_list_get_path()))) {
-            if(!player_prepare_record(file_list_get_path(),1)) ui_show_overlay(sharp_stream_analysis_cancelled() ? "CANCELLED":"IMAGE ERROR",1000);
+            if(!prepare_record_preview(file_list_get_path(),1)) ui_show_overlay(sharp_stream_analysis_cancelled() ? "CANCELLED":"IMAGE ERROR",1000);
             return;
         }
+        if(switch_ext_mode) { ui_show_overlay("EXTERNAL CMT",1000); return; }
         if (!motor_high) {
             if (type == FILE_ITEM_WAV) {
                 build_play_preview_for_selected();
@@ -1062,6 +1093,31 @@ static void app_task(void *arg)
         service_route_switch();
         diagnostics_tick(e);
 
+        if(sc_editor_active()) {
+            bool available=s_sd_ready && !recorder_is_active() && !play_wait_motor &&
+                player_get_state()!=PLAYER_STATE_PLAYING && player_get_state()!=PLAYER_STATE_PAUSED;
+            sc_editor_event(e,available);
+            if(sc_editor_active()){
+                if(available && !sc_editor_busy() && s_editor_preview!=sc_editor_preview_record()){
+                    uint16_t preview=sc_editor_preview_record();
+                    program_metadata_t metadata;
+                    if(prepare_record_preview(sc_editor_path(),preview))player_metadata(&metadata);
+                    else {program_metadata_reset(&metadata,FILE_FORMAT_UNKNOWN);metadata.confidence=PROGRAM_INVALID;}
+                    sc_editor_metadata(&metadata);s_editor_preview=preview;
+                }
+                service_sense_output();service_monitor_output();
+                ui_use_text_view();sc_editor_render(&ui_model,(uint32_t)(esp_timer_get_time()/1000));ui_set_external(switch_ext_mode);ui_render(&ui_model);
+            }else {
+                if(s_sd_ready){
+                    if(s_editor_selector)(void)prepare_record_preview(player_get_current_path(),s_editor_return_record);
+                    else player_stop_for(PLAYER_STOP_API);
+                    (void)file_list_reload_current_dir();
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(APP_TASK_DELAY_MS) ? pdMS_TO_TICKS(APP_TASK_DELAY_MS):1);
+            continue;
+        }
+
         // MENU má prioritu nad browser/playback
         if (menu_is_active()) {
             if (e == BTN_PLAY) {
@@ -1128,7 +1184,8 @@ static void app_task(void *arg)
 
         if(e==BTN_REC_LONG || e==BTN_PLAY_LONG){
             player_state_t state=player_get_state();
-            if(!recorder_is_active() && !play_wait_motor && (state==PLAYER_STATE_IDLE || state==PLAYER_STATE_STOPPED)){
+            if(e==BTN_PLAY_LONG && state==PLAYER_STATE_READY && !recorder_is_active() && !play_wait_motor)editor_open(true);
+            else if(!recorder_is_active() && !play_wait_motor && (state==PLAYER_STATE_IDLE || state==PLAYER_STATE_STOPPED)){
                 if(e==BTN_REC_LONG && !s_sd_ready){s_sd_next_mount_retry=0;ui_show_overlay("NO SD",1000);}
                 else menu_enter(e==BTN_REC_LONG ? APP_MENU_RECORD:APP_MENU_PLAY);
             }
@@ -1149,6 +1206,8 @@ static void app_task(void *arg)
                 else if (recorder_is_active()) {
                     recorder_handle_play(record_motor_is_on());
                 }
+                // External CMT permits RX/editor, but must not arm a TX wait.
+                else if(switch_ext_mode) { ui_show_overlay("EXTERNAL CMT",1000); }
                 // PLAYBACK / browser logika
                 else if (st == PLAYER_STATE_READY) {
                     if(motor_high) start_selected_file();
@@ -1215,7 +1274,7 @@ static void app_task(void *arg)
                 if(!(container && st!=PLAYER_STATE_READY && s_sd_ready && player_stop_to_selector())){
                     player_stop_for(PLAYER_STOP_BUTTON);
                     if(container && st!=PLAYER_STATE_READY && s_sd_ready)
-                        (void)player_prepare_record(path,record);
+                        (void)prepare_record_preview(path,record);
                 }
             }
             else if (s_sd_ready) {
@@ -1295,7 +1354,6 @@ static void app_task(void *arg)
             if (!s_sd_ready) {
                 // bez SD ignoruj REC
             }
-            else if(switch_ext_mode) { ui_show_overlay("EXTERNAL CMT",1000); }
             else if(st==PLAYER_STATE_READY) {
                 loader_mode_t mode=(loader_mode_t)((player_sharp_details()->requested+1U)%LOADER_MODE_COUNT);
                 if(!player_set_record_mode(mode)) ui_show_overlay("PROFILE ERROR",1000);
@@ -1362,7 +1420,7 @@ static void app_task(void *arg)
 void app_main(void)
 {
     setvbuf(stdout,NULL,_IOLBF,0);
-    printf("MZCMTEmu TX-TRACE r28 WAV PREFILL S1 BYPASS INTERNAL 2026-11-14; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
+    printf("MZCMTEmu TX-TRACE r36 TEXT PROGRESS S1 GPIO21 LOW=EXT HIGH=INT 2026-11-20; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
     // Give the USB console time to enumerate.
     vTaskDelay(pdMS_TO_TICKS(500));
     fflush(stdout);

@@ -1,0 +1,7 @@
+ESP32-S3 compiled ELF, Xtensa entry a1 stack frames
+Before: sidecar_find entry a1, 0x9a0 = 2464 bytes
+After:  sidecar_find entry a1, 144 = 144 bytes
+Reduction: 2320 bytes, no change to task stack sizes or static RAM.
+Selected caller frames measured before fix: app_task=1216, start_selected_file=1072, player_start=1056, mzf_stream_open=48, open_source=176, prepare_record=144, sidecar_read=1248, sidecar_find=2464; sum=7424. This is a partial static call-chain sum, not a measured runtime high-water mark.
+Original report: r29, ELF SHA prefix 500a92723, FreeRTOS xQueueSemaphoreTake uxItemSize assertion and corrupted backtrace, followed by reboot. Decode using local r30 ELF is approximate because exact r29 ELF was unavailable.
+Current ELF SHA256: 9e03c8d874dd79aae6ae785d1bbe263e8ad172b8f8c0b9cacdc985a86fe00eb4

@@ -1,0 +1,23 @@
+{
+  "revision": "r33 DIRECT SAVE",
+  "date": "2026-11-20",
+  "bytes": 474544,
+  "sha256": "9e481d32f2bba278cec62aee6b70218b66d3519330d3e26fd652dd2c32a96ae2",
+  "suites": [
+    "test_oled_ui",
+    "test_sidecar_faults",
+    "test_sidecar_editor"
+  ],
+  "result": "PASS GCC14 ASan/UBSan",
+  "build": "PASS",
+  "profile_confirmation": true,
+  "separate_speed_menu_row": false,
+  "save_starts_transaction_directly": true,
+  "save_review_screens": false,
+  "transaction_backend_unchanged": true,
+  "ram_bytes": 167292,
+  "flash_app_bytes": 474119,
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false
+}

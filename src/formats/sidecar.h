@@ -11,3 +11,9 @@ bool sidecar_write_mzf(const char *path,loader_mode_t mode);
 
 /* Presence only, including invalid/manual profiles; no payload parsing. */
 bool sidecar_exists(const char *tape_path);
+
+#include <stddef.h>
+/* Pure path construction; output is untouched on error. */
+bool sidecar_build_path(const char *,char *,size_t);
+/* Finds the actual directory spelling. Ambiguous case aliases fail. */
+bool sidecar_find(const char *,char *,size_t,bool *exists);

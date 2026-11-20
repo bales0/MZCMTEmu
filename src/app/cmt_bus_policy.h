@@ -2,11 +2,11 @@
 #include "audio/player.h"
 #include "audio/recorder.h"
 typedef struct { bool sense_high, monitor_enabled, ul_owns_sense; } cmt_bus_outputs_t;
-/* S1 wins over every software state. UL alone owns the handshake line. */
+/* EXTERNAL disables TX only. RX capture and its monitor remain available. */
 static inline cmt_bus_outputs_t cmt_bus_outputs(bool external,bool ul,bool wait_motor,
         player_state_t play,recorder_state_t record,bool tx_monitor) {
     cmt_bus_outputs_t out={true,false,false};
-    if(external)return out;
+    if(external){out.monitor_enabled=record==RECORDER_STATE_RECORDING;return out;}
     if(ul) {out.ul_owns_sense=true;return out;}
     switch(record) {
     case RECORDER_STATE_WAIT_MOTOR:case RECORDER_STATE_PAUSED_USER:case RECORDER_STATE_PAUSED_MOTOR:

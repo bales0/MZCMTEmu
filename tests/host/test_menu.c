@@ -11,6 +11,8 @@ int main(void){
   assert(app_menu_item(&m,n)==MENU_ITEM_COUNT);
   for(unsigned i=0;i<n;++i)assert(section==1 || (app_menu_item(&m,i)!=MENU_ITEM_REC_FORMAT && app_menu_item(&m,i)!=MENU_ITEM_REC_AUTO_SIGNAL && app_menu_item(&m,i)!=MENU_ITEM_AUTONAME));
  }
+ app_menu_t editor={.section=APP_MENU_PLAY,.edit_sidecar=true};
+ assert(app_menu_count(&editor)==6 && app_menu_item(&editor,5)==MENU_ITEM_EDIT_SIDECAR && app_menu_item(&editor,6)==MENU_ITEM_COUNT);
  assert(app_menu_next_record_control(0)==2 && app_menu_next_record_control(2)==1 && app_menu_next_record_control(1)==0);
  puts("PASS separate reference PLAY/RECORD/SYSTEM menus; record settings absent from PLAY, bounded rows/wrap; MOTOR -> AUTO -> MANUAL");
  return 0;

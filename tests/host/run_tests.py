@@ -61,6 +61,8 @@ SUITES = {
     'test_autoname': ['tests/host/test_autoname.c','src/record/record_autoname.c','src/record/record_rename.c',
         'src/formats/mz_title.c','src/formats/mz_tape_decoder.c','src/formats/mz_loader_profiles.c'],
     'test_mzf_writer': ['tests/host/test_mzf_writer.c','src/audio/mzf_writer.c','src/formats/mz_tape_decoder.c','src/formats/mz_loader_profiles.c'],
+    'test_sidecar_faults': ['tests/host/test_sidecar_faults.c','src/formats/sidecar.c','src/formats/file_format.c'],
+    'test_sidecar_editor': ['tests/host/test_sidecar_editor.c','src/formats/sidecar.c','src/formats/sidecar_edit.c','src/formats/file_format.c','src/ui/sidecar_editor.c','src/ui/policy.c','src/drivers/oled.c'],
     'test_quickdisk': ['tests/host/test_quickdisk.c','src/formats/quickdisk.c'],
     'test_route_switch': ['tests/host/test_route_switch.c','src/app/route_switch.c'],
     'test_settings': ['tests/host/test_settings.c','src/config/settings_codec.c','src/config/nvs_settings.c'],
@@ -98,6 +100,8 @@ for name, sources in SUITES.items():
             suite_flags += ['-DCONFIG_MZ_RX_PCNT_GUARD=1']
         if name=='test_recorder':
             suite_flags += ['-DCMT_STORAGE_ASYNC_TEST']
+        if name=='test_sidecar_editor':
+            suite_flags += ['-DSIDECAR_TX_TEST','-DCMT_STORAGE_ASYNC_TEST','-DSC_RENDER_DIR="'+(ROOT/'docs/validation/ui').as_posix()+'"']
         if name=='test_player_rmt':
             suite_flags += ['-DRMT_PLAYER_TEST']
         if name=='test_storage':

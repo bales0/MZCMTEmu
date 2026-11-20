@@ -1,0 +1,23 @@
+{
+  "revision": "r31 EDITOR PREVIEW",
+  "date": "2026-11-20",
+  "firmware_bytes": 475456,
+  "firmware_sha256": "ca3b3f3d57c132c432d44dc8ddbc866186ba5f950ff1745e6a0233697c4c75c0",
+  "elf_sha256": "4a7e3c96906fd85534aeb3dd04762858683a5ac2c9dd226402ab6237a99fe152",
+  "ram_bytes": 167308,
+  "flash_app_bytes": 475027,
+  "app_task_stack_frame_unchanged": 1216,
+  "sidecar_find_stack_frame": 144,
+  "about_old_help_in_binary": false,
+  "suites": [
+    "test_oled_ui",
+    "test_player_rmt",
+    "test_sidecar_editor",
+    "test_player_sharp"
+  ],
+  "result": "PASS GCC14 ASan/UBSan",
+  "build": "PASS",
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false
+}

@@ -1,0 +1,19 @@
+{
+  "revision": "r35 EDITOR SAVE",
+  "date": "2026-11-20",
+  "host_suites": [
+    "test_sidecar_editor",
+    "test_sidecar_faults",
+    "test_oled_ui"
+  ],
+  "host_result": "PASS GCC14 ASan/UBSan",
+  "build": "PASS MZCMTEmu",
+  "ram_bytes": 167292,
+  "flash_program_bytes": 473451,
+  "firmware_bytes": 473872,
+  "sha256": "b9d30fae3b143fe36c0af6b7bfc47af0009bd47f283ba0276ac40ceca4bb193b",
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false,
+  "warning": "Existing unused ui_copy_scroll_text"
+}

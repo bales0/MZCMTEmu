@@ -5,6 +5,7 @@
 #include "drivers/i2c.h"
 #include "ui/ui.h"
 #include "ui/view.h"
+#include "ui/key_icons.h"
 #include "freertos/task.h"
 static TickType_t tick;
 static unsigned calls,fail_at,mode_seen,page_count;
@@ -72,6 +73,9 @@ static unsigned count_text(const char *text){
   if(!memcmp(oled_framebuffer()+page*128+x,glyph,width))++found;
  return found;
 }
+static void expect_no_progress_bar(void){
+ for(int y=48;y<56;++y)for(int x=0;x<128;++x)assert(!pixel(x,y));
+}
 static void expect_stop_icon(void){for(int y=2;y<=6;++y)for(int x=1;x<=5;++x)assert(pixel(x,y));}
 static void graphics(void){
  ui_model_t model={{"/RECORDINGS","","","","","","",""}};
@@ -98,7 +102,7 @@ static void graphics(void){
  qd.tx=(raw_pulse_status_t){.fifo_used=3000,.fifo_capacity=4095,.reserve_us=82000,.time_valid=true,.running=true};
  ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
  expect_text(9,0,"MULTI.QD",1);expect_text(110,0,"2/3",1);
- expect_text(0,56,"35 %",1);expect_text(80,56,"BUF  73%",1);assert(!count_text("PLAY"));artifact("qd-play");
+ expect_text(0,56,"35 %",1);expect_text(80,56,"BUF  73%",1);assert(!count_text("PLAY"));expect_no_progress_bar();artifact("qd-play");
  qd.status="PAUSE USER";qd.tx_expected=false;ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
  expect_text(0,40,"PAUSE USER",1);expect_text(80,56,"BUF  73%",1);artifact("qd-paused");
  qd.status="WAIT MOTOR";ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
@@ -123,6 +127,8 @@ static void graphics(void){
  assert(pixel(0,49) && pixel(127,54) && pixel(20,51) && !pixel(40,51));
  for(int x=0;x<128;++x){assert(!pixel(x,48));}
  artifact("record");
+ ui_set_external(true);tick+=50;ui_render(&model);expect_text(9,0,"WAV 44K EXT",1);assert(pixel(3,1) && pixel(0,4));artifact("record-external");
+ ui_set_external(false);
  view.rx_free=20;ui_set_transport_view(true,&view);tick+=50;ui_render(&model);
  expect_text(0,56,"00:38",1);expect_text(80,56,"BUF  20%",1);expect_text(0,40,"MIN  40%",1);expect_text(110,40,"LOW",1);artifact("record-low");
  view.rx_free=100;view.rx_min=100;ui_set_transport_view(true,&view);tick+=50;ui_render(&model);
@@ -147,8 +153,8 @@ static void graphics(void){
  expect_text(0,16,"OBJ TC1:3 SRC IC1:4",1);expect_text(0,24,"SIZE 100",1);
  expect_text(0,32,"LOAD 1200 EXEC 1200",1);assert(!count_text("TIME"));
  expect_text(0,56,"00:38/02:00",1);expect_text(80,56,"BUF  73%",1);
- assert(!count_text("PLAY") && pixel(0,49) && pixel(127,54) && pixel(70,51) && !pixel(80,51));
- for(unsigned page=0;page<8;++page){if(page==5)continue;unsigned nonzero=0;for(unsigned x=0;x<128;++x)nonzero|=oled_framebuffer()[page*128+x];assert(nonzero);}
+ assert(!count_text("PLAY"));expect_no_progress_bar();
+ for(unsigned page=0;page<8;++page){if(page==5 || page==6)continue;unsigned nonzero=0;for(unsigned x=0;x<128;++x)nonzero|=oled_framebuffer()[page*128+x];assert(nonzero);}
  for(int x=0;x<128;++x){assert(!pixel(x,48));}
  artifact("play");
  int play_top=8,play_bottom=-1,pause_top=8,pause_bottom=-1;
@@ -160,7 +166,7 @@ static void graphics(void){
  view.tx.running=false;view.tx.fifo_used=0;view.tx.reserve_us=0;view.progress=100;view.seconds=120;
  ui_set_transport_view(false,&view);tick+=50;ui_render(&model);
  expect_text(9,0,"FINISHED MZF",1);expect_text(110,0,"1/1",1);expect_stop_icon();assert(count_text("FINISHED")==1);
- assert(!count_text("TIME"));expect_text(0,56,"02:00/02:00",1);expect_text(80,56,"BUF   0%",1);artifact("play-finished");
+ assert(!count_text("TIME"));expect_text(0,56,"02:00/02:00",1);expect_text(80,56,"BUF   0%",1);expect_no_progress_bar();artifact("play-finished");
  view.status="PLAY";view.program.format=FILE_FORMAT_MZT;view.program.record=2;view.program.records=3;
  view.has_info_sidecar=true;view.tx_expected=true;view.tx.running=true;view.tx.fifo_used=3000;view.tx.reserve_us=82000;view.progress=56;
  ui_set_transport_view(false,&view);tick+=50;ui_render(&model);
@@ -173,26 +179,43 @@ static void graphics(void){
   char expected[16];snprintf(expected,sizeof(expected),"BUF %3u%%",fill);expect_text(80,56,expected,1);
  }
  view.total_seconds=0;view.program.format=FILE_FORMAT_LEP;view.progress=42;view.seconds=0;
- ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"42 %",1);assert(!count_text("TIME") && !count_text("00:00") && !count_text("TX "));artifact("play-lep-percent");
+ ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"42 %",1);expect_no_progress_bar();assert(!count_text("TIME") && !count_text("00:00") && !count_text("TX "));expect_no_progress_bar();artifact("play-lep-percent");
  view.status="PAUSE USER";ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"42 %",1);
- view.status="FINISHED";view.progress=100;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"100 %",1);
+ view.status="FINISHED";view.progress=100;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"100 %",1);expect_no_progress_bar();
  view.status="UL HANDSHAKE";ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(80,56,"BUF  -- ",1);
- view.status="PLAY";view.total_seconds=18000;view.seconds=7200;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"2h00/5h00",1);
+ view.status="PLAY";view.total_seconds=18000;view.seconds=7200;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"2h00/5h00",1);expect_no_progress_bar();
  view.status="ERROR";view.tx_expected=false;view.warning="UL TIMEOUT";
  ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,40,"UL TIMEOUT",1);artifact("play-warning");
+ ui_overlay_show("EXTERNAL CMT",1200,2);ui_overlay_show("INTERNAL CMT",1200,2);
+ assert(!strcmp(ui_overlay_current((uint32_t)tick),"INTERNAL CMT"));ui_overlay_clear(true);
  ui_overlay_show("MOTOR",0,1);assert(!strcmp(ui_overlay_current((uint32_t)tick),"MOTOR"));
  tick+=1000;assert(ui_overlay_current((uint32_t)tick));ui_overlay_show("EDGE LOSS",0,3);ui_overlay_show("MOTOR",1000,1);
  assert(!strcmp(ui_overlay_current((uint32_t)tick),"EDGE LOSS"));ui_overlay_clear(false);assert(ui_overlay_current((uint32_t)tick));
  ui_render(&model);artifact("overlay");ui_overlay_clear(true);assert(!ui_overlay_current((uint32_t)tick));
  ui_overlay_show("LONG MESSAGE SECOND LINE READABLE AT 6X8",0,1);tick+=50;ui_render(&model);artifact("overlay-long");ui_overlay_clear(true);
  tick=(TickType_t)-50;ui_overlay_show("CANCELLED",100,1);tick+=70;assert(ui_overlay_current((uint32_t)tick));tick+=31;assert(!ui_overlay_current((uint32_t)tick));
- ui_model_t analysis={{"ANALYZING","","SD / TAPE PREFLIGHT","","STOP TO CANCEL","","",""}};uint8_t frame[8][128];
+ ui_model_t analysis={{"ANALYZING","","SD / TAPE PREFLIGHT","","","","",UI_KEY_STOP " CANCEL"}};uint8_t frame[8][128];
  for(unsigned phase=0;phase<8;++phase){ui_set_analysis_view(phase);tick+=100;ui_render(&analysis);memcpy(frame[phase],oled_framebuffer(),128);
+  expect_text(0,56,UI_KEY_STOP " CANCEL",1);
   unsigned count=0;for(int y=0;y<9;++y)for(int x=108;x<=116;++x)count+=pixel(x,y);assert(count>=9);
   for(unsigned old=0;old<phase;++old)assert(memcmp(frame[phase]+108,frame[old]+108,9));
   char name[32];snprintf(name,sizeof(name),"analysis-%u",phase);artifact(name);
  }
- puts("PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; long durations; FINISHED once with STOP; QD filename, round RECORD versus square STOP, MIN without RX, unified RECORD layout and state/warning priority, overlays and eight animation phases");
+ puts("PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; no redundant PLAY bar with time/percent, RECORD bar retained; long durations; FINISHED once with STOP; QD filename, round RECORD versus square STOP, MIN without RX, unified RECORD layout and state/warning priority, overlays and eight animation phases");
+}
+static void button_icons(void){
+ const char text[]=UI_KEY_PLAY UI_KEY_STOP UI_KEY_REC UI_KEY_PREV UI_KEY_NEXT;
+ oled_clear();oled_text_xy(0,0,text,1,true);uint8_t original[128];memcpy(original,oled_framebuffer(),sizeof(original));
+ for(unsigned key=0;key<5;++key){unsigned nonzero=0;for(unsigned x=0;x<6;++x)nonzero|=original[key*6+x];assert(nonzero);for(unsigned other=0;other<key;++other)assert(memcmp(original+key*6,original+other*6,6));}
+ assert(pixel(6,2) && !pixel(12,2) && pixel(14,2)); /* STOP square, REC rounded. */
+ oled_clear();oled_draw_text(0,text);assert(!memcmp(original,oled_framebuffer(),sizeof(original)));
+ oled_clear();oled_text_xy(0,0,text,2,true);for(unsigned y=0;y<16;++y)for(unsigned x=0;x<60;++x)assert(pixel((int)x,(int)y)==((original[x/2]>>(y/2))&1U));
+ oled_clear();oled_text_xy(123,56,UI_KEY_PLAY,1,true);for(unsigned i=0;i<1024;++i)assert(!oled_framebuffer()[i]);
+ oled_text_xy(122,56,UI_KEY_PLAY,1,true);assert(pixel(122,57));
+ oled_clear();assert(strlen(UI_HELP_OK_CANCEL)<=21);oled_text_xy(0,56,UI_HELP_OK_CANCEL,1,true);
+ for(unsigned i=0;i<7*128;++i)assert(!oled_framebuffer()[i]);
+ oled_text_xy(0,0,"KEY ICONS",1,true);oled_text_xy(0,16,text,1,true);artifact("button-icons-footer");
+ puts("PASS five distinct one-cell key icons, round REC versus STOP, legacy text path, 2x scale, right-edge clipping and single bottom help row");
 }
 int main(void){
  oled_init();
@@ -260,6 +283,7 @@ int main(void){
  ui_render(&model);
  assert(calls==start+17);
  graphics();
+ button_icons();
  puts("PASS actual OLED/UI: SSD1306 page mode, bounded batched packets, 20Hz dirty refresh, clipped text, no unchanged writes, missing-device timeout and command/data failure retry");
  return 0;
 }

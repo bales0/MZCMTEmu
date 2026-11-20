@@ -120,10 +120,11 @@ static void draw_transport(uint32_t now){
  const program_metadata_t *m=&v->program;
  char line[80],load[8],exec[12],caption[20];
  const char *status=v->status ? v->status:"";
- const char *state=external ? "EXTERNAL":status;
+ bool blocked=external && mode==PLAY;
+ const char *state=blocked ? "EXTERNAL":status;
  bool qd=mode==PLAY && m->format==FILE_FORMAT_MZQ;
- bool stopped=!external && (!strcmp(status,"FINISHED") || !strcmp(status,"SAVED") || !strcmp(status,"CANCELLED") || !strcmp(status,"STOPPED") || !strcmp(status,"SELECT RECORD"));
- bool failed=strstr(state,"ERROR") || strstr(state,"UNDERRUN") || external;
+ bool stopped=!blocked && (!strcmp(status,"FINISHED") || !strcmp(status,"SAVED") || !strcmp(status,"CANCELLED") || !strcmp(status,"STOPPED") || !strcmp(status,"SELECT RECORD"));
+ bool failed=strstr(state,"ERROR") || strstr(state,"UNDERRUN") || blocked;
  int symbol=stopped ? 4:failed ? 0:strstr(state,"PAUSE") || strstr(state,"WAIT") ? 2:mode==RECORD ? 3:1;
  icon(symbol);
  if(qd)context_header(9,v->filename ? v->filename:"QD",m->record,m->records,false,v->has_info_sidecar);
@@ -131,6 +132,7 @@ static void draw_transport(uint32_t now){
   if(v->playback_baud)snprintf(caption,sizeof(caption),"TAP %u",v->playback_baud);
   else if(m->format==FILE_FORMAT_WAV && v->sample_rate)snprintf(caption,sizeof(caption),"WAV %luK",(unsigned long)(v->sample_rate/1000));
   else snprintf(caption,sizeof(caption),"%s",format(m->format));
+  if(mode==RECORD && external){size_t n=strlen(caption);snprintf(caption+n,sizeof(caption)-n," EXT");}
   const char *header_state=!strcmp(state,"BETWEEN BLOCKS") ? "WAIT":state;
   if(!strcmp(state,"PLAY") || (mode==RECORD && !strcmp(state,"REC")))snprintf(line,sizeof(line),"%s",caption);
   else snprintf(line,sizeof(line),"%s %s",header_state,caption);
@@ -184,7 +186,9 @@ static void draw_transport(uint32_t now){
  }
  unsigned progress=v->progress;
  if(mode==RECORD && (m->valid&PROGRAM_SIZE))progress=m->declared_size ? (unsigned)((uint64_t)m->received_bytes*100/m->declared_size):100;
- oled_bar(0,49,128,6,progress);
+ /* PLAY already shows current/total time or percent in its footer.
+  * RECORD only shows elapsed time, so retain its byte-progress bar. */
+ if(mode==RECORD)oled_bar(0,49,128,6,progress);
  /* Shared footer: time/progress at left, fixed BUF at x=80. RX uses free space. */
  {
   char buffer[16];
