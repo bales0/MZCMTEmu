@@ -1,0 +1,10 @@
+{
+  "revision": "r36 TEXT PROGRESS",
+  "date": "2026-11-20",
+  "change": "PLAY uses time/percent without duplicate bar; RECORD unchanged pending approval",
+  "host": "PASS test_oled_ui GCC14 ASan/UBSan",
+  "build": "PASS MZCMTEmu",
+  "sha256": "1141b0e9c56e5ee8549167dda2e9087f7c150a446a2a1429e3b98aa4db3d3438",
+  "flashed": false,
+  "committed": false
+}

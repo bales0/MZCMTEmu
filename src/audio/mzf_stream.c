@@ -101,10 +101,9 @@ bool mzf_stream_open(const char *path,mzf_stream_info_t *info) {
     if(!reuse)mzf_stream_close();
     uint16_t record=path && !strcmp(path,selected_path) ? selected_record : 1;
     loader_mode_t mode=path && !strcmp(path,selected_path) ? selected_mode : requested;
-    /* MZF starts from a bounded header/loader preview, with no waveform dry run. */
-    bool fast=file_format_detect_from_name(path)==FILE_FORMAT_MZF;
+    /* Metadata selection stays bounded; PLAY sums MZF duration by buffered bytes. */
     if((!reuse || current.duration_deferred) &&
-       !(fast ? sharp_stream_preview(path,record,mode,&current):sharp_stream_open(path,record,mode,&current))) { local_error=true;
+       !sharp_stream_open(path,record,mode,&current)) { local_error=true;
         return false;
         }
     prepared=false;

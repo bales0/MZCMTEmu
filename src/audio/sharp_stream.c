@@ -284,6 +284,51 @@ void sharp_stream_close(void) {
     mzf_loader_reset();
     mzf_loader_set_source_io(NULL,NULL);
 }
+
+/* Sum a stage by byte, rather than dry-running every emitted half pulse.
+ * The byte table includes a stop with next=short; count the long lookaheads
+ * separately, including checksum and trailer. This preserves MZ800's 45-tick
+ * context adjustment. Only the actual foreground file reader uses this table. */
+static uint32_t duration_byte_ticks[256];
+static uint32_t duration_cycle(bool bit,unsigned region,bool next){
+    uint16_t hi,lo;pulse(bit,region,next,&hi,&lo);return (uint32_t)hi+lo;
+}
+static bool measure_stage_bytes(uint64_t *ticks,bool cancellable){
+    bool tc=tc_trailing();
+    for(unsigned b=0;b<256;++b){
+        uint32_t sum=duration_cycle(true,2,false);
+        for(unsigned bit=0;bit<8;++bit)sum+=duration_cycle((b&(0x80U>>bit))!=0,2,bit==7 || (b&(0x40U>>bit))!=0);
+        duration_byte_ticks[b]=sum;
+    }
+    uint64_t sum=(uint64_t)(mzf_loader_is_ul_active() ? 5500:stage==HEADER ? 11000:5500)*duration_cycle(false,0,false);
+    unsigned mark=stage==HEADER ? 40:20;
+    sum+=(uint64_t)(mark+2)*duration_cycle(true,1,false)+(uint64_t)mark*duration_cycle(false,1,false);
+    uint8_t chunk[512];uint32_t done=0,next_long=0;uint16_t check=0;
+    while(done<stage_length){
+        if(cancellable && analysis_poll(NULL))return false;
+        unsigned n=stage_length-done>sizeof(chunk) ? sizeof(chunk):(unsigned)(stage_length-done);
+        if(stage==HEADER)memcpy(chunk,header+done,n);
+        else if(stage==LOADER)memcpy(chunk,loader_bytes+done,n);
+        else if(stage==EXTRA){if(cmt_fread(chunk,1,n,fp)!=n)return fail();}
+        else if(source_read(chunk,(uint16_t)n)!=(int16_t)n)return fail();
+        for(unsigned i=0;i<n;++i){
+            uint8_t b=chunk[i];sum+=duration_byte_ticks[b];
+            check=(uint16_t)(check+__builtin_popcount((unsigned)b));
+            if(done+i && (b&0x80))++next_long;
+        }
+        done+=n;
+    }
+    if(stage_length && (check&0x8000))++next_long;
+    sum+=duration_byte_ticks[check>>8]+duration_byte_ticks[check&255];
+    if(check&0x80)++next_long;
+    if(!tc)++next_long;
+    int32_t stop_delta=(int32_t)duration_cycle(true,2,true)-(int32_t)duration_cycle(true,2,false);
+    sum=(uint64_t)((int64_t)sum+(int64_t)next_long*stop_delta);
+    if(tc)sum+=(uint64_t)98*duration_cycle(false,2,false);
+    else sum+=duration_cycle(true,2,true)+duration_cycle(true,2,false);
+    *ticks+=sum;step=BOUNDARY;return true;
+}
+
 static bool prepare_record(const char *path,loader_mode_t requested,sharp_stream_info_t *info,bool cancellable,bool measure) {
     (void)mz_title_decode_display(header+1,17,details.title,sizeof(details.title));
     details.payload_bytes=declared_length;
@@ -329,8 +374,11 @@ static bool prepare_record(const char *path,loader_mode_t requested,sharp_stream
     if(!cached && measure){
         unsigned poll_budget=0;
         for(;;){
+            if(stage==FINISHED)break;
             uint16_t high,low;
-            for(;;){
+            if(details.format==FILE_FORMAT_MZF){
+                if(!measure_stage_bytes(&details.total_ticks,cancellable))goto bad;
+            }else for(;;){
                 step_t before=step;
                 if(!cycle(&high,&low))break;
                 details.total_ticks+=(uint32_t)high+low;

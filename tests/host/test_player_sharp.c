@@ -237,7 +237,7 @@ static void all_modes(void) {
         program_metadata_t metadata;
         player_metadata(&metadata);
         assert(metadata.declared_size==4 && metadata.load==0x1200 && metadata.exec==0x1200 && (metadata.valid&PROGRAM_TRANSFER_MODE));
-        assert(player_sharp_details()->total_ticks==0 && player_sharp_details()->duration_deferred);
+        assert(player_sharp_details()->total_ticks>0 && !player_sharp_details()->duration_deferred);
         if(mode==LOADER_MODE_IC_1_4) {
             player_pause_motor();
             assert(player_get_state()==PLAYER_STATE_PAUSED);
@@ -360,9 +360,9 @@ static void fast_mzf_start(void){
  FILE *f=fopen(path,"wb");assert(f);uint8_t h[128]={1};h[19]=payload_size>>8;h[21]=h[23]=0x12;
  assert(fwrite(h,1,128,f)==128);for(unsigned i=0;i<payload_size;++i)assert(fputc((uint8_t)i,f)!=EOF);assert(!fclose(f));
  player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));analysis_calls=0;sharp_stream_set_analysis_control(count_analysis,NULL);
- player_start(path);assert(player_get_state()==PLAYER_STATE_PLAYING && !analysis_calls && !player_get_progress_percent());
- assert(player_sharp_details()->duration_deferred && !player_sharp_details()->total_ticks);
- assert(player_get_total_seconds()==0);
+ player_start(path);assert(player_get_state()==PLAYER_STATE_PLAYING && analysis_calls>0 && analysis_calls<=35 && !player_get_progress_percent());
+ assert(!player_sharp_details()->duration_deferred && player_sharp_details()->total_ticks>0);
+ assert(player_get_total_seconds()>0);
  assert(mzf_stream_transfer_bytes()==payload_size);
  unsigned budget=500000;bool checked_pause=false,checked_data=false;
  while(player_get_state()==PLAYER_STATE_PLAYING){
@@ -383,13 +383,13 @@ static void fast_mzf_start(void){
    }
   }
  }
- assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100 && checked_data && checked_pause && !analysis_calls);
+ assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100 && checked_data && checked_pause && analysis_calls>0 && analysis_calls<=35);
  player_stop();sharp_stream_set_analysis_control(NULL,NULL);assert(!remove(path));
  /* Truncated declared data is rejected before output despite fast start. */
  f=fopen("fast-bad.mzf","wb");assert(f && fwrite(h,1,128,f)==128 && !fclose(f));
  player_start("fast-bad.mzf");assert(player_get_state()==PLAYER_STATE_ERROR && !raw_pulse_is_running());
  player_stop();assert(!remove("fast-bad.mzf"));
- puts("PASS fast MZF: no preflight analysis, queued/header pulses excluded from data progress, exact completed bytes, pause freeze, EOF100 and truncated-file refusal");
+ puts("PASS fast MZF: bounded byte duration scan, queued/header pulses excluded from data progress, exact completed bytes, pause freeze, EOF100 and truncated-file refusal");
 }
 
 static void qd_stop_reuse(void){

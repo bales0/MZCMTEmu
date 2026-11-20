@@ -105,6 +105,7 @@ static tap_speed_t s_tap_speed = TAP_SPEED_1400;
 static tap_stream_info_t s_tap_info;
 static uint64_t s_tap_ticks, s_tap_queued_us, s_tap_final_us;
 static uint64_t s_binary_elapsed_us, s_binary_final_us;
+static uint64_t s_edge_final_us;
 static uint32_t s_binary_source_bytes,s_binary_final_bytes;
 /* 64 KiB UI metadata, allocated once in PSRAM at init, never used by ISR/DMA. */
 static uint8_t *s_record_modes;
@@ -291,6 +292,7 @@ static void player_finish_stop(player_state_t final_state)
 {
     printf("player: finish %s -> %s completed_us=%llu path=%s\n",player_state_name(s_state),player_state_name(final_state),(unsigned long long)raw_pulse_get_completed_us(),s_current_path);
     if(final_state==PLAYER_STATE_ERROR && !__atomic_load_n(&last_error,__ATOMIC_ACQUIRE))player_error("SOURCE / TX ERROR");
+    if (s_edge_tape) s_edge_final_us = raw_pulse_get_completed_us();
     if (s_tap_tape) s_tap_final_us = raw_pulse_get_completed_us();
     if (player_is_wav()) s_wav_final_us=raw_pulse_get_completed_us();
     if (s_binary_tape) {s_binary_final_us=player_binary_elapsed_us();s_binary_final_bytes=player_binary_completed_bytes();}
@@ -458,6 +460,7 @@ void player_init(void)
     memset(&s_tap_info, 0, sizeof(s_tap_info));
     s_tap_ticks = s_tap_queued_us = s_tap_final_us = 0;
     s_binary_elapsed_us = s_binary_final_us = 0;
+    s_edge_final_us=0;
     s_binary_source_bytes=s_binary_final_bytes=0;
     s_binary_waiting = s_binary_motor_low_seen = false;
     memset(&s_info, 0, sizeof(s_info));
@@ -526,6 +529,7 @@ void player_start(const char *path)
         }
     } else if (s_edge_tape) {
         if (!edge_stream_open(path, &s_edge_info)) {
+            if(edge_stream_analysis_cancelled()){player_finish_stop(PLAYER_STATE_STOPPED);s_edge_final_us=0;player_unlock();return;}
             player_error("EDGE FILE OPEN");
             s_state = PLAYER_STATE_ERROR;
             player_unlock();
@@ -1057,23 +1061,8 @@ uint32_t player_get_position_seconds(void)
     }
 
     if (s_edge_tape) {
-        size_t level = raw_pulse_level();
-        uint32_t played_samples = 0U;
-
-        if (s_state == PLAYER_STATE_EOF) {
-            return s_edge_info.total_seconds;
-        }
-
-        if (s_bytes_queued > (uint32_t)level) {
-            played_samples = s_bytes_queued - (uint32_t)level;
-        }
-
-        if (played_samples > s_edge_info.total_samples) {
-            played_samples = s_edge_info.total_samples;
-        }
-
-        return (s_edge_info.sample_rate == 0U) ? 0U :
-            played_samples / s_edge_info.sample_rate;
+        uint64_t elapsed=(s_state==PLAYER_STATE_PLAYING || s_state==PLAYER_STATE_PAUSED) ? raw_pulse_get_completed_us():s_edge_final_us;
+        return (uint32_t)(elapsed/1000000);
     }
 
     return 0;
@@ -1096,7 +1085,7 @@ uint8_t player_get_progress_percent(void)
         uint64_t percent = player_tap_elapsed_us() * 100U / total_us;
         return percent >= 100U ? 99U : (uint8_t)percent;
     }
-    if(s_binary_tape && !mzf_stream_details()->ultrafast && mzf_stream_details()->duration_deferred){
+    if(s_binary_tape && !mzf_stream_details()->ultrafast && (mzf_stream_details()->duration_deferred || mzf_stream_details()->format==FILE_FORMAT_MZF)){
         player_lock();
         bool eof=s_state==PLAYER_STATE_EOF;
         uint32_t total=mzf_stream_transfer_bytes(),done=player_binary_completed_bytes();

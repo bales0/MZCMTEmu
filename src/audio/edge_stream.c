@@ -25,6 +25,27 @@ static uint32_t s_preroll_remaining_us = 0;
 static uint32_t s_tail_remaining_us = 0;
 static bool s_tail_started = false;
 static bool s_monitor_muted;
+static edge_scan_control_fn scan_control;
+static void *scan_context;
+static bool scan_cancelled;
+void edge_stream_set_scan_control(edge_scan_control_fn control,void *context){scan_control=control;scan_context=context;}
+bool edge_stream_analysis_cancelled(void){return scan_cancelled;}
+static bool scan_duration(uint64_t *duration){
+    uint8_t block[1024];uint32_t done=0;uint64_t units=0;
+    *duration=0;
+    while(done<s_total_bytes){
+        edge_scan_action_t action=scan_control ? scan_control(done,s_total_bytes,scan_context):EDGE_SCAN_CONTINUE;
+        if(action==EDGE_SCAN_CANCEL){scan_cancelled=true;return false;}
+        if(action==EDGE_SCAN_SKIP)return cmt_fseek(s_fp,0,SEEK_SET)==0;
+        size_t n=s_total_bytes-done;if(n>sizeof(block))n=sizeof(block);
+        if(cmt_fread(block,1,n,s_fp)!=n)return false;
+        for(size_t i=0;i<n;++i){int value=(int8_t)block[i];units+=value==0 ? EDGE_ZERO_UNITS:value<0 ? (unsigned)-value:(unsigned)value;}
+        done+=(uint32_t)n;
+    }
+    if(scan_control && scan_control(done,s_total_bytes,scan_context)==EDGE_SCAN_CANCEL){scan_cancelled=true;return false;}
+    if(cmt_fseek(s_fp,0,SEEK_SET))return false;
+    *duration=units*(s_is_l16 ? 16U:50U)+EDGE_IDLE_PREROLL_US+EDGE_IDLE_TAIL_US;return true;
+}
 
 static bool detect_l16(const char *path, bool *is_l16)
 {
@@ -85,6 +106,7 @@ static bool get_file_size(cmt_file_t *fp, uint32_t *out)
         return false;
     }
 
+    if((uint64_t)end>UINT32_MAX)return false;
     *out = (uint32_t)end;
     return true;
 }
@@ -95,6 +117,8 @@ bool edge_stream_open(const char *path, edge_stream_info_t *info)
     uint32_t sample_rate;
 
     edge_stream_close();
+    scan_cancelled=false;
+    if(info)memset(info,0,sizeof(*info));
 
     if (!detect_l16(path, &is_l16)) {
         return false;
@@ -122,10 +146,14 @@ bool edge_stream_open(const char *path, edge_stream_info_t *info)
     s_tail_started = false;
     sample_rate = s_is_l16 ? EDGE_L16_SAMPLE_RATE : EDGE_LEP_SAMPLE_RATE;
 
+    uint64_t duration;
+    if(!scan_duration(&duration)){edge_stream_close();return false;}
     if (info != NULL) {
+        info->total_us=duration;
         info->sample_rate = sample_rate;
-        info->total_samples = 0;
-        info->total_seconds = 0;
+        uint64_t samples=duration/(s_is_l16 ? 16U:50U);
+        info->total_samples=samples>UINT32_MAX ? UINT32_MAX:(uint32_t)samples;
+        info->total_seconds=(uint32_t)(duration/1000000);
         info->pulses_per_second = 0;
     }
 

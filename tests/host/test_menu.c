@@ -14,6 +14,12 @@ int main(void){
  app_menu_t editor={.section=APP_MENU_PLAY,.edit_sidecar=true};
  assert(app_menu_count(&editor)==6 && app_menu_item(&editor,5)==MENU_ITEM_EDIT_SIDECAR && app_menu_item(&editor,6)==MENU_ITEM_COUNT);
  assert(app_menu_next_record_control(0)==2 && app_menu_next_record_control(2)==1 && app_menu_next_record_control(1)==0);
+ for(int delta=-1;delta<=1;delta+=2){
+  assert(app_menu_info_move(0,delta)==0 && app_menu_info_move(1,delta)==1);
+  unsigned page=2;for(unsigned i=0;i<4;++i){page=app_menu_info_move(page,delta);assert(page>=2 && page<=5);}assert(page==2);
+ }
+ assert(app_menu_info_move(2,-1)==5 && app_menu_info_move(5,1)==2);
+ puts("PASS ABOUT stays separate; KEYMAP cycles only four key pages in both directions");
  puts("PASS separate reference PLAY/RECORD/SYSTEM menus; record settings absent from PLAY, bounded rows/wrap; MOTOR -> AUTO -> MANUAL");
  return 0;
 }

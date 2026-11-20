@@ -1,0 +1,5 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_oled_ui
+PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; no redundant PLAY bar with time/percent, RECORD bar retained; long durations; FINISHED once with STOP; QD filename, round RECORD versus square STOP, MIN without RX, unified RECORD layout and state/warning priority, overlays and eight animation phases
+PASS five distinct one-cell key icons, round REC versus STOP, legacy text path, 2x scale, right-edge clipping and single bottom help row
+PASS actual OLED/UI: SSD1306 page mode, bounded batched packets, 20Hz dirty refresh, clipped text, no unchanged writes, missing-device timeout and command/data failure retry

@@ -529,14 +529,14 @@ static void menu_exit(void)
 
 static void menu_next(void)
 {
-    if(s_menu_info_page) {s_menu_info_page=s_menu_info_page==5 ? 1:s_menu_info_page+1;return;}
+    if(s_menu_info_page) {s_menu_info_page=app_menu_info_move(s_menu_info_page,1);return;}
     app_menu_move(&s_menu,1);
     s_menu_selected=app_menu_selected(&s_menu);
 }
 
 static void menu_prev(void)
 {
-    if(s_menu_info_page) {s_menu_info_page=s_menu_info_page==1 ? 5:s_menu_info_page-1;return;}
+    if(s_menu_info_page) {s_menu_info_page=app_menu_info_move(s_menu_info_page,-1);return;}
     app_menu_move(&s_menu,-1);
     s_menu_selected=app_menu_selected(&s_menu);
 }
@@ -963,6 +963,31 @@ static bool cancel_image_analysis(void *context)
     if(now-yielded_at>=20000) { yielded_at=now; vTaskDelay(1); }
     return false;
 }
+
+/* LEP/L16 duration scan: no deadline; PLAY skips, STOP cancels the start. */
+static edge_scan_action_t scan_edge_analysis(uint32_t done,uint32_t total,void *context)
+{
+    (void)context;
+    static int64_t yielded_at,shown_at,external_since;
+    static unsigned spinner;
+    int64_t now=esp_timer_get_time();
+    if(!done){yielded_at=now;shown_at=now-100000;external_since=0;}
+    btn_event_t event=buttons_poll();
+    if(event==BTN_STOP || event==BTN_STOP_LONG || gpio_get_level(GPIO_NUM_47))return EDGE_SCAN_CANCEL;
+    if(!route_switch_is_external(switch_signal_is_high()))external_since=0;
+    else if(!external_since)external_since=now;
+    else if(now-external_since>=40000)return EDGE_SCAN_CANCEL;
+    if(event==BTN_PLAY)return EDGE_SCAN_SKIP;
+    if(now-shown_at>=100000 || done==total){
+        char progress[24];unsigned percent=total ? (unsigned)((uint64_t)done*100/total):0;
+        snprintf(progress,sizeof(progress),"%u %%",percent);
+        ui_model_t model={{"ANALYZING","","LEP / L16 DURATION",progress,"","","",UI_HELP_SCAN_SKIP_CANCEL}};
+        shown_at=now;ui_set_analysis_view(spinner++);ui_render(&model);
+    }
+    if(now-yielded_at>=20000){yielded_at=now;vTaskDelay(1);}
+    return EDGE_SCAN_CONTINUE;
+}
+
 static void selector_move(int delta)
 {
     const sharp_stream_info_t *info=player_sharp_details();
@@ -1420,7 +1445,7 @@ static void app_task(void *arg)
 void app_main(void)
 {
     setvbuf(stdout,NULL,_IOLBF,0);
-    printf("MZCMTEmu TX-TRACE r36 TEXT PROGRESS S1 GPIO21 LOW=EXT HIGH=INT 2026-11-20; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
+    printf("MZCMTEmu TX-TRACE r40 EDGE TIME S1 GPIO21 LOW=EXT HIGH=INT 2026-11-20; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
     // Give the USB console time to enumerate.
     vTaskDelay(pdMS_TO_TICKS(500));
     fflush(stdout);
@@ -1431,6 +1456,7 @@ void app_main(void)
     buttons_init();
     sharp_stream_set_analysis_control(cancel_image_analysis,NULL);
     tap_stream_set_scan_control(cancel_image_analysis,NULL);
+    edge_stream_set_scan_control(scan_edge_analysis,NULL);
     file_list_set_scan_control(cancel_image_analysis,NULL);
     ui_init();
 

@@ -9,11 +9,17 @@ extern "C" {
 #endif
 
 typedef struct {
+    uint64_t total_us; /* Exact waveform duration, including preroll and tail; 0 if skipped. */
     uint32_t sample_rate;
     uint32_t total_seconds;
     uint32_t total_samples;
     uint32_t pulses_per_second;
 } edge_stream_info_t;
+
+typedef enum {EDGE_SCAN_CONTINUE,EDGE_SCAN_SKIP,EDGE_SCAN_CANCEL} edge_scan_action_t;
+typedef edge_scan_action_t (*edge_scan_control_fn)(uint32_t done,uint32_t total,void *context);
+void edge_stream_set_scan_control(edge_scan_control_fn control,void *context);
+bool edge_stream_analysis_cancelled(void);
 
 bool edge_stream_open(const char *path, edge_stream_info_t *info);
 void edge_stream_close(void);

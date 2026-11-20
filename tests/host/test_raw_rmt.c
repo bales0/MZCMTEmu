@@ -7,6 +7,7 @@
 #include "soc/rmt_struct.h"
 #ifdef RMT_PLAYER_TEST
 #include "audio/player.h"
+#include "audio/edge_stream.h"
 #include "audio/tap_stream.h"
 #include "audio/mzf_stream.h"
 #include "audio/wav_writer.h"
@@ -537,7 +538,7 @@ static void fast_mzf_rmt_progress(void){
  assert(fwrite(h,1,128,f)==128);for(unsigned i=0;i<1280;++i)assert(fputc((uint8_t)i,f)!=EOF);assert(!fclose(f));
  player_stop();assert(player_set_loader_mode(LOADER_MODE_NORMAL_1_1));
  qd_scan_calls=0;sharp_stream_set_analysis_control(qd_count_scan,NULL);
- player_start(path);unsigned first=transmits;assert(!qd_scan_calls && mzf_stream_transfer_bytes()==1280 && !player_get_progress_percent());
+ player_start(path);unsigned first=transmits;assert(qd_scan_calls>0 && qd_scan_calls<=8 && mzf_stream_transfer_bytes()==1280 && !player_get_progress_percent());
  unsigned budget=100000;bool payload=false,extra=false,paused=false;
  while(player_get_state()==PLAYER_STATE_PLAYING){
   assert(budget--);
@@ -556,7 +557,7 @@ static void fast_mzf_rmt_progress(void){
   if(tx.running && RMT.clock)advance(remaining);else wall_ticks+=10000ULL*16;
   player_service();
  }
- assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100 && payload && extra && paused && !qd_scan_calls);
+ assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100 && payload && extra && paused && qd_scan_calls>0 && qd_scan_calls<=8);
  player_start(path);first=transmits;budget=100000;
  while(transmits-first<2 || raw_pulse_completed_source_bytes()<20){
   assert(budget-- && player_get_state()==PLAYER_STATE_PLAYING);
@@ -564,13 +565,49 @@ static void fast_mzf_rmt_progress(void){
   player_service();
  }
  uint8_t held=player_get_progress_percent();player_stop();advance(1000000ULL*16);player_service();
- assert(player_get_progress_percent()==held && !qd_scan_calls && !tx.running && !pin);
+ assert(player_get_progress_percent()==held && qd_scan_calls>0 && qd_scan_calls<=8 && !tx.running && !pin);
  sharp_stream_set_analysis_control(NULL,NULL);assert(!remove(path));
  f=fopen("empty.mzf","wb");h[19]=0;assert(f && fwrite(h,1,128,f)==128 && !fclose(f));
  player_start("empty.mzf");assert(!mzf_stream_transfer_bytes() && !player_get_progress_percent());drain_player();
  assert(player_get_progress_percent()==100);player_stop();assert(!remove("empty.mzf"));
- puts("PASS actual RMT fast MZF: no analysis, completed payload/append bytes across RMT resets, pause/STOP freeze, EOF100 and zero-length file");
+ puts("PASS actual RMT fast MZF: bounded byte timing, completed payload/append bytes across RMT resets, pause/STOP freeze, EOF100 and zero-length file");
 }
+
+static unsigned edge_scan_choice,edge_scan_polls;
+static edge_scan_action_t edge_player_scan(uint32_t done,uint32_t total,void *context){
+ (void)context;assert(!tx.running && total==4096);++edge_scan_polls;
+ if(edge_scan_choice==1 && done)return EDGE_SCAN_SKIP;
+ if(edge_scan_choice==2 && done>=3072)return EDGE_SCAN_CANCEL;
+ return EDGE_SCAN_CONTINUE;
+}
+static void edge_time_player(void){
+ for(unsigned format=0;format<2;++format){
+  const char *path=format ? "time.l16":"time.lep";FILE *f=fopen(path,"wb");assert(f);
+  for(unsigned i=0;i<4096;++i)assert(fputc(127,f)!=EOF);
+  assert(!fclose(f));uint64_t expected=800000+4096ULL*127*(format ? 16:50);
+  edge_stream_set_scan_control(edge_player_scan,NULL);
+  for(unsigned skip=0;skip<2;++skip){
+   edge_scan_choice=skip;edge_scan_polls=0;uint64_t before=active_ticks;
+   player_start(path);assert(player_get_state()==PLAYER_STATE_PLAYING && !player_get_position_seconds());
+   assert(player_get_total_seconds()==(skip ? 0:expected/1000000));
+   assert(edge_scan_polls==(skip ? 2:5));unsigned polls=edge_scan_polls;
+   advance(1200000ULL*16);player_service();assert(player_get_position_seconds()==1);
+   player_pause_user();unsigned held=player_get_position_seconds();advance(2000000ULL*16);player_service();
+   assert(player_get_state()==PLAYER_STATE_PAUSED && player_get_position_seconds()==held);
+   player_resume_user();drain_player();
+   assert(player_get_state()==PLAYER_STATE_EOF && active_ticks-before==expected*16 && player_get_position_seconds()==expected/1000000);
+   assert(player_get_progress_percent()==100 && edge_scan_polls==polls);
+  }
+  edge_scan_choice=2;unsigned starts=transmits;player_start(path);
+  assert(player_get_state()==PLAYER_STATE_STOPPED && transmits==starts && !tx.running && !pin && !player_get_position_seconds());
+  edge_scan_choice=0;player_start(path);assert(player_get_state()==PLAYER_STATE_PLAYING);
+  advance(1200000ULL*16);player_service();player_stop();unsigned held=player_get_position_seconds();
+  advance(2000000ULL*16);player_service();assert(held==1 && player_get_position_seconds()==held && !tx.running && !pin);
+  edge_stream_set_scan_control(NULL,NULL);assert(!remove(path));
+ }
+ puts("PASS actual LEP/L16 player/RMT: exact scanned duration, physical elapsed time, PLAY skip preserves complete waveform, STOP scan emits nothing, pause/STOP freeze and clean restart");
+}
+
 /* A sparse WAV prefill must outlast RMT's initial 128-symbol lookahead. */
 static void wav_sparse_prefill(void) {
  const unsigned rates[]={44100,48000,96000};
@@ -601,6 +638,7 @@ static void wav_sparse_prefill(void) {
 int main(void) {
  setvbuf(stdout,NULL,_IONBF,0);
  player_init();
+ edge_time_player();
  qd_rmt_sequence();
  fast_mzf_rmt_progress();
  fixture("dma.mzf");
@@ -613,13 +651,14 @@ int main(void) {
   uint64_t expected=reference.total_ticks;sharp_stream_close();
   qd_scan_calls=0;sharp_stream_set_analysis_control(qd_count_scan,NULL);
   player_start("dma.mzf");
-  assert(!qd_scan_calls);
-  assert(player_get_state()==PLAYER_STATE_PLAYING && player_sharp_details()->duration_deferred && !player_sharp_details()->total_ticks);
+  assert(qd_scan_calls>0 && qd_scan_calls<6);
+  unsigned timing_reads=qd_scan_calls;
+  assert(player_get_state()==PLAYER_STATE_PLAYING && !player_sharp_details()->duration_deferred && player_sharp_details()->total_ticks==expected);
   drain_player();
-  assert(active_ticks-before==expected && !qd_scan_calls);sharp_stream_set_analysis_control(NULL,NULL);
+  assert(active_ticks-before==expected && qd_scan_calls==timing_reads);sharp_stream_set_analysis_control(NULL,NULL);
   if(mode>=2 && mode<=4)assert(sense==1 && !monitor);
  }
- puts("PASS MZF all 17 modes: zero preflight analysis callbacks, exact output durations unchanged against measured codec");
+ puts("PASS MZF all 17 modes: bounded byte duration scan, exact output durations unchanged against measured codec");
  assert(!remove("dma.mzf"));
  large_ul800_fixture();
  for(unsigned mode=LOADER_MODE_UL;mode<=LOADER_MODE_UL_MZ700;++mode){

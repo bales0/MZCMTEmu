@@ -96,17 +96,32 @@ static void graphics(void){
  qd.program.format=FILE_FORMAT_MZQ;qd.program.protocol=PROGRAM_SHARP;qd.program.record=2;qd.program.records=3;
  qd.program.confidence=PROGRAM_HEADER_VALID;qd.program.valid=PROGRAM_TITLE;strcpy(qd.program.title,"SECOND PROGRAM");
  ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
- expect_text(9,0,"MULTI.QD",1);expect_text(110,0,"2/3",1);expect_text(0,40,"SELECT RECORD",1);
- expect_stop_icon();artifact("qd-selector");
+ expect_text(9,0,"QD",1);expect_text(110,0,"2/3",1);expect_text(0,8,"SECOND PROGRAM",1);assert(!count_text("SELECT RECORD") && !count_text("MULTI.QD"));
+ for(int y=40;y<48;++y)for(int x=0;x<128;++x)assert(!pixel(x,y));
+ expect_stop_icon();
+ for(int y=48;y<64;++y)for(int x=0;x<128;++x)assert(!pixel(x,y));
+ artifact("qd-selector");
  qd.status="PLAY";qd.progress=35;qd.tx_expected=true;
  qd.tx=(raw_pulse_status_t){.fifo_used=3000,.fifo_capacity=4095,.reserve_us=82000,.time_valid=true,.running=true};
  ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
- expect_text(9,0,"MULTI.QD",1);expect_text(110,0,"2/3",1);
+ expect_text(9,0,"QD",1);expect_text(110,0,"2/3",1);
  expect_text(0,56,"35 %",1);expect_text(80,56,"BUF  73%",1);assert(!count_text("PLAY"));expect_no_progress_bar();artifact("qd-play");
+ qd.seconds=38;qd.total_seconds=120;ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
+ expect_text(0,56,"00:38/02:00",1);expect_text(80,56,"BUF  73%",1);artifact("qd-play-time");
  qd.status="PAUSE USER";qd.tx_expected=false;ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
- expect_text(0,40,"PAUSE USER",1);expect_text(80,56,"BUF  73%",1);artifact("qd-paused");
+ expect_text(9,0,"PAUSE USER QD",1);expect_text(110,0,"2/3",1);
+ assert(count_text("PAUSE USER")==1);expect_text(80,56,"BUF  73%",1);artifact("qd-paused");
+ qd.status="PAUSE MOTOR";qd.has_info_sidecar=true;ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
+ expect_text(9,0,"PAUSE MOTOR QD",1);expect_text(110,0,"2I3",1);assert(count_text("PAUSE MOTOR")==1);
+ expect_text(0,56,"00:38/02:00",1);expect_text(80,56,"BUF  73%",1);artifact("qd-motor-paused");
  qd.status="WAIT MOTOR";ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
- expect_text(0,40,"WAIT MOTOR",1);artifact("qd-wait");
+ expect_text(9,0,"WAIT MOTOR QD",1);assert(count_text("WAIT MOTOR")==1);artifact("qd-wait");
+ qd.status="ERROR";qd.warning="UL TIMEOUT";ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
+ expect_text(9,0,"ERROR QD",1);expect_text(0,40,"UL TIMEOUT",1);artifact("qd-warning");
+ qd.warning=NULL;qd.status="SELECT RECORD";ui_set_transport_view(false,&qd);tick+=50;ui_render(&model);
+ expect_text(9,0,"QD",1);expect_text(110,0,"2I3",1);expect_stop_icon();assert(!count_text("SELECT RECORD"));
+ for(int y=40;y<64;++y)for(int x=0;x<128;++x)assert(!pixel(x,y));
+ artifact("qd-selector-return");
  ui_transport_view_t view={0};view.status="REC";view.filename="DIZZY 5";view.program.format=FILE_FORMAT_WAV;
  view.program.protocol=PROGRAM_SHARP;view.program.confidence=PROGRAM_HEADER_VALID;view.sample_rate=44100;
  view.program.valid=PROGRAM_TYPE|PROGRAM_SIZE|PROGRAM_TITLE|PROGRAM_LOAD|PROGRAM_EXEC|PROGRAM_RECORDED_MODE;
@@ -124,7 +139,7 @@ static void graphics(void){
  }
  assert(!count_text("RX"));
  expect_text(0,56,"00:38",1);expect_text(80,56,"BUF  80%",1);expect_text(0,40,"MIN  40%",1);
- assert(pixel(0,49) && pixel(127,54) && pixel(20,51) && !pixel(40,51));
+ expect_no_progress_bar();
  for(int x=0;x<128;++x){assert(!pixel(x,48));}
  artifact("record");
  ui_set_external(true);tick+=50;ui_render(&model);expect_text(9,0,"WAV 44K EXT",1);assert(pixel(3,1) && pixel(0,4));artifact("record-external");
@@ -142,13 +157,13 @@ static void graphics(void){
  view.status="WAIT MOTOR";ui_set_transport_view(true,&view);tick+=50;ui_render(&model);expect_text(9,0,"WAIT MOTOR WAV 44K",1);
  view.status="SAVING";ui_set_transport_view(true,&view);tick+=50;ui_render(&model);expect_text(9,0,"SAVING WAV 44K",1);artifact("record-saving");
  view.status="SAVED";view.program.received_bytes=100;ui_set_transport_view(true,&view);tick+=50;ui_render(&model);
- expect_text(9,0,"SAVED WAV 44K",1);expect_stop_icon();assert(count_text("SAVED")==1 && pixel(126,51));artifact("record-saved");
+ expect_text(9,0,"SAVED WAV 44K",1);expect_stop_icon();assert(count_text("SAVED")==1);artifact("record-saved");
  view.status="ERROR";view.warning="EDGE LOSS";ui_set_transport_view(true,&view);tick+=50;ui_render(&model);
  expect_text(9,0,"ERROR WAV 44K",1);expect_text(0,40,"EDGE LOSS",1);expect_text(0,56,"00:38",1);expect_text(80,56,"BUF 100%",1);artifact("record-error");
  view.warning=NULL;
  view.status="PLAY";view.record_active=false;view.tx_expected=true;view.total_seconds=120;
  view.tx=(raw_pulse_status_t){.fifo_used=3000,.fifo_capacity=4095,.reserve_us=82000,.time_valid=true,.running=true};
- view.program.valid|=PROGRAM_TRANSFER_MODE;view.program.transfer_loader_mode=LOADER_MODE_TC_1_3;view.progress=56;
+ view.program.valid|=PROGRAM_TRANSFER_MODE;view.program.transfer_loader_mode=LOADER_MODE_TC_1_3;view.progress=56;view.program.format=FILE_FORMAT_MZF;
  ui_set_transport_view(false,&view);tick+=50;ui_render(&model);
  expect_text(0,16,"OBJ TC1:3 SRC IC1:4",1);expect_text(0,24,"SIZE 100",1);
  expect_text(0,32,"LOAD 1200 EXEC 1200",1);assert(!count_text("TIME"));
@@ -182,6 +197,9 @@ static void graphics(void){
  ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"42 %",1);expect_no_progress_bar();assert(!count_text("TIME") && !count_text("00:00") && !count_text("TX "));expect_no_progress_bar();artifact("play-lep-percent");
  view.status="PAUSE USER";ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"42 %",1);
  view.status="FINISHED";view.progress=100;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"100 %",1);expect_no_progress_bar();
+ view.status="PLAY";view.total_seconds=120;view.seconds=38;
+ for(unsigned f=0;f<2;++f){view.program.format=f ? FILE_FORMAT_L16:FILE_FORMAT_LEP;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"00:38/02:00",1);expect_no_progress_bar();}
+ artifact("edge-play-time");
  view.status="UL HANDSHAKE";ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(80,56,"BUF  -- ",1);
  view.status="PLAY";view.total_seconds=18000;view.seconds=7200;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,56,"2h00/5h00",1);expect_no_progress_bar();
  view.status="ERROR";view.tx_expected=false;view.warning="UL TIMEOUT";
@@ -201,7 +219,32 @@ static void graphics(void){
   for(unsigned old=0;old<phase;++old)assert(memcmp(frame[phase]+108,frame[old]+108,9));
   char name[32];snprintf(name,sizeof(name),"analysis-%u",phase);artifact(name);
  }
- puts("PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; no redundant PLAY bar with time/percent, RECORD bar retained; long durations; FINISHED once with STOP; QD filename, round RECORD versus square STOP, MIN without RX, unified RECORD layout and state/warning priority, overlays and eight animation phases");
+ ui_model_t edge_scan={{"ANALYZING","","LEP / L16 DURATION","90 %","","","",UI_HELP_SCAN_SKIP_CANCEL}};
+ ui_set_analysis_view(3);tick+=100;ui_render(&edge_scan);
+ expect_text(0,24,"90 %",1);expect_text(0,56,UI_HELP_SCAN_SKIP_CANCEL,1);artifact("edge-analysis-90");
+ puts("PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; no redundant PLAY bar with time/percent, RECORD uses elapsed/estimated total without bar; long durations; FINISHED once with STOP; QD/MZF shared status header, no SELECT RECORD text or selector footer, round RECORD versus square STOP, MIN without RX, unified RECORD layout and state/warning priority, overlays and eight animation phases");
+}
+static void record_estimate(void){
+ ui_view_reset();ui_model_t model={0};ui_transport_view_t v={0};
+ v.status="REC";v.record_active=true;v.session=77;v.seconds=20;v.rx_free=v.rx_min=100;
+ v.program.valid=PROGRAM_SIZE;v.program.declared_size=100;v.program.confidence=PROGRAM_HEADER_VALID;
+ ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_no_progress_bar();expect_text(0,56,"00:20        ",1);
+ v.program.received_bytes=20;v.seconds=30;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);
+ expect_text(0,56,"00:30/~01:10",1);expect_text(80,56,"BUF 100%",1);expect_no_progress_bar();artifact("record-estimated-time");
+ v.record_active=false;v.status="PAUSE USER";ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:30/~01:10",1);
+ v.record_active=true;v.status="REC";v.program.received_bytes=60;v.seconds=40;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:40/~00:54",1);
+ v.program.received_bytes=5;v.seconds=41;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:41        ",1);
+ v.program.received_bytes=10;v.seconds=42;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:42/~01:00",1);
+ v.program.record=2;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:42        ",1);
+ v.program.received_bytes=30;v.seconds=43;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:43/~00:47",1);
+ ++v.session;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:43        ",1);
+ v.program.valid=0;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:43        ",1);artifact("record-unknown-time");
+ v.program.valid=PROGRAM_SIZE;v.program.declared_size=0;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"00:43        ",1);
+ v.program.declared_size=100;v.program.received_bytes=0;v.seconds=0;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);
+ v.program.received_bytes=20;v.seconds=7200;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"2h00/~10h00",1);
+ v.program.received_bytes=100;v.seconds=7300;v.status="SAVED";v.record_active=false;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"2h01/~2h01",1);expect_no_progress_bar();
+ v.program.confidence=PROGRAM_INVALID;ui_set_transport_view(true,&v);tick+=50;ui_render(&model);expect_text(0,56,"121:40       ",1);
+ puts("PASS RECORD no bar; measured payload total duration marked ~, paused/resumed progress, reset on session/record/counter changes, unknown and zero size, completion, invalid metadata and long durations");
 }
 static void button_icons(void){
  const char text[]=UI_KEY_PLAY UI_KEY_STOP UI_KEY_REC UI_KEY_PREV UI_KEY_NEXT;
@@ -283,6 +326,7 @@ int main(void){
  ui_render(&model);
  assert(calls==start+17);
  graphics();
+ record_estimate();
  button_icons();
  puts("PASS actual OLED/UI: SSD1306 page mode, bounded batched packets, 20Hz dirty refresh, clipped text, no unchanged writes, missing-device timeout and command/data failure retry");
  return 0;

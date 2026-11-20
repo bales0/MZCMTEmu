@@ -1,0 +1,19 @@
+{
+  "revision": "r39 UNIFIED QD",
+  "date": "2026-11-20",
+  "changes": [
+    "QD and MZF share status/format header with index; program title below",
+    "No SELECT RECORD text and no duplicated QD status on row 5",
+    "Warnings retained; QD selector footer stays empty even after playback/error"
+  ],
+  "host": "PASS test_oled_ui GCC14 ASan/UBSan",
+  "build": "PASS MZCMTEmu",
+  "ram_bytes": 168348,
+  "flash_program_bytes": 474895,
+  "firmware_bytes": 475312,
+  "sha256": "9e2ced104ae71bacd13b6ac121ff1afdc43400b4598f9ba08a498b2d781f361b",
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false,
+  "warning": "Existing unused ui_copy_scroll_text"
+}

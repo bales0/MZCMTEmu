@@ -1,4 +1,4 @@
-> Aktuální r35 (20. 11. 2026): [sidecar editor](docs/SIDECAR_EDITOR.md). SAVE/CANCEL je třetí položka menu hned pod LOADER se stejným kurzorem a trvalými ikonami tlačítek. SAVING… během zápisu, po úspěchu přímo návrat do editoru bez SAVED. Tři host sady s ASan/UBSan i cílový build PASS. Bez commitu a nahrání; HW ověření zbývá.
+> Aktuální r40 (20. 11. 2026): LEP/L16 mají blokovou analýzu délky s procenty dokončení, bez časového limitu. ▶ přeskočí do PLAY s procenty, ■ zruší start; dokončená analýza zobrazí aktuální/celkový čas. Uplynulý čas odpovídá fyzicky odvysílanému signálu. Sedm host sad s ASan/UBSan i cílový build PASS. [Souhrn](docs/validation/edge-time-summary.json). Bez commitu a nahrání; HW ověření zbývá.
 
 > Aktuální r33 (20. 11. 2026): [zjednodušený sidecar editor](docs/SIDECAR_EDITOR.md). Jeden řádek LOADER s rychlostí; SAVE CHANGES rovnou spouští bezpečnou transakci bez přehledu a CREATE/UPDATE dialogu. Potvrzení profilu zachováno. Tři host sady a cílový build PASS; HW ověření zbývá.
 

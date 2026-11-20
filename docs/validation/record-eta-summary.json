@@ -1,0 +1,23 @@
+{
+  "revision": "r37 RECORD ETA",
+  "date": "2026-11-20",
+  "changes": [
+    "ABOUT fixed single page; KEYMAP independently wraps pages 2..5",
+    "No RECORD progress bar; elapsed time and fixed BUF",
+    "Payload byte/time deltas estimate remaining time marked ~; unknown duration keeps elapsed only"
+  ],
+  "host_suites": [
+    "test_menu",
+    "test_oled_ui"
+  ],
+  "host_result": "PASS GCC14 ASan/UBSan",
+  "build": "PASS MZCMTEmu",
+  "ram_bytes": 167324,
+  "flash_program_bytes": 473787,
+  "firmware_bytes": 474208,
+  "firmware_sha256": "06640b281796cf7f24ceaee948535a9af555dc05057f3b887df8076358299bcd",
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false,
+  "warning": "Existing unused ui_copy_scroll_text"
+}

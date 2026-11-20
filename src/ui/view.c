@@ -16,6 +16,24 @@ static bool external,browser_has_info;
 static unsigned analysis_phase;
 static ui_marquee_t marquee,details_marquee;
 static ui_headroom_t recovery;
+/* Estimate from decoded payload deltas, excluding the preceding header. */
+static struct {bool valid,estimated;uint32_t size,record,bytes,seconds,last_bytes,total;} record_eta;
+static void update_record_eta(const ui_transport_view_t *v){
+ const program_metadata_t *m=&v->program;
+ if(!(m->valid&PROGRAM_SIZE) || !m->declared_size || m->confidence==PROGRAM_INVALID){memset(&record_eta,0,sizeof(record_eta));return;}
+ if(!record_eta.valid || record_eta.size!=m->declared_size || record_eta.record!=m->record ||
+    m->received_bytes<record_eta.last_bytes || v->seconds<record_eta.seconds){
+  memset(&record_eta,0,sizeof(record_eta));record_eta.valid=true;record_eta.size=m->declared_size;record_eta.record=m->record;
+  record_eta.bytes=m->received_bytes;record_eta.seconds=v->seconds;
+ }
+ if(m->received_bytes>=m->declared_size){record_eta.total=v->seconds;record_eta.estimated=true;}
+ else if(m->received_bytes>record_eta.last_bytes && m->received_bytes>record_eta.bytes && v->seconds>record_eta.seconds){
+  uint32_t bytes=m->received_bytes-record_eta.bytes;
+  uint64_t estimate=((uint64_t)(m->declared_size-m->received_bytes)*(v->seconds-record_eta.seconds)+bytes-1)/bytes;
+  estimate+=v->seconds;record_eta.total=estimate>UINT32_MAX ? UINT32_MAX:(uint32_t)estimate;record_eta.estimated=true;
+ }
+ record_eta.last_bytes=m->received_bytes;
+}
 static char overlay[48];
 static uint32_t overlay_started,overlay_duration;
 static unsigned overlay_priority;
@@ -40,12 +58,12 @@ void ui_set_browser_view(const char *const names[FILE_LIST_VIEW_ROWS],int curren
  total=count;browser_has_info=has_info_sidecar;
 }
 void ui_set_transport_view(bool record,const ui_transport_view_t *view){
- if(transport.session!=view->session || mode!=(record ? RECORD:PLAY)){recovery.valid=false;
+ if(transport.session!=view->session || mode!=(record ? RECORD:PLAY)){recovery.valid=false;memset(&record_eta,0,sizeof(record_eta));
  marquee.valid=false;details_marquee.valid=false;
  }
  transport=*view;
  mode=record ? RECORD:PLAY;
- if(record)(void)ui_headroom_update(&recovery,view->rx_free,now_ms());
+ if(record){(void)ui_headroom_update(&recovery,view->rx_free,now_ms());update_record_eta(view);}
 }
 void ui_overlay_show(const char *text,uint32_t duration,unsigned priority){
  uint32_t now=now_ms();
@@ -65,6 +83,7 @@ void ui_view_reset(void){mode=TEXT;
 memset(&marquee,0,sizeof(marquee));
 memset(&details_marquee,0,sizeof(details_marquee));
 memset(&recovery,0,sizeof(recovery));
+memset(&record_eta,0,sizeof(record_eta));
 memset(&transport,0,sizeof(transport));
 overlay[0]=0;
 external=false;browser_has_info=false;analysis_phase=0;
@@ -127,14 +146,13 @@ static void draw_transport(uint32_t now){
  bool failed=strstr(state,"ERROR") || strstr(state,"UNDERRUN") || blocked;
  int symbol=stopped ? 4:failed ? 0:strstr(state,"PAUSE") || strstr(state,"WAIT") ? 2:mode==RECORD ? 3:1;
  icon(symbol);
- if(qd)context_header(9,v->filename ? v->filename:"QD",m->record,m->records,false,v->has_info_sidecar);
- else {
+ {
   if(v->playback_baud)snprintf(caption,sizeof(caption),"TAP %u",v->playback_baud);
   else if(m->format==FILE_FORMAT_WAV && v->sample_rate)snprintf(caption,sizeof(caption),"WAV %luK",(unsigned long)(v->sample_rate/1000));
   else snprintf(caption,sizeof(caption),"%s",format(m->format));
   if(mode==RECORD && external){size_t n=strlen(caption);snprintf(caption+n,sizeof(caption)-n," EXT");}
   const char *header_state=!strcmp(state,"BETWEEN BLOCKS") ? "WAIT":state;
-  if(!strcmp(state,"PLAY") || (mode==RECORD && !strcmp(state,"REC")))snprintf(line,sizeof(line),"%s",caption);
+  if(!strcmp(state,"PLAY") || (qd && !strcmp(state,"SELECT RECORD")) || (mode==RECORD && !strcmp(state,"REC")))snprintf(line,sizeof(line),"%s",caption);
   else snprintf(line,sizeof(line),"%s %s",header_state,caption);
   if(m->records)context_header(9,line,m->record,m->records,false,v->has_info_sidecar);
   else oled_text_xy(9,0,line,1,true);
@@ -174,9 +192,9 @@ static void draw_transport(uint32_t now){
  else if(v->tx_expected){unsigned reserve=v->tx.time_valid ? (v->tx.reserve_us>=100000 ? 100:(unsigned)(v->tx.reserve_us/1000)):fill;
   alarm=ui_buffer_alarm((uint8_t)reserve);
  }
- /* QD keeps its filename in the header; row 5 carries its status. */
+ /* Transport state is in the shared header; row 5 is for warnings. */
  if(mode==RECORD)snprintf(line,sizeof(line),"MIN %3u%%",v->rx_min);
- else snprintf(line,sizeof(line),"%s",qd && strcmp(state,"PLAY") ? state:"");
+ else line[0]=0;
  if(v->warning && v->warning[0])row_text(5,v->warning);
  else {
   if(alarm!=UI_BUFFER_OK){const char *label=alarm==UI_BUFFER_BAD ? "BAD":alarm==UI_BUFFER_CRITICAL ? "CRIT":"LOW";
@@ -185,17 +203,21 @@ static void draw_transport(uint32_t now){
   }else row_text(5,line);
  }
  unsigned progress=v->progress;
- if(mode==RECORD && (m->valid&PROGRAM_SIZE))progress=m->declared_size ? (unsigned)((uint64_t)m->received_bytes*100/m->declared_size):100;
- /* PLAY already shows current/total time or percent in its footer.
-  * RECORD only shows elapsed time, so retain its byte-progress bar. */
- if(mode==RECORD)oled_bar(0,49,128,6,progress);
+ /* The QD selector is a minibrowser, without transfer statistics. */
+ if(qd && !strcmp(status,"SELECT RECORD"))return;
  /* Shared footer: time/progress at left, fixed BUF at x=80. RX uses free space. */
  {
   char buffer[16];
   if(mode==RECORD)snprintf(buffer,sizeof(buffer),"BUF %3u%%",v->rx_free);
   else if(strstr(state,"UL") || !v->tx.fifo_capacity)strcpy(buffer,"BUF  -- ");
   else snprintf(buffer,sizeof(buffer),"BUF %3u%%",fill);
-  if(mode==RECORD)snprintf(line,sizeof(line),"%02lu:%02lu",(unsigned long)(v->seconds/60),(unsigned long)(v->seconds%60));
+  if(mode==RECORD){
+   if(record_eta.estimated){
+    uint32_t left=record_eta.total<v->seconds ? v->seconds:record_eta.total;
+    if(v->seconds<6000 && left<6000)snprintf(line,sizeof(line),"%02lu:%02lu/~%02lu:%02lu",(unsigned long)(v->seconds/60),(unsigned long)(v->seconds%60),(unsigned long)(left/60),(unsigned long)(left%60));
+    else snprintf(line,sizeof(line),"%luh%02lu/~%luh%02lu",(unsigned long)(v->seconds/3600),(unsigned long)(v->seconds/60%60),(unsigned long)(left/3600),(unsigned long)(left/60%60));
+   }else snprintf(line,sizeof(line),"%02lu:%02lu",(unsigned long)(v->seconds/60),(unsigned long)(v->seconds%60));
+  }
   else if(v->total_seconds){
    uint32_t total=v->total_seconds;
    if(v->seconds<6000 && total<6000)

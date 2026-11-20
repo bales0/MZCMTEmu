@@ -369,6 +369,29 @@ static void ul800_startup_waits(void) {
  puts("PASS UL800 700ms startup, 1ms ready, missing first WRITE LOW versus missing first data ACK HIGH; phase diagnostics and safe failure");
 }
 
+
+static void byte_duration_equivalence(void){
+ const unsigned sizes[]={0,1,257,6144,65535};
+ const loader_mode_t modes[]={LOADER_MODE_NORMAL_1_1,LOADER_MODE_NORMAL_1_4,LOADER_MODE_IC_1_4,LOADER_MODE_TC_1_3,LOADER_MODE_MZ700_1X,LOADER_MODE_MZ700_3X};
+ for(unsigned n=0;n<sizeof(sizes)/sizeof(sizes[0]);++n){
+  for(unsigned ext=0;ext<2;++ext){
+   const char *path=ext ? "duration.m12":"duration.mzf";FILE *f=fopen(path,"wb");assert(f);
+   uint8_t h[128];memcpy(h,original,128);h[18]=(uint8_t)sizes[n];h[19]=(uint8_t)(sizes[n]>>8);
+   assert(fwrite(h,1,128,f)==128);
+   for(unsigned b=0;b<sizes[n]+17;++b)assert(fputc((uint8_t)(b*37U),f)!=EOF);
+   assert(!fclose(f));
+  }
+  for(unsigned mode=0;mode<sizeof(modes)/sizeof(modes[0]);++mode){
+   sharp_stream_info_t fast,wave;
+   assert(sharp_stream_open("duration.mzf",1,modes[mode],&fast));sharp_stream_close();
+   assert(sharp_stream_open("duration.m12",1,modes[mode],&wave));sharp_stream_close();
+   assert(!fast.duration_deferred && fast.total_ticks==wave.total_ticks && fast.effective==wave.effective);
+  }
+  assert(!remove("duration.mzf") && !remove("duration.m12"));
+ }
+ puts("PASS byte-summed MZF durations equal waveform FSM for empty/1/257/6144/65535-byte mixed data, checksum overflow, appended data, six timing/loader families and fallback");
+}
+
 int main(void) {
  original[0]=1;
  memcpy(original+1,"TEST\r",5);
@@ -378,6 +401,7 @@ int main(void) {
  qd_fixture();
  all_modes("test.mzq");
  ul800_startup_waits();
+ byte_duration_equivalence();
  high_loaders();
  metadata();
  bounds();

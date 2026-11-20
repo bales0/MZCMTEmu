@@ -22,3 +22,9 @@ static inline unsigned app_menu_index(const app_menu_t *m){return m->index;}
 static inline menu_item_t app_menu_selected(const app_menu_t *m){return app_menu_item(m,m->index);}
 static inline void app_menu_move(app_menu_t *m,int delta){unsigned n=app_menu_count(m);m->index=delta>0 ? (m->index+1)%n:(m->index+n-1)%n;}
 static inline unsigned app_menu_next_record_control(unsigned value){return value==0 ? 2:value==2 ? 1:0;}
+
+/* ABOUT is page 1; only KEYMAP pages 2..5 form a navigation cycle. */
+static inline unsigned app_menu_info_move(unsigned page,int delta){
+ if(page<2 || page>5)return page;
+ return delta>0 ? (page==5 ? 2:page+1):(page==2 ? 5:page-1);
+}

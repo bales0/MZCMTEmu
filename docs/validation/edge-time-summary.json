@@ -1,0 +1,28 @@
+{
+  "revision": "r40 EDGE TIME",
+  "date": "2026-11-20",
+  "changes": [
+    "Exact LEP/L16 duration from 1024-byte block scan incl 300ms preroll and 500ms tail",
+    "No automatic timeout; percent analysis progress; PLAY skips and starts unknown-duration playback, STOP cancels start",
+    "Physical completed output clock for elapsed time including pause/STOP/EOF freeze"
+  ],
+  "suites": [
+    "test_edge_stream",
+    "test_oled_ui",
+    "test_program_metadata",
+    "test_player_rmt",
+    "test_player_sharp",
+    "test_recorder",
+    "test_player_tap"
+  ],
+  "host_result": "PASS GCC14 ASan/UBSan",
+  "target_build": "PASS MZCMTEmu",
+  "ram_bytes": 168412,
+  "flash_program_bytes": 475875,
+  "firmware_bytes": 476304,
+  "sha256": "bc478c95096a907b2182bee99a94f7322238556f82720ad28f3c1008461f7b2a",
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false,
+  "warning": "Existing unused ui_copy_scroll_text"
+}

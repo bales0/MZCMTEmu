@@ -1,0 +1,27 @@
+{
+  "revision": "r38 TOTAL TIME",
+  "date": "2026-11-20",
+  "changes": [
+    "RECORD elapsed/estimated total marked ~",
+    "MZF exact byte-summed waveform duration at PLAY; bounded metadata preview unchanged; no waveform dry-run",
+    "QD SELECT RECORD hides time/progress and BUF; PLAY/PAUSE shows footer"
+  ],
+  "tests": [
+    "test_oled_ui",
+    "test_player_rmt",
+    "test_player_sharp",
+    "test_sharp_stream"
+  ],
+  "host_result": "PASS GCC14 ASan/UBSan",
+  "duration_equivalence": "All 17 modes exact emitted waveform; 0/1/257/6144/65535-byte mixed payloads, appended bytes, checksum overflow and fallback versus waveform FSM",
+  "target_build": "PASS MZCMTEmu",
+  "ram_bytes": 168348,
+  "flash_program_bytes": 474903,
+  "firmware_bytes": 475328,
+  "sha256": "bdc8eb1544529003d281011a30d47bb5f8b4c54a5f9d45c28f1282069c0bcf68",
+  "prepare_record_stack_frame_bytes": 688,
+  "hardware_verified": false,
+  "flashed": false,
+  "committed": false,
+  "warning": "Existing unused ui_copy_scroll_text"
+}

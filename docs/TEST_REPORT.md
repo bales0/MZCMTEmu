@@ -1,4 +1,46 @@
-> Aktuální r35 (20. 11. 2026): [sidecar editor](SIDECAR_EDITOR.md). SAVE/CANCEL je třetí položka menu hned pod LOADER se stejným kurzorem a trvalými ikonami tlačítek. SAVING… během zápisu, po úspěchu přímo návrat do editoru bez SAVED. Tři host sady s ASan/UBSan i cílový build PASS. Bez commitu a nahrání; HW ověření zbývá.
+> Aktuální r40 (20. 11. 2026): LEP/L16 mají blokovou analýzu délky s procenty dokončení, bez časového limitu. ▶ přeskočí do PLAY s procenty, ■ zruší start; dokončená analýza zobrazí aktuální/celkový čas. Uplynulý čas odpovídá fyzicky odvysílanému signálu. Sedm host sad s ASan/UBSan i cílový build PASS. [Souhrn](validation/edge-time-summary.json). Bez commitu a nahrání; HW ověření zbývá.
+
+## r40: čas a přeskočitelná analýza LEP/L16
+
+Při PLAY se soubor čte po blocích 1024 B a sčítají se jeho úseky (LEP 50 µs/jednotku, L16 16 µs/jednotku, nula = 127 jednotek, -128 = 128). Přesná délka v uint64 zahrnuje 300 ms úvodu a 500 ms konce. Po dokončení se zdroj přetočí na začátek; analýza nepředává data do TX. UI ukazuje procenta dokončení, rotační ukazatel a jednřádkovou ikonovou nápovědu PLAY SKIP / STOP CANCEL. Žádný časový limit ani automatické přeskočení není. UI dostává aktualizace mezi bloky, s pravidelným yield.
+
+Opětovný krátký PLAY analýzu přeskočí: přehraje se celý soubor od začátku, délka zůstane neznámá a UI používá procenta. STOP zruší analýzu i spuštění přenosu; nejde o chybu otevření a nevznikne žádný nový TX. Změna na EXTERNAL a vyjmutí SD zachovávají zrušení startu. Při dokončené analýze používá patička aktuální/celkový čas. Subsekundové soubory, jejichž celková délka je v sekundách nula, zůstávají u procent. Uplynulý čas používá skutečně dokončené mikrosekundy výstupu místo počtu přednačtených bajtů; pauza a STOP jej zmrazí a EOF zachová konečný čas.
+
+Sedm host sad PASS s GCC14 ASan/UBSan. Nové testy porovnávají přesný součet se skutečným průběhem všech 256 hodnot bajtu, testují SKIP/CANCEL na začátku i při 90 %, monotónní průběh 0–100 %, návrat na začátek, 64bitovou délku a opakovaný start. Integrace skutečného přehrávače/RMT ověřuje úplný signál po SKIP, nulový TX při CANCEL, správný čas, pauzu, STOP a EOF pro oba formáty. Prošly také metadata, recorder, Sharp a TAP. OLED testuje průběh analýzy 90 %, jednřádkovou nápovědu a časovou patičku obou formátů.
+
+Cílový build PASS: RAM 168412 B, program 475875 B. Zůstává dřívější unused-function varování. [Náhled](validation/edge-time-preview.png), [host log](validation/edge-time-host.txt), [build log](validation/edge-time-build.txt), [souhrn](validation/edge-time-summary.json). Čas čtení reálné SD a fyzické ovládání je třeba ověřit na HW. Bez commitu a nahrání.
+
+
+## r39: společná obrazovka QD a MZF
+
+QD používá stejnou hlavičku jako MZF: ikona, stav přenosu a formát QD, vpravo index se zachovaným indikátorem sidecaru. Název programu zůstává na druhém řádku. Název obrazu byl v hlavičce nahrazen stavem. V selektoru se ukazuje jen QD a index; text SELECT RECORD se nikde nekreslí. Šestý řádek je určen pro varování/alarmy; stav se v něm neopakuje. Čas a BUF se při návratu do selektoru vymažou.
+
+Regresní test produkčního rendereru ověřuje QD PLAY, PAUSE USER, PAUSE MOTOR, WAIT MOTOR, ERROR s UL TIMEOUT a návrat do selektoru po předchozím přenosu. Kontroluje hlavičku, index/sidecar, název programu, jediné zobrazení stavu, známý čas a BUF i prázdnou patičku selektoru. test_oled_ui s GCC14 ASan/UBSan a cílový build PASS. RAM 168348 B, program 474895 B; zůstává dřívější unused-function varování.
+
+[Náhled](validation/unified-qd-preview.png), [host log](validation/unified-qd-host.txt), [build log](validation/unified-qd-build.txt), [souhrn](validation/unified-qd-summary.json). Bez commitu a nahrání; HW ověření zbývá.
+
+
+## r38: aktuální/celkový čas a QD minibrowser
+
+RECORD zobrazuje aktuální/odhadovaný celkový čas (např. 00:30/~01:10), nikoli zbývající čas. Odhad celku je aktuální čas plus odhad zbytku z přijatých dat, označený ~; zobrazený celek neklesne pod aktuální čas. Při neznámé délce nebo nedostatku vzorků zůstává jen uplynulý čas. BUF má pevnou pozici; bargraf se nevrací.
+
+MZF při PLAY spočítá přesnou délku generovaného signálu součtem tabulkových délek bajtů v blocích 512 B, bez generování a simulace všech pulzů. Výpočet zahrnuje skutečně použitý/fallback profil, upravenou hlavičku, loader, payload, checksum, stop bity, kontextové časování MZ800 a připojená data. Náhled browseru/editoru dál nečte celý payload; součet se cachuje jen v ověřené otevřené relaci. Výstupní signál a byte-based API procent MZF se nemění. UL zůstává u procent, protože délka hlavičky neurčuje délku celého handshaku. Čas signálu stejně jako dosud u QD nezahrnuje uživatelské pauzy a nepředvídatelné čekání na motor.
+
+QD SELECT RECORD nemá na spodním řádku čas/procenta ani BUF. Aktivní PLAY a PAUSE je zobrazují; známá délka má časový údaj, neznámá procenta. Pixelové testy kontrolují prázdnou patičku selektoru i známý čas QD/MZF.
+
+Čtyři host sady PASS s GCC14 ASan/UBSan. Přesné délky souhlasí se skutečnými pulzy všech 17 režimů a s původním waveform FSM pro 0/1/257/6144/65535 B, šest rodin rychlosti/loaderů, overflow checksumu, připojená data a fallback. RMT testy ověřují byte progress, pauzu/STOP, automatické pokračování QD, UL handshaky a WAV. Kontrola callback budgetu potvrzuje čtení po blocích. Cílový build PASS; RAM 168348 B (+1024 B tabulka), program 474903 B. Zásobníkový rámec prepare_record v ELF je 688 B včetně vloženého pracovního bloku; žádná velká tabulka na zásobníku. Rychlost čtení fyzické SD a zobrazení na HW je ještě třeba ověřit.
+
+[Náhled](validation/total-time-preview.png), [souhrn](validation/total-time-summary.json), [host log](validation/total-time-host.txt), [build log](validation/total-time-build.txt). Zůstává dřívější unused-function varování. Bez commitu a nahrání.
+
+
+## r37: samostatné ABOUT/KEYMAP a čas RECORD
+
+ABOUT (stránka 1) nereaguje na listování přechodem do KEYMAP. KEYMAP cyklí pouze mezi čtyřmi stránkami 2–5 v obou směrech; STOP nadále vrací menu. Ověřeno test_menu přes produkční navigační helper.
+
+RECORD nepoužívá bargraf. Patička zachovává uplynulý čas a pevný BUF. Po získání deklarované velikosti a následného přírůstku přijatých bajtů v nenulovém čase se přidá odhad zbývajícího času, např. 00:30/~00:40. Odhad používá přírůstky od prvního vzorku daného programu, nikoli čas před rozpoznáním hlavičky. Je aktualizován při postupu dat; během pauzy zůstává stabilní. Není přesným časem konce fyzického přenosu: pozdější změna rychlosti, opakované bloky a mezery jej mohou ovlivnit.
+
+Test produkčního rendereru kontroluje nulové pixely bargrafu, zachovaný BUF, neznámou/nulovou velikost, pauzu a pokračování, dokončení, neplatná metadata a dlouhé časy. Odhad se obnovuje při změně relace, rekordu, velikosti a při návratu čítače bajtů/času. Dvě host sady GCC14 ASan/UBSan a build MZCMTEmu PASS; zůstává dřívější unused-function varování. [Náhled](validation/record-eta-preview.png), [host log](validation/record-eta-host.txt), [build log](validation/record-eta-build.txt). HW test ani nahrání neproběhly.
+
 
 > Aktuální r33 (20. 11. 2026): [zjednodušený sidecar editor](SIDECAR_EDITOR.md). Jeden řádek LOADER s rychlostí; SAVE CHANGES rovnou spouští bezpečnou transakci bez přehledu a CREATE/UPDATE dialogu. Potvrzení profilu zachováno. Tři host sady a cílový build PASS; HW ověření zbývá.
 
