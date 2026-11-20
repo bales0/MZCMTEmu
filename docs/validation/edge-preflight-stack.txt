@@ -1,0 +1,18 @@
+
+4200360c <app_task>:
+4200360c:	098136        	entry	a1, 0x4c0
+42014d24 <player_start>:
+42014d24:	088136        	entry	a1, 0x440
+4200a588 <edge_stream_open>:
+4200a588:	022136        	entry	a1, 0x110
+4200a20c <scan_collect>:
+4200a20c:	010136        	entry	a1, 128
+4200306c <scan_edge_analysis>:
+4200306c:	01c136        	entry	a1, 224
+42005e8c <cmt_fread>:
+42005e8c:	00e136        	entry	a1, 112
+42005b7c <submit>:
+42005b7c:	006136        	entry	a1, 48
+42007584 <ui_build_edge_analysis>:
+42007584:	008136        	entry	a1, 64
+

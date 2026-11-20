@@ -165,6 +165,8 @@ static void graphics(void){
  view.tx=(raw_pulse_status_t){.fifo_used=3000,.fifo_capacity=4095,.reserve_us=82000,.time_valid=true,.running=true};
  view.program.valid|=PROGRAM_TRANSFER_MODE;view.program.transfer_loader_mode=LOADER_MODE_TC_1_3;view.progress=56;view.program.format=FILE_FORMAT_MZF;
  ui_set_transport_view(false,&view);tick+=50;ui_render(&model);
+ view.preview_metadata=true;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);expect_text(0,40,"PREVIEW METADATA",1);artifact("edge-play-preview");
+ view.preview_metadata=false;ui_set_transport_view(false,&view);tick+=50;ui_render(&model);
  expect_text(0,16,"OBJ TC1:3 SRC IC1:4",1);expect_text(0,24,"SIZE 100",1);
  expect_text(0,32,"LOAD 1200 EXEC 1200",1);assert(!count_text("TIME"));
  expect_text(0,56,"00:38/02:00",1);expect_text(80,56,"BUF  73%",1);
@@ -219,9 +221,21 @@ static void graphics(void){
   for(unsigned old=0;old<phase;++old)assert(memcmp(frame[phase]+108,frame[old]+108,9));
   char name[32];snprintf(name,sizeof(name),"analysis-%u",phase);artifact(name);
  }
- ui_model_t edge_scan={{"ANALYZING","","LEP / L16 DURATION","90 %","","","",UI_HELP_SCAN_SKIP_CANCEL}};
+ edge_analysis_t preflight={0};preflight.program.confidence=PROGRAM_PAYLOAD_VALID;
+ preflight.program.valid=PROGRAM_TITLE|PROGRAM_TYPE|PROGRAM_SIZE|PROGRAM_LOAD|PROGRAM_EXEC|PROGRAM_RECORDED_MODE;
+ preflight.program.protocol=PROGRAM_SHARP;preflight.program.file_type=1;strcpy(preflight.program.title,"REAL GAME");
+ preflight.program.declared_size=44033;preflight.program.load=preflight.program.exec=0x1200;preflight.program.recorded_loader_mode=LOADER_MODE_IC_1_4;preflight.programs=1;
+ ui_model_t edge_scan;ui_build_edge_analysis(&edge_scan,&preflight,90);
  ui_set_analysis_view(3);tick+=100;ui_render(&edge_scan);
- expect_text(0,24,"90 %",1);expect_text(0,56,UI_HELP_SCAN_SKIP_CANCEL,1);artifact("edge-analysis-90");
+ expect_text(0,0,"ANALYZING 90 %",1);expect_text(0,8,"REAL GAME",1);expect_text(0,16,"OBJ IC1:4",1);
+ expect_text(0,24,"SIZE 44033",1);expect_text(0,32,"LOAD 1200 EXEC 1200",1);expect_text(0,40,"PREVIEW VERIFIED",1);
+ expect_text(0,56,UI_HELP_SCAN_SKIP_CANCEL,1);artifact("edge-analysis-metadata");
+ preflight.program.confidence=PROGRAM_LOADER_ONLY;ui_build_edge_analysis(&edge_scan,&preflight,50);tick+=100;ui_render(&edge_scan);
+ expect_text(0,8,"--",1);expect_text(0,32,"LOAD -- EXEC --",1);expect_text(0,40,"LOADER ONLY",1);artifact("edge-analysis-loader-only");
+ preflight.program.confidence=PROGRAM_HEADER_VALID;preflight.program.protocol=PROGRAM_CPM;preflight.program.valid=PROGRAM_TITLE|PROGRAM_SIZE;preflight.aux_profile=8;ui_build_edge_analysis(&edge_scan,&preflight,95);tick+=100;ui_render(&edge_scan);
+ expect_text(0,16,"CP/M CPM1:4",1);expect_text(0,32,"LOAD -- EXEC --",1);artifact("edge-analysis-cpm");
+ preflight.program.confidence=PROGRAM_INVALID;ui_build_edge_analysis(&edge_scan,&preflight,100);tick+=100;ui_render(&edge_scan);
+ expect_text(0,32,"LOAD -- EXEC --",1);expect_text(0,40,"INVALID",1);
  puts("PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; no redundant PLAY bar with time/percent, RECORD uses elapsed/estimated total without bar; long durations; FINISHED once with STOP; QD/MZF shared status header, no SELECT RECORD text or selector footer, round RECORD versus square STOP, MIN without RX, unified RECORD layout and state/warning priority, overlays and eight animation phases");
 }
 static void record_estimate(void){

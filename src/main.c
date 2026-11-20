@@ -370,6 +370,7 @@ static char s_sd_recover_path[1024];
 static uint16_t s_sd_recover_record;
 static bool sd_runtime_try_mount(void)
 {
+    cmt_storage_invalidate();
     // žádný zapisovací sdcard_test()
     sdcard_init();
 
@@ -411,6 +412,7 @@ static bool sd_runtime_try_mount(void)
 /* Called only after the foreground writer/transport has closed its handles. */
 static void sd_runtime_request_reinit(void)
 {
+    cmt_storage_invalidate();
     player_stop_for(PLAYER_STOP_SD_REINIT);
     sdcard_unmount();
     s_sd_ready=false;
@@ -419,6 +421,7 @@ static void sd_runtime_request_reinit(void)
 
 static void sd_runtime_on_removed(void)
 {
+    cmt_storage_invalidate();
     play_wait_motor_clear();
     clear_play_preview();
     ui_clear_overlay();
@@ -827,7 +830,9 @@ static void ui_build_playback_model(void)
 {
     ui_transport_view_t view={0};player_state_t state=player_get_state();
     const char *path=play_wait_motor && state!=PLAYER_STATE_READY ? file_list_get_path():player_get_current_path();
-    player_metadata(&view.program);if(play_wait_motor && state!=PLAYER_STATE_READY)program_metadata_reset(&view.program,file_format_detect_from_name(path));
+    player_metadata(&view.program);
+    if(player_preflight_metadata(&view.program))view.preview_metadata=true;
+    if(play_wait_motor && state!=PLAYER_STATE_READY)program_metadata_reset(&view.program,file_format_detect_from_name(path));
     view.filename=basename_ptr(path);
     view.has_info_sidecar=ui_has_sidecar(path);
     view.seconds=player_get_position_seconds();view.total_seconds=player_get_total_seconds();view.progress=player_get_progress_percent();
@@ -979,12 +984,27 @@ static edge_scan_action_t scan_edge_analysis(uint32_t done,uint32_t total,void *
     else if(now-external_since>=40000)return EDGE_SCAN_CANCEL;
     if(event==BTN_PLAY)return EDGE_SCAN_SKIP;
     if(now-shown_at>=100000 || done==total){
-        char progress[24];unsigned percent=total ? (unsigned)((uint64_t)done*100/total):0;
-        snprintf(progress,sizeof(progress),"%u %%",percent);
-        ui_model_t model={{"ANALYZING","","LEP / L16 DURATION",progress,"","","",UI_HELP_SCAN_SKIP_CANCEL}};
-        shown_at=now;ui_set_analysis_view(spinner++);ui_render(&model);
+        edge_analysis_t scan;edge_stream_analysis_snapshot(&scan);
+        unsigned percent=total ? (unsigned)((uint64_t)done*100/total):0;
+        ui_model_t model;ui_build_edge_analysis(&model,&scan,percent);
+        shown_at=now;ui_set_analysis_view(spinner++);
+#if CMT_EDGE_DIAGNOSTICS
+        int64_t ui_started=esp_timer_get_time();
+#endif
+        ui_render(&model);
+#if CMT_EDGE_DIAGNOSTICS
+        edge_stream_analysis_note_ui((uint64_t)(esp_timer_get_time()-ui_started),false);
+#endif
     }
-    if(now-yielded_at>=20000){yielded_at=now;vTaskDelay(1);}
+    if(now-yielded_at>=20000){
+#if CMT_EDGE_DIAGNOSTICS
+        int64_t yield_started=esp_timer_get_time();
+#endif
+        yielded_at=now;vTaskDelay(1);
+#if CMT_EDGE_DIAGNOSTICS
+        edge_stream_analysis_note_ui((uint64_t)(esp_timer_get_time()-yield_started),true);
+#endif
+    }
     return EDGE_SCAN_CONTINUE;
 }
 
@@ -1403,6 +1423,7 @@ static void app_task(void *arg)
                         play_wait_motor_clear();
                         clear_play_preview();
 
+                        cmt_storage_invalidate();
                         recorder_handle_rec(RECORDINGS_DIR, record_motor_is_on());
                     }
                 } else {
@@ -1445,7 +1466,7 @@ static void app_task(void *arg)
 void app_main(void)
 {
     setvbuf(stdout,NULL,_IOLBF,0);
-    printf("MZCMTEmu TX-TRACE r40 EDGE TIME S1 GPIO21 LOW=EXT HIGH=INT 2026-11-20; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
+    printf("MZCMTEmu TX-TRACE r41 EDGE PREFLIGHT S1 GPIO21 LOW=EXT HIGH=INT 2026-11-20; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
     // Give the USB console time to enumerate.
     vTaskDelay(pdMS_TO_TICKS(500));
     fflush(stdout);

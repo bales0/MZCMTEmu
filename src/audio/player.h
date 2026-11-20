@@ -91,3 +91,6 @@ bool player_set_sense_level(bool high);
 
 /* Stop QD output and retain the validated image for the record selector. */
 bool player_stop_to_selector(void);
+
+/* Separate immutable first-program preview; never publishes into live timeline. */
+bool player_preflight_metadata(program_metadata_t *out);

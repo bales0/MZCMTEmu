@@ -1,0 +1,279 @@
+{
+  "revision": "r41 EDGE PREFLIGHT",
+  "date": "2026-11-20",
+  "base_commit": "3664dab50e114083c3b593bdcba2eab0fe7dc474",
+  "authorization": "User: proveď komplet; complete proposed plan including tests/build/reports; no commit/branch/push/flash",
+  "full_suites": [
+    "test_ul_z80",
+    "test_menu",
+    "test_preflight_codecs",
+    "test_edge_stream",
+    "test_ui_policy",
+    "test_program_metadata",
+    "test_capture_pcnt",
+    "test_oled_ui",
+    "test_buttons",
+    "test_sdcard",
+    "test_storage_metrics",
+    "test_storage",
+    "test_player_rmt",
+    "test_raw_rmt",
+    "test_loader_choice",
+    "test_capture_mcpwm",
+    "test_writer_io",
+    "test_file_list",
+    "test_autoname",
+    "test_mzf_writer",
+    "test_sidecar_faults",
+    "test_sidecar_editor",
+    "test_quickdisk",
+    "test_route_switch",
+    "test_settings",
+    "test_player_sharp",
+    "test_sharp_stream",
+    "test_recorder",
+    "test_tap_stream",
+    "test_player_tap"
+  ],
+  "full_result": "PASS GCC14 ASan/UBSan; affected suites repeated after final refinements",
+  "final_suites": [
+    "test_edge_stream",
+    "test_preflight_codecs",
+    "test_program_metadata",
+    "test_player_rmt",
+    "test_raw_rmt",
+    "test_oled_ui",
+    "test_autoname"
+  ],
+  "target_build": "PASS PlatformIO MZCMTEmu -j 1",
+  "diagnostics_target_objects": "PASS CMT_STORAGE_DIAGNOSTICS=1 and CMT_EDGE_DIAGNOSTICS=1 (compile only)",
+  "ram_bytes": 171868,
+  "baseline_ram_bytes": 168412,
+  "ram_delta": 3456,
+  "flash_program_bytes": 487003,
+  "baseline_flash_bytes": 475875,
+  "flash_delta": 11128,
+  "firmware_bytes": 487424,
+  "firmware_sha256": "0ea19c0a8f011957ea9eb44960e4cc850e6cd7c8f83e9396a61d41ad461db559",
+  "host_benchmark": {
+    "environment": "WSL Debian GCC O2, host filesystem; no controlled OS cold cache, not ESP32/SD",
+    "repeats": 3,
+    "statistic": "median",
+    "comparisons": [
+      {
+        "bytes": 1048576,
+        "shape": "silence",
+        "baseline_us": 207538,
+        "scan_us": 157235,
+        "cache_us": 2326
+      },
+      {
+        "bytes": 10485760,
+        "shape": "silence",
+        "baseline_us": 1816624,
+        "scan_us": 1654748,
+        "cache_us": 2089
+      },
+      {
+        "bytes": 10485760,
+        "shape": "edges",
+        "baseline_us": 1275879,
+        "scan_us": 1369887,
+        "cache_us": 1653
+      }
+    ],
+    "fs_metrics": [
+      {
+        "bytes": 1048576,
+        "block": 1024,
+        "reads": 1024,
+        "rpc": 1024,
+        "cpu_us": 14971,
+        "native_us": 171740,
+        "submit_us": 173433,
+        "copy_us": 533
+      },
+      {
+        "bytes": 1048576,
+        "block": 4096,
+        "reads": 1024,
+        "rpc": 1024,
+        "cpu_us": 13473,
+        "native_us": 155207,
+        "submit_us": 156746,
+        "copy_us": 491
+      },
+      {
+        "bytes": 1048576,
+        "block": 8192,
+        "reads": 1024,
+        "rpc": 1024,
+        "cpu_us": 11530,
+        "native_us": 111316,
+        "submit_us": 112582,
+        "copy_us": 443
+      },
+      {
+        "bytes": 1048576,
+        "block": 16384,
+        "reads": 1024,
+        "rpc": 1024,
+        "cpu_us": 8659,
+        "native_us": 102941,
+        "submit_us": 103936,
+        "copy_us": 355
+      },
+      {
+        "bytes": 10485760,
+        "block": 1024,
+        "reads": 10240,
+        "rpc": 10240,
+        "cpu_us": 143532,
+        "native_us": 1596263,
+        "submit_us": 1607111,
+        "copy_us": 5317
+      },
+      {
+        "bytes": 10485760,
+        "block": 4096,
+        "reads": 10240,
+        "rpc": 10240,
+        "cpu_us": 106270,
+        "native_us": 1289332,
+        "submit_us": 1297347,
+        "copy_us": 4290
+      },
+      {
+        "bytes": 10485760,
+        "block": 8192,
+        "reads": 10240,
+        "rpc": 10240,
+        "cpu_us": 72966,
+        "native_us": 995832,
+        "submit_us": 1001799,
+        "copy_us": 2856
+      },
+      {
+        "bytes": 10485760,
+        "block": 16384,
+        "reads": 10240,
+        "rpc": 10240,
+        "cpu_us": 109443,
+        "native_us": 1530204,
+        "submit_us": 1538331,
+        "copy_us": 4383
+      }
+    ]
+  },
+  "shared_algorithms": {
+    "record/record_autoname": {
+      "unchanged": true,
+      "normalized_sha256": "102de1ee704ddae30b240279430269bef456df38fffadbe7a801bfeaa5956b49"
+    },
+    "formats/mz_tape_decoder": {
+      "unchanged": true,
+      "normalized_sha256": "143637959b76e3dfbd41f6f1cd14b9b1b99a39447e0a45e3ab75102bb21f0ae1"
+    },
+    "formats/tape_metadata": {
+      "unchanged": true,
+      "normalized_sha256": "5da8fa359e3efe79afa3a4872d01a269ba0a45c4a86e389015efb28812290e66"
+    }
+  },
+  "analysis_version": 2,
+  "cache": {
+    "entries": 1,
+    "persistent": false,
+    "key": [
+      "exact firmware absolute path",
+      "size",
+      "mtime",
+      "ctime/device/inode when available",
+      "media/write epoch",
+      "16/50 us unit",
+      "algorithm version",
+      "sampled head/middle/tail fingerprint"
+    ],
+    "limitations": [
+      "sampled fingerprint is not full-file integrity; unannounced external same-metadata edits outside samples are not guaranteed detected",
+      "recognized program count is a lower bound; no contents selector or seeking",
+      "discovered_us is the scan observation time bound, not a seek point"
+    ]
+  },
+  "stack_frames_bytes": {
+    "app_task": 1216,
+    "player_start": 1088,
+    "edge_stream_open": 272,
+    "scan_collect": 128,
+    "scan_edge_analysis": 224,
+    "cmt_fread": 112,
+    "submit": 48,
+    "ui_build_edge_analysis": 64
+  },
+  "hardware_verified": false,
+  "hardware_performance_measured": false,
+  "rtos_stack_high_water_measured": false,
+  "physical_sd_read_count_measured": false,
+  "new_explicit_heap_allocations": 0,
+  "flashed": false,
+  "committed": false,
+  "branch_created": false,
+  "source_files": [
+    "src/CMakeLists.txt",
+    "src/audio/edge_stream.c",
+    "src/audio/edge_stream.h",
+    "src/audio/player.c",
+    "src/audio/player.h",
+    "src/formats/mz_tape_decoder.c",
+    "src/formats/mz_tape_decoder_impl.inc",
+    "src/formats/preflight_metadata.h",
+    "src/formats/preflight_mz_tape_decoder.c",
+    "src/formats/preflight_namespace.h",
+    "src/formats/preflight_tape_metadata.c",
+    "src/formats/tape_metadata.c",
+    "src/formats/tape_metadata_impl.inc",
+    "src/main.c",
+    "src/record/preflight_record_autoname.c",
+    "src/record/record_autoname.c",
+    "src/record/record_autoname_impl.inc",
+    "src/storage/fs.c",
+    "src/storage/fs.h",
+    "src/ui/view.c",
+    "src/ui/view.h",
+    "tests/host/benchmark_edge_preflight.c",
+    "tests/host/benchmark_edge_preflight.py",
+    "tests/host/run_tests.py",
+    "tests/host/test_autoname.c",
+    "tests/host/test_edge_stream.c",
+    "tests/host/test_oled_ui.c",
+    "tests/host/test_preflight_codecs.c",
+    "tests/host/test_program_metadata.c",
+    "tests/host/test_raw_rmt.c",
+    "tests/host/test_storage.c"
+  ],
+  "warning": "Existing unused ui_copy_scroll_text in main.c",
+  "telemetry": {
+    "default_enabled": false,
+    "fields": [
+      "VFS read count/bytes",
+      "bare native read us",
+      "submit us including native read",
+      "memcpy bytes/us",
+      "bulk scan read us",
+      "sum/normalization/decoder us",
+      "callback total us",
+      "OLED ui_render us",
+      "vTaskDelay yield us"
+    ],
+    "notes": [
+      "No per-edge logs or timing calls",
+      "Cross-core/queue overhead is submit_us minus native_us, including diagnostic bookkeeping",
+      "Physical SD transactions and RTOS stack high-water are not measured on host"
+    ]
+  },
+  "runtime_heap_allocations_measured": false,
+  "explicit_allocation_count_basis": "source audit: new implementation uses static bounded state; whole-firmware allocator activity not measured",
+  "user_worktree_preserved": [
+    "Deleted previous sidecar specification left as found",
+    "New user-provided LEP/L16 specification not modified or staged"
+  ]
+}

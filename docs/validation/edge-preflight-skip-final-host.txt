@@ -1,0 +1,7 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_edge_stream
+HOST_EDGE bytes=1048576 shape=silence first_us=149754 cache_us=2534 first_read_us=133428 decode_us=3984 callback_us=57
+HOST_EDGE bytes=10485760 shape=silence first_us=1174124 cache_us=5380 first_read_us=1126024 decode_us=34748 callback_us=602
+HOST_EDGE bytes=10485760 shape=edges first_us=1979058 cache_us=2773 first_read_us=1774025 decode_us=193161 callback_us=505
+PASS RAM cache identity/fingerprint, media/write epoch, complete-only entries, SKIP/CANCEL invalidate, read error clears preview, no partial result becomes a hit
+PASS LEP/L16 exact block duration versus emitted waveform, all signed bytes incl zero/-128, 0/50/90/100% SKIP and CANCEL, monotonic 0..100 scan progress, rewind, clean retry and 64-bit duration

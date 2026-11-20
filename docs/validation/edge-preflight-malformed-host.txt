@@ -1,0 +1,6 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_program_metadata
+PASS actual generated WAV44k/LEP/L16 files through PLAY source readers: native, IC and TC first payload; source quantization and synthetic tail exclusion
+PASS preflight preserves first of two programs, canonical IC/TC and invalid TC refusal, live decoder remains paused between header/data across an independent scan
+PASS multiple logical programs update metadata while keeping first filename; bad TC loader cannot publish target fields; native checksum second-copy recovery
+PASS shared metadata snapshots, original Sharp/IC/TC first payload, passive PLAY/RECORD parity for WAV/LEP/L16 and strict multi-block ZX BASIC/CODE/ARRAY/XOR without invented EXEC

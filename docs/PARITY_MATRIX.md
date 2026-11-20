@@ -1,4 +1,4 @@
-> Aktuální r40 (20. 11. 2026): LEP/L16 mají blokovou analýzu délky s procenty dokončení, bez časového limitu. ▶ přeskočí do PLAY s procenty, ■ zruší start; dokončená analýza zobrazí aktuální/celkový čas. Uplynulý čas odpovídá fyzicky odvysílanému signálu. Sedm host sad s ASan/UBSan i cílový build PASS. [Souhrn](validation/edge-time-summary.json). Bez commitu a nahrání; HW ověření zbývá.
+> Aktuální r41 (20. 11. 2026): [LEP/L16 délka a metadata v jednom průchodu](LEP_L16_PREFLIGHT.md), oddělený preflight dekodér a RAM session cache. Náhled neovlivňuje fyzicky potvrzenou PLAY timeline. 30 host sad s ASan/UBSan a finální cílené regrese i build PASS. Výkon ESP32/SD a RTOS high-water dosud neměřeny; bez commitu a flash.
 
 > Aktuální r33 (20. 11. 2026): [zjednodušený sidecar editor](SIDECAR_EDITOR.md). Jeden řádek LOADER s rychlostí; SAVE CHANGES rovnou spouští bezpečnou transakci bez přehledu a CREATE/UPDATE dialogu. Potvrzení profilu zachováno. Tři host sady a cílový build PASS; HW ověření zbývá.
 

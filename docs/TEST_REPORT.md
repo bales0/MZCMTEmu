@@ -1,4 +1,9 @@
-> Aktuální r40 (20. 11. 2026): LEP/L16 mají blokovou analýzu délky s procenty dokončení, bez časového limitu. ▶ přeskočí do PLAY s procenty, ■ zruší start; dokončená analýza zobrazí aktuální/celkový čas. Uplynulý čas odpovídá fyzicky odvysílanému signálu. Sedm host sad s ASan/UBSan i cílový build PASS. [Souhrn](validation/edge-time-summary.json). Bez commitu a nahrání; HW ověření zbývá.
+> Aktuální r41 (20. 11. 2026): [LEP/L16 délka a metadata v jednom průchodu](LEP_L16_PREFLIGHT.md), oddělený preflight dekodér a RAM session cache. Náhled neovlivňuje fyzicky potvrzenou PLAY timeline. 30 host sad s ASan/UBSan a finální cílené regrese i build PASS. Výkon ESP32/SD a RTOS high-water dosud neměřeny; bez commitu a flash.
+
+## r41 Společná analýza LEP a L16
+
+Přesný report fází, benchmarky, změněné soubory, diff a HW omezení jsou v [LEP L16 preflight](LEP_L16_PREFLIGHT.md). Celá sada 30 testů GCC14 ASan/UBSan PASS; následné cílené běhy ověřují konečné hashování, cache, metriky a neplatné vstupy. Target build PASS, RAM 171868 B, program 487003 B. [Strojový souhrn](validation/edge-preflight-summary.json), [náhled](validation/edge-preflight-preview.png). Bez commitu, nové větve a nahrání.
+
 
 ## r40: čas a přeskočitelná analýza LEP/L16
 

@@ -135,6 +135,15 @@ else record_autoname_begin(true,FILE_FORMAT_L16,0);
  assert(!m.valid && m.confidence==PROGRAM_UNKNOWN);
 }
 
+
+static bool preview_before_end;
+static edge_scan_action_t observe_preflight(uint32_t done,uint32_t total,void *unused){
+ (void)unused;edge_analysis_t view;edge_stream_analysis_snapshot(&view);
+ if(done<total && (view.program.confidence==PROGRAM_HEADER_VALID || view.program.confidence==PROGRAM_PAYLOAD_VALID))preview_before_end=true;
+ if(done==0){edge_stream_info_t nested;assert(!edge_stream_open("must-not-open.lep",&nested));}
+ return EDGE_SCAN_CONTINUE;
+}
+
 static void source_file_cases(void){
  static const unsigned modes[]={0,6,9};
  uint8_t data[]={0,128,1,255};
@@ -169,7 +178,15 @@ static void source_file_cases(void){
   }
 else{
    edge_stream_info_t info;
+   preview_before_end=false;edge_stream_set_scan_control(observe_preflight,NULL);
+   program_metadata_t before,unchanged;tape_metadata_snapshot(&before);
    assert(edge_stream_open(path,&info));
+   tape_metadata_snapshot(&unchanged);assert(!memcmp(&before,&unchanged,sizeof(before)));
+   assert(info.analysis.state==EDGE_ANALYSIS_COMPLETE && info.analysis.program.confidence==PROGRAM_PAYLOAD_VALID);
+   assert(info.analysis.program.declared_size==4 && info.analysis.program.load==0x1200 && info.analysis.program.exec==0x1200);
+   assert(info.analysis.program.source==(k ? PROGRAM_LOADER_EMBEDDED:PROGRAM_TAPE_DECODE));
+   assert(!info.analysis.cache_hit && preview_before_end);
+   edge_stream_set_scan_control(NULL,NULL);
    while(edge_stream_next_pulse(&level,&width,&count))tape_metadata_feed(level,width,edge_stream_monitor_muted());
    assert(!edge_stream_has_error());
    edge_stream_close();
@@ -277,10 +294,55 @@ if(m.record==3){seen|=4;
  tap_stream_close();
  assert(!remove("metadata.tap"));
 }
+
+static void preflight_sequences(void){
+ uint8_t h[128],data[]={0,128,1,255},loader[128];
+ for(unsigned f=0;f<2;++f){
+  fmt=f ? FILE_FORMAT_L16:FILE_FORMAT_LEP;const char *path=f ? "sequence.l16":"sequence.lep";
+  assert(edge_writer_open(path,f ? 62500:20000));writing_file=true;
+  memcpy(h,native,128);memcpy(h+1,"FIRST\r",6);block(0,h,128,true,false);block(0,data,4,false,false);duration(0,1000000);
+  memcpy(h+1,"SECOND\r",7);h[21]=0x13;h[23]=0x24;block(0,h,128,true,false);block(0,data,4,false,false);duration(0,100000);
+  writing_file=false;assert(edge_writer_finalize());
+  /* Leave the live decoder between a header and its data while scanning another file. */
+  passive=false;record_autoname_begin(true,fmt,0);block(0,native,128,true,false);
+  program_metadata_t before,after;record_autoname_metadata(&before);assert(before.confidence==PROGRAM_HEADER_VALID);
+  edge_stream_info_t info;assert(edge_stream_open(path,&info));
+  assert(info.analysis.program.confidence==PROGRAM_PAYLOAD_VALID && !strcmp(info.analysis.program.title,"FIRST"));
+  assert(info.analysis.program.load==0x1200 && info.analysis.program.exec==0x1200 && info.analysis.programs==2 && !info.analysis.programs_exact);
+  record_autoname_metadata(&after);assert(!memcmp(&before,&after,sizeof(before)));
+  block(0,data,4,false,false);record_autoname_metadata(&after);assert(after.confidence==PROGRAM_PAYLOAD_VALID && after.load==0x1200);
+  edge_stream_close();assert(!remove(path));
+  const char *bad=f ? "bad-tc.l16":"bad-tc.lep";
+  unhex(loader_golden[9].header_hex,h,128);unhex(loader_golden[9].loader_hex,loader,90);
+  assert(edge_writer_open(bad,f ? 62500:20000));writing_file=true;
+  block(0,h,128,true,false);block(0,loader,90,false,true);duration(0,100000);
+  writing_file=false;assert(edge_writer_finalize());assert(edge_stream_open(bad,&info));
+  assert(info.analysis.program.confidence==PROGRAM_INVALID && !(info.analysis.program.valid&(PROGRAM_LOAD|PROGRAM_EXEC|PROGRAM_TITLE)));
+  edge_stream_close();assert(!remove(bad));
+  assert(edge_writer_open(bad,f ? 62500:20000));writing_file=true;
+  block(0,h,128,true,false);block(0,loader,45,false,false);duration(0,100000);
+  writing_file=false;assert(edge_writer_finalize());assert(edge_stream_open(bad,&info));
+  assert(info.analysis.program.confidence==PROGRAM_LOADER_ONLY && !(info.analysis.program.valid&(PROGRAM_LOAD|PROGRAM_EXEC|PROGRAM_TITLE)));
+  edge_stream_close();assert(!remove(bad));
+  assert(edge_writer_open(bad,f ? 62500:20000));writing_file=true;block(0,native,128,true,true);duration(0,100000);
+  writing_file=false;assert(edge_writer_finalize());assert(edge_stream_open(bad,&info));assert(!info.analysis.program.valid);
+  edge_stream_close();assert(!remove(bad));
+  /* A later unrelated bad TC loader must not invalidate the verified FIRST. */
+  assert(edge_writer_open(path,f ? 62500:20000));writing_file=true;
+  memcpy(h,native,128);memcpy(h+1,"FIRST\r",6);block(0,h,128,true,false);block(0,data,4,false,false);duration(0,1000000);
+  unhex(loader_golden[9].header_hex,h,128);block(0,h,128,true,false);block(0,loader,90,false,true);duration(0,100000);
+  writing_file=false;assert(edge_writer_finalize());assert(edge_stream_open(path,&info));
+  assert(info.analysis.program.confidence==PROGRAM_PAYLOAD_VALID && !strcmp(info.analysis.program.title,"FIRST"));
+  edge_stream_close();assert(!remove(path));
+ }
+ puts("PASS preflight preserves first of two programs, canonical IC/TC and invalid TC refusal, live decoder remains paused between header/data across an independent scan");
+}
+
 int main(void){unhex(loader_golden[0].header_hex,native,128);
 structured();
 passive_cases();
 source_file_cases();
+preflight_sequences();
 sequence_and_recovery();
 zx_cases();
 puts("PASS shared metadata snapshots, original Sharp/IC/TC first payload, passive PLAY/RECORD parity for WAV/LEP/L16 and strict multi-block ZX BASIC/CODE/ARRAY/XOR without invented EXEC");

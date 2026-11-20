@@ -1,0 +1,3 @@
+COMPILE_DIAGNOSTICS fs
+COMPILE_DIAGNOSTICS edge
+PASS target diagnostics objects compiled

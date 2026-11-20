@@ -8,6 +8,7 @@
 #ifdef RMT_PLAYER_TEST
 #include "audio/player.h"
 #include "audio/edge_stream.h"
+#include "audio/edge_writer.h"
 #include "audio/tap_stream.h"
 #include "audio/mzf_stream.h"
 #include "audio/wav_writer.h"
@@ -21,7 +22,7 @@ rmt_simple_encoder_config_t config;
 } enc;
 rmt_dev_t RMT;
 static rmt_tx_event_callbacks_t callbacks;
-static uint64_t wall_ticks,active_ticks;
+static uint64_t wall_ticks,active_ticks,symbol_digest;
 static uint8_t pin;
 #ifdef RMT_PLAYER_TEST
 static uint8_t sense=1,write_pin,monitor;
@@ -170,7 +171,10 @@ static void refill(void) {
  if(free_count>64)free_count=64;
  size_t n=enc.config.callback(payload,payload_size,total_encoded,free_count,buffer,&done,enc.config.arg);
  assert(n<=free_count && (n || done));
- for(size_t i=0;i<n;++i){memory[wr]=buffer[i];
+ for(size_t i=0;i<n;++i){
+ uint32_t parts[2]={buffer[i].duration0 ? (uint32_t)buffer[i].duration0*2+buffer[i].level0:0,buffer[i].duration1 ? (uint32_t)buffer[i].duration1*2+buffer[i].level1:0};
+ for(unsigned p=0;p<2;++p)for(unsigned b=0;b<4;++b)symbol_digest=(symbol_digest^((parts[p]>>(8*b))&255U))*1099511628211ULL;
+ memory[wr]=buffer[i];
  wr=(wr+1)%128;
  ++used;
  }
@@ -586,8 +590,9 @@ static void edge_time_player(void){
   for(unsigned i=0;i<4096;++i)assert(fputc(127,f)!=EOF);
   assert(!fclose(f));uint64_t expected=800000+4096ULL*127*(format ? 16:50);
   edge_stream_set_scan_control(edge_player_scan,NULL);
+  uint64_t full_digest=0;
   for(unsigned skip=0;skip<2;++skip){
-   edge_scan_choice=skip;edge_scan_polls=0;uint64_t before=active_ticks;
+   edge_scan_choice=skip;edge_scan_polls=0;uint64_t before=active_ticks;symbol_digest=1469598103934665603ULL;
    player_start(path);assert(player_get_state()==PLAYER_STATE_PLAYING && !player_get_position_seconds());
    assert(player_get_total_seconds()==(skip ? 0:expected/1000000));
    assert(edge_scan_polls==(skip ? 2:5));unsigned polls=edge_scan_polls;
@@ -597,6 +602,7 @@ static void edge_time_player(void){
    player_resume_user();drain_player();
    assert(player_get_state()==PLAYER_STATE_EOF && active_ticks-before==expected*16 && player_get_position_seconds()==expected/1000000);
    assert(player_get_progress_percent()==100 && edge_scan_polls==polls);
+   if(!skip)full_digest=symbol_digest;else assert(full_digest==symbol_digest);
   }
   edge_scan_choice=2;unsigned starts=transmits;player_start(path);
   assert(player_get_state()==PLAYER_STATE_STOPPED && transmits==starts && !tx.running && !pin && !player_get_position_seconds());
@@ -605,7 +611,39 @@ static void edge_time_player(void){
   advance(2000000ULL*16);player_service();assert(held==1 && player_get_position_seconds()==held && !tx.running && !pin);
   edge_stream_set_scan_control(NULL,NULL);assert(!remove(path));
  }
- puts("PASS actual LEP/L16 player/RMT: exact scanned duration, physical elapsed time, PLAY skip preserves complete waveform, STOP scan emits nothing, pause/STOP freeze and clean restart");
+ puts("PASS actual LEP/L16 player/RMT: exact scanned duration, physical elapsed time, PLAY skip preserves complete waveform and exact RMT symbol hash, STOP scan emits nothing, pause/STOP freeze and clean restart");
+}
+
+
+static void edge_metadata_timeline(void){
+ assert(edge_writer_open("timeline.l16",62500));uint64_t source_us=0,second_start=0;
+ for(unsigned record=0;record<2;++record){
+  uint8_t h[128]={1},data[]={0,128,1,255};memcpy(h+1,record ? "SECOND\r":"FIRST\r",record ? 7:6);h[18]=4;h[21]=h[23]=(uint8_t)(0x12+record);
+  FILE *f=fopen("timeline.mzf","wb");assert(f && fwrite(h,1,128,f)==128 && fwrite(data,1,4,f)==4 && !fclose(f));
+  sharp_stream_info_t info;assert(sharp_stream_open("timeline.mzf",1,LOADER_MODE_NORMAL_1_1,&info));uint8_t level;uint32_t ticks;bool count;
+  while(!sharp_stream_is_eof()){
+   while(sharp_stream_next_pulse(&level,&ticks,&count)){unsigned units=(ticks+128)/256;assert(edge_writer_write_interval_units(level,units));source_us+=(uint64_t)units*16;}
+   if(sharp_stream_is_eof())break;
+   unsigned pause=sharp_stream_boundary_delay_us(false);if(pause){unsigned units=(pause+8)/16;assert(edge_writer_write_interval_units(0,units));source_us+=(uint64_t)units*16;}
+   assert(sharp_stream_advance());
+  }
+  sharp_stream_close();assert(edge_writer_write_interval_units(0,62500));source_us+=1000000;if(!record)second_start=source_us+300000;
+ }
+ assert(edge_writer_finalize());edge_stream_info_t measured;edge_stream_invalidate_cache();assert(edge_stream_open("timeline.l16",&measured));edge_stream_close();
+ player_stop();uint64_t before=active_ticks;player_start("timeline.l16");assert(player_get_state()==PLAYER_STATE_PLAYING);
+ program_metadata_t preview,live;assert(player_preflight_metadata(&preview) && !strcmp(preview.title,"FIRST"));player_metadata(&live);assert(!(live.valid&PROGRAM_TITLE));
+ unsigned seen=0,budget=10000;
+ while(player_get_state()==PLAYER_STATE_PLAYING){
+  assert(budget--);advance(10000ULL*16);player_service();player_metadata(&live);
+  if(live.valid&PROGRAM_TITLE){
+   if(!strcmp(live.title,"FIRST")){seen|=1;assert(!player_preflight_metadata(&preview));}
+   else if(!strcmp(live.title,"SECOND")){seen|=2;assert((active_ticks-before)/16>=second_start && !player_preflight_metadata(&preview));}
+   else assert(!"unexpected metadata title");
+  }
+ }
+ assert(player_get_state()==PLAYER_STATE_EOF && seen==3 && active_ticks-before==measured.total_us*16);
+ assert(!remove("timeline.l16") && !remove("timeline.mzf"));
+ puts("PASS preflight preview FIRST is separate from live publication; real RMT clock advances FIRST then SECOND only after physical output, cache hit preserves timing and waveform");
 }
 
 /* A sparse WAV prefill must outlast RMT's initial 128-symbol lookahead. */
@@ -639,6 +677,7 @@ int main(void) {
  setvbuf(stdout,NULL,_IONBF,0);
  player_init();
  edge_time_player();
+ edge_metadata_timeline();
  qd_rmt_sequence();
  fast_mzf_rmt_progress();
  fixture("dma.mzf");

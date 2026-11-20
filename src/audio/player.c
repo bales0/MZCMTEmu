@@ -48,6 +48,7 @@ static unsigned metadata_head,metadata_tail;
 static uint64_t metadata_source_us;
 static uint32_t metadata_revision;
 static bool metadata_audio;
+static bool preflight_preview_allowed;
 void player_metadata(program_metadata_t *out){program_metadata_snapshot(&metadata_store,out);
 }
 static void metadata_reset(file_format_t format){
@@ -85,6 +86,7 @@ static void metadata_collect(void){
 static void metadata_confirm(void){
  uint64_t played=raw_pulse_get_completed_us();
  while(metadata_tail!=metadata_head && metadata_queue[metadata_tail].at<=played){
+  if(metadata_queue[metadata_tail].value.confidence!=PROGRAM_WAITING && metadata_queue[metadata_tail].value.confidence!=PROGRAM_LOADER_ONLY)preflight_preview_allowed=false;
   program_metadata_publish(&metadata_store,&metadata_queue[metadata_tail].value);
   metadata_tail=(metadata_tail+1)%4;
  }
@@ -97,6 +99,10 @@ static mzf_stream_info_t s_mzf_info;
 static edge_stream_info_t s_edge_info;
 static bool s_binary_tape = false;
 static bool s_edge_tape = false;
+bool player_preflight_metadata(program_metadata_t *out){
+ if(!out || !s_edge_tape || !preflight_preview_allowed)return false;
+ *out=s_edge_info.analysis.program;return true;
+}
 static bool s_tap_tape = false;
 static uint64_t s_wav_final_us;
 static bool player_is_wav(void) { return !s_binary_tape && !s_edge_tape && !s_tap_tape;
@@ -314,6 +320,7 @@ static void player_finish_stop(player_state_t final_state)
     edge_stream_close();
     tap_stream_close();
 
+    preflight_preview_allowed=false;
     s_playing = 0;
     s_eof = 0;
     s_read_error = 0;
@@ -505,6 +512,7 @@ void player_start(const char *path)
 
     snprintf(s_current_path,sizeof(s_current_path),"%s",path);
     metadata_reset(file_format_detect_from_name(path));
+    preflight_preview_allowed=false;
     s_binary_tape = path_is_binary_tape(path);
     s_edge_tape = path_is_edge_tape(path);
     s_tap_tape = tap_stream_is_tap_path(path);
@@ -561,6 +569,11 @@ void player_start(const char *path)
         }
     }
 
+    if(s_edge_tape){
+        program_metadata_t *preview=&s_edge_info.analysis.program;
+        preflight_preview_allowed=(preview->confidence==PROGRAM_HEADER_VALID || preview->confidence==PROGRAM_PAYLOAD_VALID) && (preview->valid&PROGRAM_TITLE);
+        printf("edge: analysis=%u cache=%s bytes=%lu programs>=%lu total_us=%llu\n",(unsigned)s_edge_info.analysis.state,s_edge_info.analysis.cache_status==EDGE_CACHE_HIT ? "HIT":s_edge_info.analysis.cache_status==EDGE_CACHE_INVALID ? "INVALID":"MISS",(unsigned long)s_edge_info.analysis.scanned_bytes,(unsigned long)s_edge_info.analysis.programs,(unsigned long long)s_edge_info.total_us);
+    }
     if(player_is_wav() && !wav_pulse_stream_begin(s_info.sample_rate)) {
         wav_reader_close();
         s_state=PLAYER_STATE_ERROR;

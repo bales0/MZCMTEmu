@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "record/record_autoname.h"
+#include "audio/edge_stream.h"
+#include "audio/edge_writer.h"
 #include "formats/mz_tape_decoder.h"
 #include "fixtures/loader_golden.h"
 static uint8_t original[128],data[65535];
@@ -18,7 +20,9 @@ for(size_t i=0;i<n;++i)out[i]=(uint8_t)((hex(s[i*2])<<4)|hex(s[i*2+1]));
 static file_format_t capture_format;
 static uint32_t capture_rate;
 static uint64_t sample_phase;
+static bool write_edge_fixture;
 static bool capture(uint8_t level,uint32_t us) {
+ if(write_edge_fixture){unsigned unit=capture_format==FILE_FORMAT_LEP ? 50:16;assert(edge_writer_write_interval_units(level,(us+unit/2)/unit));}
  if(capture_format==FILE_FORMAT_WAV) {
   sample_phase+=(uint64_t)us*capture_rate;
   uint32_t n=(uint32_t)(sample_phase/1000000);
@@ -165,6 +169,21 @@ static void aux_profiles(void) {
  }
  puts("PASS Sinclair and InterCopy CP/M subtypes 00/01: all four speed classifications, title checksum acceptance and rejection");
 }
+
+static void aux_preflight(void){
+ for(unsigned f=0;f<2;++f)for(unsigned speed=0;speed<4;++speed)for(unsigned protocol=0;protocol<2;++protocol)for(unsigned bad=0;bad<2;++bad){
+  const char *path=f ? "aux.l16":"aux.lep";begin(f ? FILE_FORMAT_L16:FILE_FORMAT_LEP,0);aux_level=0;
+  assert(edge_writer_open(path,f ? 62500:20000));write_edge_fixture=true;
+  if(protocol)cpm(bad!=0,speed,1);else sinclair(bad!=0,speed);
+  write_edge_fixture=false;assert(edge_writer_finalize());
+  edge_stream_info_t info;edge_stream_invalidate_cache();assert(edge_stream_open(path,&info));
+  if(bad)assert(!(info.analysis.program.valid&PROGRAM_TITLE));
+  else {assert(info.analysis.program.valid&PROGRAM_TITLE);assert(!strcmp(info.analysis.program.title,protocol ? "CPM TEST":"SIN TEST"));assert(info.analysis.program.protocol==(protocol ? PROGRAM_CPM:PROGRAM_SPECTRUM));assert(info.analysis.aux_profile>=1 && info.analysis.aux_profile<=8);if(f)assert(info.analysis.aux_profile==speed+(protocol ? 5:1));}
+  edge_stream_close();assert(!remove(path));
+ }
+ puts("PASS actual LEP/L16 preflight Sinclair and CP/M four speeds, validated titles/provenance and corrupt checksum refusal");
+}
+
 static void rename_tests(void) {
  begin(FILE_FORMAT_MZF,0);
  record_autoname_accept_header(original);
@@ -211,6 +230,7 @@ int main(void) {
  data[3]=255;
  sharp_profiles();
  aux_profiles();
+ aux_preflight();
  rename_tests();
  legacy_quantization_limits();
  return 0;

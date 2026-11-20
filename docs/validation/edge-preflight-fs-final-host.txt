@@ -1,0 +1,13 @@
+gcc (Debian 14.2.0-19) 14.2.0
+RUN test_storage_metrics
+HOST_FS bytes=1048576 block=1024 VFS_reads=1024 RPC=1024 cpu_us=14971 native_us=171740 submit_us=173433 copy_us=533
+HOST_FS bytes=1048576 block=4096 VFS_reads=1024 RPC=1024 cpu_us=13473 native_us=155207 submit_us=156746 copy_us=491
+HOST_FS bytes=1048576 block=8192 VFS_reads=1024 RPC=1024 cpu_us=11530 native_us=111316 submit_us=112582 copy_us=443
+HOST_FS bytes=1048576 block=16384 VFS_reads=1024 RPC=1024 cpu_us=8659 native_us=102941 submit_us=103936 copy_us=355
+HOST_FS bytes=10485760 block=1024 VFS_reads=10240 RPC=10240 cpu_us=143532 native_us=1596263 submit_us=1607111 copy_us=5317
+HOST_FS bytes=10485760 block=4096 VFS_reads=10240 RPC=10240 cpu_us=106270 native_us=1289332 submit_us=1297347 copy_us=4290
+HOST_FS bytes=10485760 block=8192 VFS_reads=10240 RPC=10240 cpu_us=72966 native_us=995832 submit_us=1001799 copy_us=2856
+HOST_FS bytes=10485760 block=16384 VFS_reads=10240 RPC=10240 cpu_us=109443 native_us=1530204 submit_us=1538331 copy_us=4383
+PASS actual storage worker/cache: native operations only on owner, byte IO batched, seek/ungetc/EOF, exclusive creation, pool exhaustion, nested calls, ISR refusal and error propagation
+RUN test_storage
+PASS actual storage worker/cache: native operations only on owner, byte IO batched, seek/ungetc/EOF, exclusive creation, pool exhaustion, nested calls, ISR refusal and error propagation

@@ -3,12 +3,36 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "formats/program_metadata.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+
+#define EDGE_ANALYSIS_VERSION 2U
+#ifndef CMT_EDGE_DIAGNOSTICS
+#define CMT_EDGE_DIAGNOSTICS 0
+#endif
+typedef enum {EDGE_ANALYSIS_IDLE,EDGE_ANALYSIS_RUNNING,EDGE_ANALYSIS_COMPLETE,EDGE_ANALYSIS_SKIPPED,EDGE_ANALYSIS_CANCELLED,EDGE_ANALYSIS_ERROR} edge_analysis_state_t;
+typedef enum {EDGE_CACHE_MISS,EDGE_CACHE_HIT,EDGE_CACHE_INVALID} edge_cache_status_t;
 typedef struct {
+ program_metadata_t program; /* First recognized PROGRAM, never a later prefetched title. */
+ uint64_t total_us,discovered_us,read_us,decode_us,callback_us,ui_us,yield_us;
+ uint32_t scanned_bytes,total_bytes,programs;
+ edge_analysis_state_t state;
+ edge_cache_status_t cache_status;
+ uint8_t aux_profile; /* Existing AutoName SIN/CPM 1..8; not a Sharp loader enum. */
+ bool cache_hit,programs_exact;
+} edge_analysis_t;
+/* Foreground scan callback/owner only. PLAY uses the immutable copy in info. */
+void edge_stream_analysis_snapshot(edge_analysis_t *out);
+/* Scan owner only; disabled builds perform no timing work. */
+void edge_stream_analysis_note_ui(uint64_t us,bool yielding);
+void edge_stream_invalidate_cache(void);
+
+typedef struct {
+    edge_analysis_t analysis;
     uint64_t total_us; /* Exact waveform duration, including preroll and tail; 0 if skipped. */
     uint32_t sample_rate;
     uint32_t total_seconds;

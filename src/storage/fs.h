@@ -65,3 +65,13 @@ static inline bool cmt_storage_execute_async(void (*fn)(void *),void *arg) {fn(a
 #define cmt_readdir readdir
 #define cmt_closedir closedir
 #endif
+
+/* Session invalidation for read-only analysis caches, also available on host. */
+uint32_t cmt_storage_epoch(void);
+void cmt_storage_invalidate(void);
+#ifndef CMT_STORAGE_DIAGNOSTICS
+#define CMT_STORAGE_DIAGNOSTICS 0
+#endif
+typedef struct {uint64_t read_calls,read_bytes,native_us,submit_us,copy_bytes,copy_us;} cmt_read_metrics_t;
+/* Disabled builds return false/zero and have no per-read timing cost. */
+bool cmt_storage_read_metrics(cmt_read_metrics_t *out,bool reset);

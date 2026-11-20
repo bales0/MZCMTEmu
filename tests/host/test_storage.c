@@ -85,6 +85,29 @@ static void nested(void *context) {assert(current==&storage_task);
 struct stat st;
 assert(cmt_stat(context,&st)==0);
 }
+
+#if CMT_STORAGE_DIAGNOSTICS
+#include <time.h>
+static void host_read_benchmark(void){
+ static uint8_t block[16384];memset(block,0x55,sizeof(block));
+ FILE *native=fopen("benchmark.bin","wb");assert(native);
+ for(unsigned n=0;n<640;++n)assert(fwrite(block,1,sizeof(block),native)==sizeof(block));
+ assert(!fclose(native));
+ const unsigned sizes[]={1024,4096,8192,16384};
+ for(unsigned mb=1;mb<=10;mb+=9)for(unsigned k=0;k<4;++k){
+  cmt_read_metrics_t metrics;assert(cmt_storage_read_metrics(&metrics,true));
+  cmt_file_t *file=cmt_fopen("benchmark.bin","rb");assert(file);
+  clock_t started=clock();unsigned requests=rpc_count;
+  for(unsigned done=0;done<mb*1024*1024;done+=sizes[k])assert(cmt_fread(block,1,sizes[k],file)==sizes[k]);
+  clock_t ended=clock();assert(cmt_storage_read_metrics(&metrics,false));
+  assert(metrics.read_calls==mb*1024 && metrics.read_bytes==mb*1024*1024 && metrics.copy_bytes==metrics.read_bytes);
+  assert(rpc_count-requests==metrics.read_calls && metrics.submit_us>=metrics.native_us);
+  printf("HOST_FS bytes=%u block=%u VFS_reads=%llu RPC=%u cpu_us=%llu native_us=%llu submit_us=%llu copy_us=%llu\n",mb*1024*1024,sizes[k],(unsigned long long)metrics.read_calls,rpc_count-requests,(unsigned long long)(ended-started)*1000000/CLOCKS_PER_SEC,(unsigned long long)metrics.native_us,(unsigned long long)metrics.submit_us,(unsigned long long)metrics.copy_us);
+  assert(!cmt_fclose(file));
+ }
+ assert(!remove("benchmark.bin"));
+}
+#endif
 int main(void) {
  assert(cmt_storage_init() && cmt_storage_init() && worker_creations==1);
  uint8_t bytes[2573],actual[2573];
@@ -162,6 +185,11 @@ assert(!cmt_closedir(dir));
  assert(!_rmdir("folder"));
 #else
  assert(!rmdir("folder"));
+#endif
+#if CMT_STORAGE_DIAGNOSTICS
+ host_read_benchmark();
+#else
+ cmt_read_metrics_t disabled;assert(!cmt_storage_read_metrics(&disabled,false) && !disabled.read_calls);
 #endif
  puts("PASS actual storage worker/cache: native operations only on owner, byte IO batched, seek/ungetc/EOF, exclusive creation, pool exhaustion, nested calls, ISR refusal and error propagation");
  return 0;

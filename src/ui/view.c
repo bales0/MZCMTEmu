@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "ui/view.h"
 #include "ui/policy.h"
+#include "ui/key_icons.h"
 #include "drivers/oled.h"
 #include "formats/mz_tape_profiles.h"
 #include "freertos/FreeRTOS.h"
@@ -134,6 +135,27 @@ static const char *compact_loader(loader_mode_t value){
  static const char *const names[]={"N1:1","AUTO","UL","UL800","UL700","700x3","IC1:4","IC1:3","IC1:2","TC1:3","TC1:2","N1:2","N1:3","700x1","N1:4","IC1:1","TC1:1"};
  return (unsigned)value<sizeof(names)/sizeof(names[0]) ? names[value]:"--";
 }
+
+void ui_build_edge_analysis(ui_model_t *model,const edge_analysis_t *scan,unsigned percent){
+ static char text[8][24];const program_metadata_t *p=&scan->program;
+ bool reliable=p->confidence==PROGRAM_HEADER_VALID || p->confidence==PROGRAM_PAYLOAD_VALID;
+ for(unsigned i=0;i<8;++i){text[i][0]=0;model->line[i]=text[i];}
+ snprintf(text[0],sizeof(text[0]),"ANALYZING %u %%",percent>100 ? 100:percent);
+ snprintf(text[1],sizeof(text[1]),"%.21s",reliable && (p->valid&PROGRAM_TITLE) ? p->title:"--");
+ static const char *const aux[]={"--","SIN1:1","SIN1:2","SIN1:3","SIN1:4","CPM1:1","CPM1:2","CPM1:3","CPM1:4"};
+ const char *profile=reliable && (p->valid&PROGRAM_RECORDED_MODE) ? compact_loader(p->recorded_loader_mode):reliable && scan->aux_profile<9 ? aux[scan->aux_profile]:"--";
+ const char *type=reliable ? (p->protocol==PROGRAM_CPM ? "CP/M":program_metadata_type(p)):"--";
+ snprintf(text[2],sizeof(text[2]),"%s %s",type,profile);
+ if(reliable && (p->valid&PROGRAM_SIZE))snprintf(text[3],sizeof(text[3]),"SIZE %lu",(unsigned long)p->declared_size);else strcpy(text[3],"SIZE --");
+ char load[8],exec[8];
+ if(reliable && (p->valid&PROGRAM_LOAD))snprintf(load,sizeof(load),"%04X",p->load);else strcpy(load,"--");
+ if(reliable && (p->valid&PROGRAM_EXEC))snprintf(exec,sizeof(exec),"%04X",p->exec);else strcpy(exec,"--");
+ snprintf(text[4],sizeof(text[4]),"LOAD %s EXEC %s",load,exec);
+ strcpy(text[5],p->confidence==PROGRAM_PAYLOAD_VALID ? "PREVIEW VERIFIED":p->confidence==PROGRAM_HEADER_VALID ? "PREVIEW HEADER":p->confidence==PROGRAM_LOADER_ONLY ? "LOADER ONLY":p->confidence==PROGRAM_INVALID ? "INVALID":"UNKNOWN");
+ if(scan->programs)snprintf(text[6],sizeof(text[6]),"PROGRAMS >= %lu",(unsigned long)scan->programs);
+ strcpy(text[7],UI_HELP_SCAN_SKIP_CANCEL);
+}
+
 static void draw_transport(uint32_t now){
  const ui_transport_view_t *v=&transport;
  const program_metadata_t *m=&v->program;
@@ -194,7 +216,7 @@ static void draw_transport(uint32_t now){
  }
  /* Transport state is in the shared header; row 5 is for warnings. */
  if(mode==RECORD)snprintf(line,sizeof(line),"MIN %3u%%",v->rx_min);
- else line[0]=0;
+ else snprintf(line,sizeof(line),"%s",v->preview_metadata ? "PREVIEW METADATA":"");
  if(v->warning && v->warning[0])row_text(5,v->warning);
  else {
   if(alarm!=UI_BUFFER_OK){const char *label=alarm==UI_BUFFER_BAD ? "BAD":alarm==UI_BUFFER_CRITICAL ? "CRIT":"LOW";

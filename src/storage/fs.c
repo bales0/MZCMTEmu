@@ -1,6 +1,30 @@
 #include "storage/fs.h"
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
+#if CMT_STORAGE_DIAGNOSTICS
+#ifdef CMT_STORAGE_TEST
+#include <time.h>
+static uint64_t metrics_now(void){struct timespec t;timespec_get(&t,TIME_UTC);return (uint64_t)t.tv_sec*1000000+t.tv_nsec/1000;}
+#else
+#include "esp_timer.h"
+static portMUX_TYPE metrics_lock=portMUX_INITIALIZER_UNLOCKED;
+static uint64_t metrics_now(void){return (uint64_t)esp_timer_get_time();}
+#endif
+static cmt_read_metrics_t read_metrics;
+static void metrics_add(uint64_t *field,uint64_t value){
+#ifndef CMT_STORAGE_TEST
+ portENTER_CRITICAL(&metrics_lock);
+#endif
+ *field+=value;
+#ifndef CMT_STORAGE_TEST
+ portEXIT_CRITICAL(&metrics_lock);
+#endif
+}
+#define METRIC_ADD(field,value) metrics_add(&read_metrics.field,(value))
+#else
+#define METRIC_ADD(field,value) ((void)0)
+#endif
+#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_attr.h"
@@ -75,14 +99,25 @@ static void perform(request_t *r) {
         if(opened>=0) {
             memset(slot,0,sizeof(*slot));slot->native=opened;slot->open=true;
             slot->writing=r->op==CREATE || !strcmp(r->other,"wb");r->result=slot;
+            if(slot->writing)cmt_storage_invalidate();
         }
         break;
     }
     case READ: {
-        ssize_t n=read(native,r->buffer,r->size);r->io_error=n<0;
+        #if CMT_STORAGE_DIAGNOSTICS
+        uint64_t started=metrics_now();
+        #endif
+        ssize_t n=read(native,r->buffer,r->size);
+        #if CMT_STORAGE_DIAGNOSTICS
+        uint64_t elapsed=metrics_now()-started;
+        METRIC_ADD(native_us,elapsed);
+        #endif
+        METRIC_ADD(read_calls,1);METRIC_ADD(read_bytes,n>0 ? (uint64_t)n:0);
+        r->io_error=n<0;
         r->count=n<0 ? 0:(size_t)n;r->eof=n>=0 && r->count<r->size;break;
     }
     case WRITE: {
+        cmt_storage_invalidate();
         ssize_t n=write(native,r->buffer,r->size);r->count=n<0 ? 0:(size_t)n;
         r->io_error=n<0 || r->count!=r->size;break;
     }
@@ -92,7 +127,7 @@ static void perform(request_t *r) {
         break;
     }
     case FLUSH:r->code=fsync(native);break;
-    case CLOSE:r->code=close(native);r->file->open=false;break;
+    case CLOSE:r->code=close(native);if(r->file->writing)cmt_storage_invalidate();r->file->open=false;break;
     case REMOVE:r->code=remove(r->path);break;
     case RENAME:r->code=rename(r->path,r->other);break;
     case STAT:r->code=stat(r->path,r->buffer);break;
@@ -139,10 +174,17 @@ static bool submit(request_t *r) {
     if(!allowed() || !worker) {errno=EIO;return false;}
     r->caller=xTaskGetCurrentTaskHandle();
     if(r->caller==worker) {perform(r);return true;}
+#if CMT_STORAGE_DIAGNOSTICS
+    uint64_t started=r->op==READ ? metrics_now():0;
+#endif
     /* Notification slot 0 is reserved for synchronous filesystem requests in
      * the UI/player tasks. Their request stays on the caller stack until ack. */
     if(xQueueSend(requests,&r,portMAX_DELAY)!=pdTRUE) {errno=EIO;return false;}
-    ulTaskNotifyTake(pdTRUE,portMAX_DELAY);errno=r->saved_errno;return true;
+    ulTaskNotifyTake(pdTRUE,portMAX_DELAY);errno=r->saved_errno;
+#if CMT_STORAGE_DIAGNOSTICS
+    if(r->op==READ)METRIC_ADD(submit_us,metrics_now()-started);
+#endif
+    return true;
 }
 bool cmt_storage_execute(void (*fn)(void *),void *arg) {
     request_t r={.op=EXECUTE,.function=fn,.context=arg};return fn && submit(&r);
@@ -183,7 +225,16 @@ size_t cmt_fread(void *out,size_t size,size_t count,cmt_file_t *f) {
     while(received<total) {
         if(f->cache_position<f->cache_length) {
             size_t n=f->cache_length-f->cache_position;if(n>total-received)n=total-received;
-            memcpy(bytes+received,f->cache+f->cache_position,n);f->cache_position+=n;f->position+=n;received+=n;continue;
+            #if CMT_STORAGE_DIAGNOSTICS
+            uint64_t started=metrics_now();
+            #endif
+            memcpy(bytes+received,f->cache+f->cache_position,n);
+            #if CMT_STORAGE_DIAGNOSTICS
+            uint64_t elapsed=metrics_now()-started;
+            METRIC_ADD(copy_us,elapsed);
+            #endif
+            METRIC_ADD(copy_bytes,n);
+            f->cache_position+=n;f->position+=n;received+=n;continue;
         }
         if(f->eof || f->io_error)break;
         request_t r={.op=READ,.file=f,.buffer=f->cache,.size=CACHE_BYTES};
@@ -194,6 +245,7 @@ size_t cmt_fread(void *out,size_t size,size_t count,cmt_file_t *f) {
     return received/size;
 }
 size_t cmt_fwrite(const void *input,size_t size,size_t count,cmt_file_t *f) {
+    if(size && count)cmt_storage_invalidate();
     if(!valid(f) || !f->writing || !size || !count || !input || f->io_error)return 0;
     if(count>SIZE_MAX/size) {f->io_error=true;errno=EOVERFLOW;return 0;}
     size_t total=size*count,written=0;const uint8_t *bytes=input;
@@ -247,11 +299,30 @@ int cmt_fprintf(cmt_file_t *f,const char *format,...) {
     if(n<0 || (size_t)n>=sizeof(text)){errno=EOVERFLOW;return -1;}
     return cmt_fwrite(text,1,(size_t)n,f)==(size_t)n ? n:-1;
 }
-int cmt_remove(const char *path) {request_t r={.op=REMOVE,.path=path};return submit(&r) ? r.code:-1;}
-int cmt_rename(const char *from,const char *to) {request_t r={.op=RENAME,.path=from,.other=to};return submit(&r) ? r.code:-1;}
+int cmt_remove(const char *path) {cmt_storage_invalidate();request_t r={.op=REMOVE,.path=path};return submit(&r) ? r.code:-1;}
+int cmt_rename(const char *from,const char *to) {cmt_storage_invalidate();request_t r={.op=RENAME,.path=from,.other=to};return submit(&r) ? r.code:-1;}
 int cmt_stat(const char *path,struct stat *st) {request_t r={.op=STAT,.path=path,.buffer=st};return submit(&r) ? r.code:-1;}
 int cmt_mkdir(const char *path,mode_t mode) {request_t r={.op=MKDIR,.path=path,.origin=(int)mode};return submit(&r) ? r.code:-1;}
 DIR *cmt_opendir(const char *path) {request_t r={.op=OPENDIR,.path=path};return submit(&r) ? r.result:NULL;}
 struct dirent *cmt_readdir(DIR *dir) {request_t r={.op=READDIR,.buffer=dir};return submit(&r) ? r.result:NULL;}
 int cmt_closedir(DIR *dir) {request_t r={.op=CLOSEDIR,.buffer=dir};return submit(&r) ? r.code:-1;}
 #endif
+
+static uint32_t media_epoch=1;
+uint32_t cmt_storage_epoch(void){return __atomic_load_n(&media_epoch,__ATOMIC_ACQUIRE);}
+void cmt_storage_invalidate(void){__atomic_add_fetch(&media_epoch,1,__ATOMIC_ACQ_REL);}
+bool cmt_storage_read_metrics(cmt_read_metrics_t *out,bool reset){
+ if(!out)return false;
+#if defined(ESP_PLATFORM) && CMT_STORAGE_DIAGNOSTICS
+#ifndef CMT_STORAGE_TEST
+ portENTER_CRITICAL(&metrics_lock);
+#endif
+ *out=read_metrics;if(reset)memset(&read_metrics,0,sizeof(read_metrics));
+#ifndef CMT_STORAGE_TEST
+ portEXIT_CRITICAL(&metrics_lock);
+#endif
+ return true;
+#else
+ (void)reset;*out=(cmt_read_metrics_t){0};return false;
+#endif
+}

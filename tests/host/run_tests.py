@@ -39,6 +39,7 @@ if args.sanitize:
 SUITES = {
     'test_ul_z80': ['tests/host/test_ul_z80.c','src/play/mzf_loader.c','src/play/mz700_fast3.c','src/formats/mz_loader_profiles.c'],
     'test_menu': ['tests/host/test_menu.c'],
+    'test_preflight_codecs': ['tests/host/test_preflight_codecs.c','src/audio/edge_stream.c','src/audio/edge_writer.c','src/audio/sharp_stream.c','src/formats/quickdisk.c','src/formats/sidecar.c','src/formats/file_format.c','src/formats/mz_tape_profiles.c','src/play/mzf_loader.c','src/play/mz700_fast3.c'],
     'test_edge_stream': ['tests/host/test_edge_stream.c','src/audio/edge_stream.c'],
     'test_ui_policy': ['tests/host/test_ui_policy.c','src/ui/policy.c'],
     'test_program_metadata': ['src/audio/edge_writer.c','src/audio/edge_stream.c','src/audio/wav_writer.c','src/audio/wav_reader.c','src/audio/wav_pulse_stream.c','tests/host/test_program_metadata.c','src/formats/program_metadata.c','src/formats/tape_metadata.c','src/record/record_autoname.c','src/formats/mz_tape_decoder.c','src/formats/mz_loader_profiles.c','src/formats/mz_title.c','src/audio/tap_stream.c'],
@@ -46,10 +47,11 @@ SUITES = {
     'test_oled_ui': ['tests/host/test_oled_ui.c','src/ui/ui.c','src/ui/view.c','src/ui/policy.c','src/drivers/oled.c','src/formats/program_metadata.c','src/formats/mz_title.c','src/formats/mz_loader_profiles.c','src/formats/mz_tape_profiles.c'],
     'test_buttons': ['tests/host/test_buttons.c','src/drivers/buttons.c'],
     'test_sdcard': ['tests/host/test_sdcard.c','src/drivers/sdcard.c'],
+    'test_storage_metrics': ['tests/host/test_storage.c','src/storage/fs.c'],
     'test_storage': ['tests/host/test_storage.c','src/storage/fs.c'],
     'test_player_rmt': ['tests/host/test_raw_rmt.c','src/audio/raw_pulse_rmt.c','src/audio/player.c',
         'src/audio/mzf_stream.c','src/audio/sharp_stream.c','src/audio/tap_stream.c',
-        'src/audio/wav_reader.c','src/audio/wav_pulse_stream.c','src/audio/wav_writer.c','src/audio/edge_stream.c',
+        'src/audio/wav_reader.c','src/audio/wav_pulse_stream.c','src/audio/wav_writer.c','src/audio/edge_stream.c','src/audio/edge_writer.c',
         'src/formats/file_format.c','src/formats/quickdisk.c','src/formats/mz_title.c','src/formats/sidecar.c',
         'src/formats/mz_tape_profiles.c','src/formats/mz_loader_profiles.c','src/play/mzf_loader.c','src/play/mz700_fast3.c'],
     'test_raw_rmt': ['tests/host/test_raw_rmt.c','src/audio/raw_pulse_rmt.c'],
@@ -59,7 +61,7 @@ SUITES = {
         'src/audio/edge_writer.c','src/audio/mzf_writer.c','src/formats/mz_tape_decoder.c',
         'src/formats/mz_loader_profiles.c','src/formats/sidecar.c','src/formats/file_format.c'],
     'test_file_list': ['tests/host/test_file_list.c','src/file_list.c'],
-    'test_autoname': ['tests/host/test_autoname.c','src/record/record_autoname.c','src/record/record_rename.c',
+    'test_autoname': ['src/audio/edge_stream.c','src/audio/edge_writer.c','tests/host/test_autoname.c','src/record/record_autoname.c','src/record/record_rename.c',
         'src/formats/mz_title.c','src/formats/mz_tape_decoder.c','src/formats/mz_loader_profiles.c'],
     'test_mzf_writer': ['tests/host/test_mzf_writer.c','src/audio/mzf_writer.c','src/formats/mz_tape_decoder.c','src/formats/mz_loader_profiles.c'],
     'test_sidecar_faults': ['tests/host/test_sidecar_faults.c','src/formats/sidecar.c','src/formats/file_format.c'],
@@ -101,12 +103,16 @@ for name, sources in SUITES.items():
             suite_flags += ['-DCONFIG_MZ_RX_PCNT_GUARD=1']
         if name=='test_recorder':
             suite_flags += ['-DCMT_STORAGE_ASYNC_TEST']
+        if name=='test_edge_stream':
+            suite_flags += ['-DCMT_EDGE_DIAGNOSTICS=1']
         if name=='test_sidecar_editor':
             suite_flags += ['-DSIDECAR_TX_TEST','-DCMT_STORAGE_ASYNC_TEST','-DSC_RENDER_DIR="'+(ROOT/'docs/validation/ui').as_posix()+'"']
         if name=='test_player_rmt':
             suite_flags += ['-DRMT_PLAYER_TEST']
-        if name=='test_storage':
+        if name in ('test_storage','test_storage_metrics'):
             suite_flags += ['-DESP_PLATFORM','-DCMT_STORAGE_TEST']
+        if name=='test_storage_metrics':
+            suite_flags += ['-DCMT_STORAGE_DIAGNOSTICS=1']
         if name=='test_writer_io':
             suite_flags += ['-Dfwrite=test_fwrite','-Dfputc=test_fputc','-Dfseek=test_fseek',
                             '-Dfflush=test_fflush','-Dfclose=test_fclose']
@@ -116,6 +122,9 @@ for name, sources in SUITES.items():
                 if dependency not in sources:sources.append(dependency)
         if 'src/audio/player.c' in sources:
             for dependency in ['src/formats/mz_tape_profiles.c','src/formats/tape_metadata.c','src/record/record_autoname.c','src/formats/mz_tape_decoder.c']:
+                if dependency not in sources:sources.append(dependency)
+        if "src/audio/edge_stream.c" in sources:
+            for dependency in ["src/storage/fs.c","src/formats/preflight_tape_metadata.c","src/formats/preflight_mz_tape_decoder.c","src/record/preflight_record_autoname.c","src/formats/program_metadata.c","src/formats/mz_loader_profiles.c","src/formats/mz_title.c"]:
                 if dependency not in sources:sources.append(dependency)
         cmd = [cc, *flags, *suite_flags, '-DRECORDINGS_DIR="."', '-I', str(ROOT / 'tests/host/stubs'),
                '-I', str(ROOT / 'src'), *[str(ROOT / s) for s in sources], '-o', str(exe)]
