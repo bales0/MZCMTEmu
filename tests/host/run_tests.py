@@ -37,6 +37,8 @@ if args.sanitize:
     flags += ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']
 (ROOT / '.tmp').mkdir(exist_ok=True)
 SUITES = {
+    'test_tape_contents': ['tests/host/test_tape_contents.c','src/ui/tape_contents.c','src/ui/ui.c','src/ui/view.c','src/drivers/oled.c','src/ui/policy.c','src/formats/program_metadata.c','src/formats/mz_title.c','src/formats/mz_loader_profiles.c','src/formats/mz_tape_profiles.c'],
+    'test_tape_analyzer': ['tests/host/test_tape_analyzer.c','src/formats/tape_analyzer.c','src/audio/wav_reader.c','src/audio/wav_pulse_stream.c','src/audio/edge_writer.c','src/audio/sharp_stream.c','src/formats/file_format.c','src/formats/quickdisk.c','src/formats/sidecar.c','src/formats/mz_tape_profiles.c','src/play/mzf_loader.c','src/play/mz700_fast3.c'],
     'test_ul_z80': ['tests/host/test_ul_z80.c','src/play/mzf_loader.c','src/play/mz700_fast3.c','src/formats/mz_loader_profiles.c'],
     'test_menu': ['tests/host/test_menu.c'],
     'test_preflight_codecs': ['tests/host/test_preflight_codecs.c','src/audio/edge_stream.c','src/audio/edge_writer.c','src/audio/sharp_stream.c','src/formats/quickdisk.c','src/formats/sidecar.c','src/formats/file_format.c','src/formats/mz_tape_profiles.c','src/play/mzf_loader.c','src/play/mz700_fast3.c'],
@@ -88,6 +90,7 @@ SUITES = {
                         'src/formats/sidecar.c','src/formats/file_format.c'],
 }
 env = dict(os.environ)
+SUITES['test_tape_seek']=['tests/host/test_tape_seek.c',*SUITES['test_player_rmt'][1:]]
 # MinGW runtime DLLs are needed by the compiler as well as test executables.
 env['PATH'] = str(Path(cc).parent) + os.pathsep + env.get('PATH', '')
 print(subprocess.check_output([cc, '--version'], text=True, env=env).splitlines()[0], flush=True)
@@ -97,7 +100,7 @@ for name, sources in SUITES.items():
     with tempfile.TemporaryDirectory(prefix=name + '-', dir=ROOT / '.tmp') as tmp:
         exe = Path(tmp) / (name + ('.exe' if os.name == 'nt' else ''))
         suite_flags = ['-DHOST_TRACK_HEAP'] if name=='test_file_list' else []
-        if name=='test_oled_ui':
+        if name in ('test_oled_ui','test_tape_contents'):
             suite_flags += ['-DUI_RENDER_DIR="'+(ROOT/'docs/validation/ui').as_posix()+'"']
         if name=='test_capture_pcnt':
             suite_flags += ['-DCONFIG_MZ_RX_PCNT_GUARD=1']
@@ -107,7 +110,7 @@ for name, sources in SUITES.items():
             suite_flags += ['-DCMT_EDGE_DIAGNOSTICS=1']
         if name=='test_sidecar_editor':
             suite_flags += ['-DSIDECAR_TX_TEST','-DCMT_STORAGE_ASYNC_TEST','-DSC_RENDER_DIR="'+(ROOT/'docs/validation/ui').as_posix()+'"']
-        if name=='test_player_rmt':
+        if name in ('test_player_rmt','test_tape_seek'):
             suite_flags += ['-DRMT_PLAYER_TEST']
         if name in ('test_storage','test_storage_metrics'):
             suite_flags += ['-DESP_PLATFORM','-DCMT_STORAGE_TEST']
@@ -121,10 +124,10 @@ for name, sources in SUITES.items():
             for dependency in ['src/formats/program_metadata.c','src/formats/mz_title.c','src/formats/mz_loader_profiles.c']:
                 if dependency not in sources:sources.append(dependency)
         if 'src/audio/player.c' in sources:
-            for dependency in ['src/formats/mz_tape_profiles.c','src/formats/tape_metadata.c','src/record/record_autoname.c','src/formats/mz_tape_decoder.c']:
+            for dependency in ['src/formats/tape_analyzer.c','src/formats/mz_tape_profiles.c','src/formats/tape_metadata.c','src/record/record_autoname.c','src/formats/mz_tape_decoder.c']:
                 if dependency not in sources:sources.append(dependency)
-        if "src/audio/edge_stream.c" in sources:
-            for dependency in ["src/storage/fs.c","src/formats/preflight_tape_metadata.c","src/formats/preflight_mz_tape_decoder.c","src/record/preflight_record_autoname.c","src/formats/program_metadata.c","src/formats/mz_loader_profiles.c","src/formats/mz_title.c"]:
+        if "src/audio/edge_stream.c" in sources or "src/formats/tape_analyzer.c" in sources:
+            for dependency in ["src/formats/tape_analyzer.c","src/audio/wav_reader.c","src/formats/file_format.c","src/storage/fs.c","src/formats/preflight_tape_metadata.c","src/formats/preflight_mz_tape_decoder.c","src/record/preflight_record_autoname.c","src/formats/program_metadata.c","src/formats/mz_loader_profiles.c","src/formats/mz_title.c"]:
                 if dependency not in sources:sources.append(dependency)
         cmd = [cc, *flags, *suite_flags, '-DRECORDINGS_DIR="."', '-I', str(ROOT / 'tests/host/stubs'),
                '-I', str(ROOT / 'src'), *[str(ROOT / s) for s in sources], '-o', str(exe)]

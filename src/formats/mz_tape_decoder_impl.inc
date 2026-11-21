@@ -77,6 +77,11 @@ static const uint8_t *validated_header = NULL;
 static uint16_t validated_short_x8 = 0U;
 static uint16_t validated_long_x8 = 0U;
 static mz_tape_decoder_event_t pending_event;
+static mz_tape_observer_fn observer;
+static void *observer_context;
+void mz_tape_decoder_set_observer(mz_tape_observer_fn fn,void *context) {
+    observer=fn;observer_context=context;
+}
 
 static uint8_t popcount8(uint8_t value)
 {
@@ -106,6 +111,7 @@ static void reset_decoder(pulse_decoder_t *decoder, uint16_t seed_units)
     decoder->checksum = 0U;
     decoder->recorded_checksum = 0U;
     decoder->copy_index = 0U;
+    if(seed_units && observer)observer(MZ_OBSERVE_LEADER,decoder_mode==DECODER_MODE_HEADER,observer_context);
 }
 
 /* Test and adapt one leader pulse in a single pass.  The old acceptance rule
@@ -314,6 +320,11 @@ static void publish_event(mz_tape_decoder_event_type_t type,
     pending_event.recorded_checksum = decoder->recorded_checksum;
     pending_event.leader_pulses = decoder->leader_pulses;
     pending_event.copy_index = decoder->copy_index;
+    if(observer && type!=MZ_TAPE_DECODER_EVENT_DATA_BYTE) {
+        mz_tape_observation_t kind=type==MZ_TAPE_DECODER_EVENT_HEADER_VALID ? MZ_OBSERVE_HEADER:
+            type==MZ_TAPE_DECODER_EVENT_BLOCK_VALID ? MZ_OBSERVE_VALID:MZ_OBSERVE_INVALID;
+        observer(kind,type==MZ_TAPE_DECODER_EVENT_HEADER_VALID,observer_context);
+    }
 }
 
 static void begin_duplicate_gap(pulse_decoder_t *decoder,
@@ -370,6 +381,7 @@ static void accept_byte(pulse_decoder_t *decoder, uint8_t value)
                               decoder);
                 return;
             }
+            if(observer)observer(MZ_OBSERVE_INVALID,true,observer_context);
             /* Native MZ700 repeats the block without a new leader/mark.  Keep
                the calibrated short interval and wait for the
                documented 256-short separator. */
@@ -464,6 +476,7 @@ static void feed_pulse(pulse_decoder_t *decoder, uint16_t duration_units)
             (pulse_class == 1))
         {
             decoder->state = DECODE_MARK_LONG;
+            if(observer)observer(MZ_OBSERVE_MARK,decoder_mode==DECODER_MODE_HEADER,observer_context);
             decoder->mark_pulses = 1U;
             decoder->final_pulses = 0U;
             decoder->checksum = 0U;

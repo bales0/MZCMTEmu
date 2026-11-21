@@ -13,6 +13,11 @@ int main(void){
  }
  app_menu_t editor={.section=APP_MENU_PLAY,.edit_sidecar=true};
  assert(app_menu_count(&editor)==6 && app_menu_item(&editor,5)==MENU_ITEM_EDIT_SIDECAR && app_menu_item(&editor,6)==MENU_ITEM_COUNT);
+ app_menu_t analyzer={.section=APP_MENU_PLAY,.tape_analyzer=true};
+ assert(app_menu_count(&analyzer)==6 && app_menu_item(&analyzer,5)==MENU_ITEM_TAPE_ANALYZER);
+ assert(app_menu_item(&analyzer,6)==MENU_ITEM_COUNT);
+ analyzer.edit_sidecar=true;
+ assert(app_menu_count(&analyzer)==7 && app_menu_item(&analyzer,5)==MENU_ITEM_EDIT_SIDECAR && app_menu_item(&analyzer,6)==MENU_ITEM_TAPE_ANALYZER);
  assert(app_menu_next_record_control(0)==2 && app_menu_next_record_control(2)==1 && app_menu_next_record_control(1)==0);
  for(int delta=-1;delta<=1;delta+=2){
   assert(app_menu_info_move(0,delta)==0 && app_menu_info_move(1,delta)==1);

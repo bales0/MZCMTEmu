@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "audio/tap_stream.h"
 #include "audio/sharp_stream.h"
+#include "formats/tape_analyzer.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -92,5 +93,18 @@ bool player_set_sense_level(bool high);
 /* Stop QD output and retain the validated image for the record selector. */
 bool player_stop_to_selector(void);
 
-/* Separate immutable first-program preview; never publishes into live timeline. */
+/* Analyzer-program preview only. Ordinary PLAY has no preflight metadata. */
 bool player_preflight_metadata(program_metadata_t *out);
+bool player_can_time_seek(void);
+/* Lightweight duration/checkpoint index, never a content scan. Call paused/EOF. */
+const tape_index_t *player_time_index(tape_analyzer_control_fn,void *);
+/* Indexed waveform transport. Refuses active PLAY and motor-paused transport. Stops old
+ * TX, clears pending/FIFO and metadata, restores source, prefills, then stays
+ * USER_PAUSED until an explicit resume and application MOTOR/S1 permission.
+ * NO_ENTRY selects whole tape; time_seek is an explicitly unverified start. */
+bool player_prepare_tape(const tape_index_t *,uint32_t program,uint64_t time_us,
+                         bool time_seek,tape_analyzer_control_fn,void *);
+uint64_t player_tape_position_us(void); /* Original tape clock, not prefetch. */
+uint64_t player_tape_elapsed_us(void);  /* Physical selected-session elapsed. */
+uint64_t player_tape_total_us(void); /* Whole original waveform, excludes synthetic silence. */
+bool player_tape_unverified_start(void); /* Time seek is not a verified program anchor. */

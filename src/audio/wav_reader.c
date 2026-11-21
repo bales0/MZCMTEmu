@@ -41,7 +41,7 @@ static bool skip_bytes(cmt_file_t *fp, uint32_t n)
     return (cmt_fseek(fp, (long)n, SEEK_CUR) == 0);
 }
 
-static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
+bool wav_reader_parse(cmt_file_t *fp, wav_info_t *out)
 {
     char riff_id[4];
     uint32_t riff_size;
@@ -55,6 +55,9 @@ static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
     if (fp == NULL || out == NULL) {
         return false;
     }
+    if(cmt_fseek(fp,0,SEEK_END))return false;
+    long file_size=cmt_ftell(fp);
+    if(file_size<12 || cmt_fseek(fp,0,SEEK_SET))return false;
 
     if (cmt_fread(riff_id, 1, 4, fp) != 4) {
         return false;
@@ -68,7 +71,8 @@ static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
         return false;
     }
 
-    (void)riff_size;
+    uint64_t riff_end=(uint64_t)riff_size+8U;
+    if(riff_size<4U || riff_end>(uint64_t)file_size)return false;
 
     if (memcmp(riff_id, "RIFF", 4) != 0 || memcmp(wave_id, "WAVE", 4) != 0) {
         return false;
@@ -78,6 +82,8 @@ static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
     while (true) {
         char chunk_id[4];
         uint32_t chunk_size;
+        long chunk_pos=cmt_ftell(fp);
+        if(chunk_pos<0 || (uint64_t)chunk_pos+8U>riff_end)break;
 
         if (cmt_fread(chunk_id, 1, 4, fp) != 4) {
             break;
@@ -86,6 +92,8 @@ static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
         if (!read_u32_le(fp, &chunk_size)) {
             break;
         }
+        uint64_t chunk_end=(uint64_t)chunk_pos+8U+chunk_size;
+        if(chunk_end>riff_end || chunk_size>INT32_MAX)return false;
 
         if (memcmp(chunk_id, "fmt ", 4) == 0) {
             // Minimálně 16 byte pro PCM fmt chunk
@@ -110,7 +118,7 @@ static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
             }
 
             // WAV chunky jsou word-aligned
-            if (chunk_size & 1U) {
+            if ((chunk_size & 1U) && chunk_end<riff_end) {
                 if (!skip_bytes(fp, 1)) {
                     return false;
                 }
@@ -133,7 +141,7 @@ static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
                 return false;
             }
 
-            if (chunk_size & 1U) {
+            if ((chunk_size & 1U) && chunk_end<riff_end) {
                 if (!skip_bytes(fp, 1)) {
                     return false;
                 }
@@ -145,7 +153,7 @@ static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
                 return false;
             }
 
-            if (chunk_size & 1U) {
+            if ((chunk_size & 1U) && chunk_end<riff_end) {
                 if (!skip_bytes(fp, 1)) {
                     return false;
                 }
@@ -163,6 +171,12 @@ static bool parse_wav_header(cmt_file_t *fp, wav_info_t *out)
 
     *out = tmp;
     return true;
+}
+bool wav_reader_supported(const wav_info_t *info) {
+    return info && info->audio_format==1U && info->num_channels==1U &&
+        info->bits_per_sample==8U && info->block_align==1U &&
+        info->sample_rate && info->sample_rate<=1000000U &&
+        info->byte_rate==info->sample_rate;
 }
 
 void wav_reader_close(void)
@@ -193,7 +207,7 @@ bool wav_reader_open(const char *path, wav_info_t *info)
         return false;
     }
 
-    if (!parse_wav_header(fp, &tmp)) {
+    if (!wav_reader_parse(fp, &tmp)) {
         cmt_fclose(fp);
         return false;
     }
@@ -226,7 +240,7 @@ bool wav_reader_probe(const char *path, wav_info_t *info)
         return false;
     }
 
-    bool ok = parse_wav_header(fp, &tmp);
+    bool ok = wav_reader_parse(fp, &tmp);
     cmt_fclose(fp);
 
     if (!ok) {
@@ -253,7 +267,7 @@ size_t wav_reader_read(uint8_t *dst, size_t max_len)
     }
 
     size_t n = cmt_fread(dst, 1, to_read, s_fp);
-    if (n < to_read && cmt_ferror(s_fp)) {
+    if (n < to_read) {
         s_read_error = true;
     }
 

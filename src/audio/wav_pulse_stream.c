@@ -3,8 +3,6 @@
 #include <stddef.h>
 
 #define BUFFER_SAMPLES 256U
-#define LOW_THRESHOLD 0x40U
-#define HIGH_THRESHOLD 0xC0U
 static uint8_t buffer[BUFFER_SAMPLES],hysteresis,run_level;
 static size_t position,available;
 static uint32_t rate,run_length;
@@ -17,7 +15,7 @@ bool wav_pulse_stream_begin(uint32_t sample_rate) {
     if(!rate || rate>1000000) { error=true;return false; }
     return true;
 }
-static uint64_t time_us(uint64_t index) { return (index*1000000ULL+rate/2)/rate; }
+static uint64_t time_us(uint64_t index) { return wav_pulse_time(index,rate,1000000); }
 static int next_sample(void) {
     if(position==available) {
         available=wav_reader_read(buffer,sizeof(buffer));position=0;
@@ -28,7 +26,7 @@ static int next_sample(void) {
 static bool emit(uint64_t end,uint8_t *level,uint32_t *duration,bool exact) {
     uint64_t start_us=time_us(run_start),end_us=time_us(end);
     *level=run_level;
-    *duration=exact ? (uint32_t)(((end*16000000ULL+rate/2)/rate)-((run_start*16000000ULL+rate/2)/rate)):(uint32_t)(end_us-start_us);
+    *duration=exact ? (uint32_t)(wav_pulse_time(end,rate,16000000)-wav_pulse_time(run_start,rate,16000000)):(uint32_t)(end_us-start_us);
     queued_us=end_us;
     return *duration!=0;
 }
@@ -46,8 +44,7 @@ static bool next_interval(uint8_t *level,uint32_t *duration,bool exact) {
             if(error || !run_length) return false;
             bool ok=emit(samples,level,duration,exact);run_length=0;return ok;
         }
-        if(!hysteresis && (unsigned)value>=HIGH_THRESHOLD) hysteresis=1;
-        else if(hysteresis && (unsigned)value<=LOW_THRESHOLD) hysteresis=0;
+        hysteresis=wav_pulse_hysteresis(hysteresis,(uint8_t)value);
         if(run_length && hysteresis!=run_level) {
             bool ok=emit(samples,level,duration,exact);
             run_level=hysteresis;run_start=samples++;run_length=1;return ok;

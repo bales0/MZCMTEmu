@@ -1,0 +1,249 @@
+{
+  "date": "2026-11-21",
+  "feature": "TAPE ANALYZER r44 / ABSOLUTE TIME / INLINE SEEK / INDEX TARGET METADATA",
+  "base_head": "4ea885ef68b1aa8392ed17b9b86d13f983bed11a",
+  "host": {
+    "status": "PASS",
+    "compiler": "GCC 14.2.0 (Debian 14.2.0-19), WSL Debian",
+    "sanitizers": [
+      "address",
+      "undefined"
+    ],
+    "full_regression_suites": [
+      "test_tape_contents",
+      "test_tape_analyzer",
+      "test_ul_z80",
+      "test_menu",
+      "test_preflight_codecs",
+      "test_edge_stream",
+      "test_ui_policy",
+      "test_program_metadata",
+      "test_capture_pcnt",
+      "test_oled_ui",
+      "test_buttons",
+      "test_sdcard",
+      "test_storage_metrics",
+      "test_storage",
+      "test_player_rmt",
+      "test_raw_rmt",
+      "test_loader_choice",
+      "test_capture_mcpwm",
+      "test_writer_io",
+      "test_file_list",
+      "test_autoname",
+      "test_mzf_writer",
+      "test_sidecar_faults",
+      "test_sidecar_editor",
+      "test_quickdisk",
+      "test_route_switch",
+      "test_settings",
+      "test_player_sharp",
+      "test_sharp_stream",
+      "test_recorder",
+      "test_tap_stream",
+      "test_player_tap",
+      "test_tape_seek"
+    ],
+    "full_regression_count": 33,
+    "final_change_rechecks": [
+      "test_tape_contents",
+      "test_oled_ui",
+      "test_tape_seek"
+    ],
+    "rechecks_status": "PASS",
+    "pixel_frames": 10,
+    "benchmarks": [
+      {
+        "source": "L16",
+        "mib": 1,
+        "wall_seconds": 0.436928,
+        "cpu_seconds": 0.100365,
+        "cursor_read_calls": 1024,
+        "cursor_read_bytes": 1048576,
+        "checkpoint_slots": 2384
+      },
+      {
+        "source": "LENGTH_L16",
+        "mib": 1,
+        "wall_seconds": 0.120051,
+        "cpu_seconds": 0.013009,
+        "cursor_read_calls": 1024,
+        "cursor_read_bytes": 1048576,
+        "checkpoint_slots": 2128
+      },
+      {
+        "source": "L16",
+        "mib": 10,
+        "wall_seconds": 2.494245,
+        "cpu_seconds": 0.95252,
+        "cursor_read_calls": 10240,
+        "cursor_read_bytes": 10485760,
+        "checkpoint_slots": 2919
+      },
+      {
+        "source": "LENGTH_L16",
+        "mib": 10,
+        "wall_seconds": 1.313209,
+        "cpu_seconds": 0.109313,
+        "cursor_read_calls": 10240,
+        "cursor_read_bytes": 10485760,
+        "checkpoint_slots": 2663
+      },
+      {
+        "source": "DENSE_L16",
+        "mib": 1,
+        "wall_seconds": 0.268165,
+        "cpu_seconds": 0.125289,
+        "cursor_read_calls": 1024,
+        "cursor_read_bytes": 1048576,
+        "checkpoint_slots": 274
+      },
+      {
+        "source": "DENSE_L16",
+        "mib": 10,
+        "wall_seconds": 3.293617,
+        "cpu_seconds": 1.309815,
+        "cursor_read_calls": 10240,
+        "cursor_read_bytes": 10485760,
+        "checkpoint_slots": 425
+      }
+    ],
+    "benchmark_notes": "Host ASan/UBSan full regression; target compilation ran concurrently. Wall times include filesystem/scheduling contention. LENGTH_L16 invokes no content decoder. Cursor read counts are not native VFS/RPC/SD measurements; no hardware speedup inferred."
+  },
+  "target": {
+    "status": "PASS",
+    "environment": "MZCMTEmu",
+    "platform": "espressif32@7.0.1",
+    "framework": "ESP-IDF 6.0.1 (4.60001.0)",
+    "compiler_package": "toolchain-xtensa-esp-elf 15.2.0+20251204",
+    "flash_size": "16MB",
+    "psram_mode": "OCT 80MHz",
+    "ram_static_bytes": 178892,
+    "application_flash_bytes": 507131,
+    "firmware_bytes": 507552,
+    "firmware_sha256": "16161a65cde04ef91cca32a7cc50623e70ac7d347e3d5524a595a37c9260372c"
+  },
+  "memory": {
+    "program_capacity": 256,
+    "program_bytes": 152,
+    "block_capacity": 2048,
+    "block_bytes": 56,
+    "checkpoint_capacity": 4096,
+    "checkpoint_bytes": 40,
+    "psram_pool_bytes": 317440,
+    "index_header_bytes": 1200,
+    "cursor_bytes": 1136,
+    "layout_measurement": "Cross-compiled sizeof constants from the pinned Xtensa compiler, read from ELF .rodata",
+    "frames": [
+      {
+        "unit": "main",
+        "function": "app_task",
+        "frame_bytes": 1232
+      },
+      {
+        "unit": "main",
+        "function": "editor_open",
+        "frame_bytes": 1152
+      },
+      {
+        "unit": "main",
+        "function": "start_selected_file",
+        "frame_bytes": 1072
+      },
+      {
+        "unit": "audio/player",
+        "function": "player_start",
+        "frame_bytes": 1072
+      },
+      {
+        "unit": "main",
+        "function": "selector_move",
+        "frame_bytes": 1056
+      },
+      {
+        "unit": "audio/player",
+        "function": "player_set_record_mode",
+        "frame_bytes": 1056
+      },
+      {
+        "unit": "audio/player",
+        "function": "metadata_collect",
+        "frame_bytes": 288
+      },
+      {
+        "unit": "ui/view",
+        "function": "ui_view_draw",
+        "frame_bytes": 240
+      },
+      {
+        "unit": "main",
+        "function": "tape_prepare_control",
+        "frame_bytes": 224
+      },
+      {
+        "unit": "main",
+        "function": "scan_edge_analysis",
+        "frame_bytes": 224
+      },
+      {
+        "unit": "main",
+        "function": "app_main",
+        "frame_bytes": 224
+      },
+      {
+        "unit": "formats/tape_analyzer",
+        "function": "flush_run$part$0",
+        "frame_bytes": 224
+      }
+    ],
+    "frame_measurement": "Final target object entry prologues in main, player, analyzer, tape_contents, view and wav_reader; individual frame sizes, not runtime call-chain high-water",
+    "time_checkpoint_pool_bytes": 163840,
+    "ordinary_play_program_block_allocation": false
+  },
+  "hardware": {
+    "tested": false,
+    "flashed": false,
+    "runtime_stack_high_water_measured": false,
+    "native_vfs_latency_measured": false
+  },
+  "constraints": {
+    "source_recordings_read_only": true,
+    "persistent_idx": false,
+    "unverified_time_start_requires_warning_and_explicit_play": true,
+    "gpio_changed": false,
+    "committed": false,
+    "branch_created": false,
+    "ff_entry_during_play": true,
+    "auto_pause_before_seek": true,
+    "reposition_while_tx_running": false,
+    "ordinary_play_content_preflight": false,
+    "content_analysis_explicit_utility_only": true,
+    "browser_navigation_changed": false,
+    "absolute_original_tape_clock": true,
+    "constant_full_source_duration": true,
+    "inline_play_seek": true,
+    "second_seek_confirmation": false,
+    "uncertain_program_silently_plays_whole_tape": false,
+    "index_metadata_preview_tracks_target": true
+  },
+  "limitations": [
+    "Uncertain candidates cannot start independently; whole-tape playback is an explicit separate selection. Time seek does not establish a verified loading chain.",
+    "RAM cache identity uses sampled fingerprints, not a full-content integrity proof.",
+    "Files beyond the target long seek range are rejected.",
+    "No physical Sharp/SD/RMT or RTOS high-water acceptance test performed."
+  ],
+  "logs": [
+    ".tmp/r44-all-host-tests.txt",
+    ".tmp/r44-metadata-final.txt",
+    ".tmp/r44-build-metadata.txt"
+  ],
+  "regressions": [
+    "Repeated seek preserves original full duration and absolute position/percent",
+    "Selected second IC program starts at its own nonzero complete loader chain; prior TC program is excluded",
+    "Partial program EOF retains absolute clock and does not force whole-tape 100 percent",
+    "WAV final clock survives STOP at four sample rates",
+    "One PLAY commits inline FF/REW; STOP discards preview",
+    "Seek preview resolves verified target ranges, clears gaps/uncertainty/overlaps/time-only metadata, cancel preserves live snapshot",
+    "Committed arbitrary seek clears old program preview and live metadata before new physical TX"
+  ]
+}

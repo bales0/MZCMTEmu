@@ -3,6 +3,7 @@
 #include <string.h>
 #include "record/record_autoname.h"
 #include "audio/edge_stream.h"
+#include "formats/tape_analyzer.h"
 #include "audio/edge_writer.h"
 #include "formats/mz_tape_decoder.h"
 #include "fixtures/loader_golden.h"
@@ -177,11 +178,14 @@ static void aux_preflight(void){
   if(protocol)cpm(bad!=0,speed,1);else sinclair(bad!=0,speed);
   write_edge_fixture=false;assert(edge_writer_finalize());
   edge_stream_info_t info;edge_stream_invalidate_cache();assert(edge_stream_open(path,&info));
-  if(bad)assert(!(info.analysis.program.valid&PROGRAM_TITLE));
-  else {assert(info.analysis.program.valid&PROGRAM_TITLE);assert(!strcmp(info.analysis.program.title,protocol ? "CPM TEST":"SIN TEST"));assert(info.analysis.program.protocol==(protocol ? PROGRAM_CPM:PROGRAM_SPECTRUM));assert(info.analysis.aux_profile>=1 && info.analysis.aux_profile<=8);if(f)assert(info.analysis.aux_profile==speed+(protocol ? 5:1));}
+  assert(!info.analysis.program.valid && !info.analysis.programs);
+  assert(tape_analyzer_begin(path));while(tape_analyzer_step()){}
+  const tape_index_t *index=tape_analyzer_result();assert(index->state==TAPE_INDEX_FINISHED);
+  if(bad)assert(!index->program_count_recognized);
+  else {assert(index->program_count_recognized==1);const tape_program_t *p=&index->programs[0];assert(p->metadata.valid&PROGRAM_TITLE);assert(!strcmp(p->metadata.title,protocol ? "CPM TEST":"SIN TEST"));assert(p->metadata.protocol==(protocol ? PROGRAM_CPM:PROGRAM_SPECTRUM));assert(p->aux_profile>=1 && p->aux_profile<=8);if(f)assert(p->aux_profile==speed+(protocol ? 5:1));}
   edge_stream_close();assert(!remove(path));
  }
- puts("PASS actual LEP/L16 preflight Sinclair and CP/M four speeds, validated titles/provenance and corrupt checksum refusal");
+ puts("PASS explicit TAPE ANALYZER Sinclair and CP/M four speeds, validated titles/provenance and corrupt checksum refusal; ordinary preflight has no content metadata");
 }
 
 static void rename_tests(void) {

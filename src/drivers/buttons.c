@@ -12,14 +12,30 @@ typedef struct { bool raw,down,armed,long_sent; TickType_t changed,pressed,repea
 static const int pins[]={8,9,10,11,42};
 static key_t keys[5];
 static bool last_repeat;
+static buttons_nav_mode_t nav_mode;
 void buttons_init(void) {
     gpio_config_t cfg={.mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE,
         .pull_down_en=GPIO_PULLDOWN_DISABLE,.pin_bit_mask=(1ULL<<8)|(1ULL<<9)|(1ULL<<10)|(1ULL<<11)|(1ULL<<42)};
     gpio_config(&cfg);memset(keys,0,sizeof(keys));last_repeat=false;
+    nav_mode=BUTTONS_NAV_NORMAL;
     TickType_t now=xTaskGetTickCount();
     for(unsigned i=0;i<5;++i) {
         keys[i].down=keys[i].raw=gpio_get_level(pins[i])==0;
         keys[i].armed=!keys[i].down;keys[i].changed=now;
+    }
+}
+void buttons_set_nav_mode(buttons_nav_mode_t mode) {
+    if(mode!=BUTTONS_NAV_NORMAL && mode!=BUTTONS_NAV_SEEK)return;
+    if(mode==nav_mode)return;
+    nav_mode=mode;last_repeat=false;
+    TickType_t now=xTaskGetTickCount();
+    for(unsigned i=2;i<=3;++i) {
+        key_t *k=&keys[i];
+        /* Sample the pad too: a press may still be awaiting debounce when
+         * the screen changes. Discard pending gestures in both directions. */
+        k->down=k->raw=gpio_get_level(pins[i])==0;
+        k->armed=!k->down;k->long_sent=false;k->changed=now;
+        k->pressed=k->repeated=now;k->delay=pdMS_TO_TICKS(REPEAT_DELAY_MS);
     }
 }
 btn_event_t buttons_poll(void) {
@@ -56,8 +72,31 @@ btn_event_t buttons_poll(void) {
         }
         if(released[i] && !k->long_sent)return i==0 ? BTN_PLAY:BTN_REC;
     }
+    /* A seek-end event must win over the opposite direction's short/repeat.
+     * Both releases can settle in the same poll, which returns only one event. */
+    if(nav_mode==BUTTONS_NAV_SEEK) {
+        for(unsigned i=2;i<=3;++i)
+            if(released[i] && keys[i].long_sent)
+                return i==2 ? BTN_NEXT_RELEASE:BTN_PREV_RELEASE;
+    }
     for(unsigned i=2;i<=3;++i) {
         key_t *k=&keys[i];
+        if(nav_mode==BUTTONS_NAV_SEEK) {
+            if(released[i]) {
+                return i==2 ? BTN_NEXT:BTN_PREV;
+            }
+            if(k->down && k->armed) {
+                if(!k->long_sent && (TickType_t)(now-k->pressed)>=pdMS_TO_TICKS(MENU_LONG_MS)) {
+                    k->long_sent=true;k->repeated=now;
+                    return i==2 ? BTN_NEXT_LONG:BTN_PREV_LONG;
+                }
+                if(k->long_sent && (TickType_t)(now-k->repeated)>=pdMS_TO_TICKS(REPEAT_RATE_MS)) {
+                    k->repeated=now;last_repeat=true;
+                    return i==2 ? BTN_NEXT_REPEAT:BTN_PREV_REPEAT;
+                }
+            }
+            continue;
+        }
         if(pressed[i])return i==2 ? BTN_NEXT:BTN_PREV;
         if(k->down && k->armed && (TickType_t)(now-k->repeated)>=k->delay) {
             k->repeated=now;k->delay=pdMS_TO_TICKS(REPEAT_RATE_MS);last_repeat=true;

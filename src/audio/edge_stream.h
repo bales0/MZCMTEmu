@@ -10,14 +10,14 @@ extern "C" {
 #endif
 
 
-#define EDGE_ANALYSIS_VERSION 2U
+#define EDGE_ANALYSIS_VERSION 3U
 #ifndef CMT_EDGE_DIAGNOSTICS
 #define CMT_EDGE_DIAGNOSTICS 0
 #endif
 typedef enum {EDGE_ANALYSIS_IDLE,EDGE_ANALYSIS_RUNNING,EDGE_ANALYSIS_COMPLETE,EDGE_ANALYSIS_SKIPPED,EDGE_ANALYSIS_CANCELLED,EDGE_ANALYSIS_ERROR} edge_analysis_state_t;
 typedef enum {EDGE_CACHE_MISS,EDGE_CACHE_HIT,EDGE_CACHE_INVALID} edge_cache_status_t;
 typedef struct {
- program_metadata_t program; /* First recognized PROGRAM, never a later prefetched title. */
+ program_metadata_t program; /* Reserved/empty: ordinary preflight counts time only. */
  uint64_t total_us,discovered_us,read_us,decode_us,callback_us,ui_us,yield_us;
  uint32_t scanned_bytes,total_bytes,programs;
  edge_analysis_state_t state;

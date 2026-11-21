@@ -594,20 +594,20 @@ static void edge_time_player(void){
   for(unsigned skip=0;skip<2;++skip){
    edge_scan_choice=skip;edge_scan_polls=0;uint64_t before=active_ticks;symbol_digest=1469598103934665603ULL;
    player_start(path);assert(player_get_state()==PLAYER_STATE_PLAYING && !player_get_position_seconds());
-   assert(player_get_total_seconds()==(skip ? 0:expected/1000000));
+   assert(player_get_total_seconds()==(skip ? 0:(expected-800000)/1000000));
    assert(edge_scan_polls==(skip ? 2:5));unsigned polls=edge_scan_polls;
-   advance(1200000ULL*16);player_service();assert(player_get_position_seconds()==1);
+   advance(1400000ULL*16);player_service();assert(player_get_position_seconds()==1);
    player_pause_user();unsigned held=player_get_position_seconds();advance(2000000ULL*16);player_service();
    assert(player_get_state()==PLAYER_STATE_PAUSED && player_get_position_seconds()==held);
    player_resume_user();drain_player();
-   assert(player_get_state()==PLAYER_STATE_EOF && active_ticks-before==expected*16 && player_get_position_seconds()==expected/1000000);
+   assert(player_get_state()==PLAYER_STATE_EOF && active_ticks-before==expected*16 && player_get_position_seconds()==(expected-800000)/1000000);
    assert(player_get_progress_percent()==100 && edge_scan_polls==polls);
    if(!skip)full_digest=symbol_digest;else assert(full_digest==symbol_digest);
   }
   edge_scan_choice=2;unsigned starts=transmits;player_start(path);
   assert(player_get_state()==PLAYER_STATE_STOPPED && transmits==starts && !tx.running && !pin && !player_get_position_seconds());
   edge_scan_choice=0;player_start(path);assert(player_get_state()==PLAYER_STATE_PLAYING);
-  advance(1200000ULL*16);player_service();player_stop();unsigned held=player_get_position_seconds();
+  advance(1400000ULL*16);player_service();player_stop();unsigned held=player_get_position_seconds();
   advance(2000000ULL*16);player_service();assert(held==1 && player_get_position_seconds()==held && !tx.running && !pin);
   edge_stream_set_scan_control(NULL,NULL);assert(!remove(path));
  }
@@ -631,7 +631,7 @@ static void edge_metadata_timeline(void){
  }
  assert(edge_writer_finalize());edge_stream_info_t measured;edge_stream_invalidate_cache();assert(edge_stream_open("timeline.l16",&measured));edge_stream_close();
  player_stop();uint64_t before=active_ticks;player_start("timeline.l16");assert(player_get_state()==PLAYER_STATE_PLAYING);
- program_metadata_t preview,live;assert(player_preflight_metadata(&preview) && !strcmp(preview.title,"FIRST"));player_metadata(&live);assert(!(live.valid&PROGRAM_TITLE));
+ program_metadata_t preview,live;assert(!player_preflight_metadata(&preview));player_metadata(&live);assert(!(live.valid&PROGRAM_TITLE));
  unsigned seen=0,budget=10000;
  while(player_get_state()==PLAYER_STATE_PLAYING){
   assert(budget--);advance(10000ULL*16);player_service();player_metadata(&live);
@@ -643,7 +643,7 @@ static void edge_metadata_timeline(void){
  }
  assert(player_get_state()==PLAYER_STATE_EOF && seen==3 && active_ticks-before==measured.total_us*16);
  assert(!remove("timeline.l16") && !remove("timeline.mzf"));
- puts("PASS preflight preview FIRST is separate from live publication; real RMT clock advances FIRST then SECOND only after physical output, cache hit preserves timing and waveform");
+ puts("PASS ordinary preflight is duration-only without metadata preview; live FIRST/SECOND publish only after physical RMT output, cache hit preserves timing and waveform");
 }
 
 /* A sparse WAV prefill must outlast RMT's initial 128-symbol lookahead. */

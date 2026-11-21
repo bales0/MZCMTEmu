@@ -48,4 +48,11 @@ uint8_t *mz_tape_decoder_get_data_scratch(void);
 uint16_t mz_tape_decoder_get_header_short_high_x8(void);
 uint16_t mz_tape_decoder_get_header_long_high_x8(void);
 
+/* Optional passive foreground observer. Does not consume pending events or
+ * change decoding. The preflight instantiation owns a separate callback. */
+typedef enum {MZ_OBSERVE_LEADER,MZ_OBSERVE_MARK,MZ_OBSERVE_HEADER,
+              MZ_OBSERVE_VALID,MZ_OBSERVE_INVALID} mz_tape_observation_t;
+typedef void (*mz_tape_observer_fn)(mz_tape_observation_t,bool header,void *);
+void mz_tape_decoder_set_observer(mz_tape_observer_fn,void *);
+
 #endif

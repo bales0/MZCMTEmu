@@ -324,12 +324,36 @@ static void test_driver_clock(void) {
 }
 static void put32(uint8_t *p,uint32_t n) {for(unsigned i=0;i<4;++i)p[i]=(uint8_t)(n>>(8*i));
 }
+static void verify_indexed_wav(const uint8_t *levels,size_t length,uint32_t rate,uint64_t start,const tape_index_t *idx) {
+ player_stop();assert(player_prepare_tape(idx,TAPE_INDEX_NO_ENTRY,start,start!=0,NULL,NULL));
+ assert(!timer.running && player_get_state()==PLAYER_STATE_PAUSED && !raw_pulse_get_completed_us());
+ assert(player_tape_total_us()==idx->waveform_us && player_tape_position_us()==start);
+ assert(player_get_position_seconds()==start/1000000 && player_get_total_seconds()==idx->waveform_us/1000000);
+ player_resume_user();uint64_t absolute=start;size_t sample=0;
+ while(sample<length && ((uint64_t)(sample+1)*1000000+rate/2)/rate<=start)++sample;
+ unsigned budget=130000;
+ while(player_get_state()==PLAYER_STATE_PLAYING) {
+  assert(budget-- && timer.running && sample<length);
+  uint8_t held=levels[sample];assert(pin==(uint8_t)(held^inverted));
+  uint64_t end=absolute+timer.alarm;
+  while(sample<length && ((uint64_t)(sample+1)*1000000+rate/2)/rate<=end) {
+   assert(levels[sample]==held);++sample;
+  }
+  assert(end==((uint64_t)sample*1000000+rate/2)/rate);
+  fire();absolute=end;player_service();
+ }
+ assert(player_get_state()==PLAYER_STATE_EOF && sample==length);
+ assert(absolute==((uint64_t)length*1000000+rate/2)/rate && raw_pulse_get_completed_us()==absolute-start);
+ assert(!timer.running && !pin && player_get_progress_percent()==100);
+ assert(player_tape_total_us()==idx->waveform_us && player_get_position_seconds()==idx->waveform_us/1000000);
+ player_stop();assert(player_tape_position_us()==idx->waveform_us && player_tape_total_us()==idx->waveform_us);
+}
 static void test_wav_pulses(void) {
  static uint8_t samples[120000],levels[120000];
  uint8_t state=0;
  const uint8_t values[]={0,63,64,65,127,128,191,192,193,255};
  for(size_t i=0;i<sizeof(samples);++i) {
-  samples[i]=i<40000 ? 0:i<80000 ? 255:values[i%10];
+  samples[i]=i<40000 ? 0:i==40000 ? 255:i<80000 ? 128:values[i%10];
   if(samples[i]>=192)state=1;
   else if(samples[i]<=64)state=0;
   levels[i]=state;
@@ -383,9 +407,20 @@ static void test_wav_pulses(void) {
   assert(index==sizeof(samples) && elapsed==((uint64_t)sizeof(samples)*1000000+rate/2)/rate);
   assert(player_get_state()==PLAYER_STATE_EOF && player_get_progress_percent()==100 && !pin && !timer.running);
   assert(player_get_position_seconds()==elapsed/1000000);
+  const tape_index_t *light=player_time_index(NULL,NULL);
+  assert(light && light->time_only && light->checkpoint_count==1 && !light->program_count_recognized && !light->programs);
+  verify_indexed_wav(levels,sizeof(samples),rate,0,light);
+  verify_indexed_wav(levels,sizeof(samples),rate,(70000ULL*1000000)/rate+1,light);
+  assert(tape_analyzer_begin("session.wav"));while(tape_analyzer_step()){}
+  assert(tape_analyzer_result()->state==TAPE_INDEX_FINISHED);
+  verify_indexed_wav(levels,sizeof(samples),rate,0,tape_analyzer_result());
+  verify_indexed_wav(levels,sizeof(samples),rate,(80000ULL*1000000)/rate+1,tape_analyzer_result());
+  assert(player_prepare_tape(tape_analyzer_result(),TAPE_INDEX_NO_ENTRY,UINT64_MAX,true,NULL,NULL));
+  assert(player_get_state()==PLAYER_STATE_EOF && !timer.running && !raw_pulse_level() && player_get_progress_percent()==100);
   assert(!remove("session.wav"));
  }
  puts("PASS WAV shared pulse transport: four sample rates, every physical interval and hysteresis boundary, 256-sample silence splits, inversion, pauses and exact EOF clock");
+ puts("PASS indexed WAV/GPTimer whole and time seek: original absolute sample rounding without double quantization, deadband restoration and exact final clock at four rates");
 }
 int main(void) { test_wav_pulses();
 test_play();

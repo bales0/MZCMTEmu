@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "storage/fs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,6 +19,9 @@ typedef struct {
     uint32_t data_offset;       // offset začátku audio dat v souboru
     uint32_t data_size;         // velikost audio dat v bytech
 } wav_info_t;
+/* Parse a caller-owned descriptor without touching the live PLAY reader. */
+bool wav_reader_parse(cmt_file_t *fp,wav_info_t *info);
+bool wav_reader_supported(const wav_info_t *info);
 
 /**
  * Otevře WAV soubor, projde RIFF/WAVE chunky, najde fmt + data a

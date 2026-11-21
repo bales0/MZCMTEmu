@@ -34,6 +34,7 @@
 #include "app/route_switch.h"
 #include "app/menu.h"
 #include "ui/sidecar_editor.h"
+#include "ui/tape_contents.h"
 #include "ui/key_icons.h"
 #include "app/cmt_bus_policy.h"
 #include "ui/view.h"
@@ -77,6 +78,14 @@ static char ui_menu_item5[UI_BUFFER_SIZE];
 static char ui_menu_item6[UI_BUFFER_SIZE];
 static char ui_menu_item7[UI_BUFFER_SIZE],ui_menu_item8[UI_BUFFER_SIZE],ui_menu_item9[UI_BUFFER_SIZE];
 static char ui_menu_item10[UI_BUFFER_SIZE],ui_menu_item11[UI_BUFFER_SIZE];
+static tape_contents_t tape_ui;
+static bool tape_wait_motor,tape_scan_route;
+static bool tape_from_normal;
+static const tape_index_t *tape_active_index;
+static ui_transport_view_t tape_play_view;
+static int64_t tape_prepare_route_since;
+static void tape_utility_open(void);
+static void tape_utility_service(btn_event_t);
 
 // no-sd screen buffers
 static char ui_no_sd_line0[UI_BUFFER_SIZE];
@@ -510,7 +519,7 @@ static void menu_enter(app_menu_section_t section)
 {
     s_menu_active = true;
     s_menu_info_page=0;
-    s_menu=(app_menu_t){.section=section,.edit_sidecar=file_format_is_sharp_tape(file_format_detect_from_name(file_list_get_path()))};
+    s_menu=(app_menu_t){.section=section,.edit_sidecar=file_format_is_sharp_tape(file_format_detect_from_name(file_list_get_path())),.tape_analyzer=tape_analyzer_supported(file_list_get_path())};
     s_menu_selected=app_menu_selected(&s_menu);
     s_menu_pre_wrap_next = false;
     s_menu_pre_wrap_prev = false;
@@ -580,6 +589,7 @@ static void menu_activate_selected(void)
     if(s_menu_info_page)return;
     switch ((menu_item_t)s_menu_selected) {
         case MENU_ITEM_EDIT_SIDECAR: editor_open(false);break;
+        case MENU_ITEM_TAPE_ANALYZER: tape_utility_open();break;
         case MENU_ITEM_MODE:
             s_setting_motor_auto = !s_setting_motor_auto;
             if (!s_setting_motor_auto) {
@@ -740,7 +750,7 @@ static void ui_build_menu_model(void)
     snprintf(ui_menu_item10,sizeof(ui_menu_item10),"%cABOUT / MEMORY",s_menu_selected==MENU_ITEM_ABOUT ? '}':' ');
     snprintf(ui_menu_item11,sizeof(ui_menu_item11),"%cKEYMAP",s_menu_selected==MENU_ITEM_KEYMAP ? '}':' ');
     const char *rows[MENU_ITEM_COUNT]={ui_menu_item0,ui_menu_item1,ui_menu_item2,ui_menu_item3,
-        ui_menu_item4,ui_menu_item5,ui_menu_item6,ui_menu_item7,ui_menu_item8,ui_menu_item9,ui_menu_item10,ui_menu_item11,s_menu_selected==MENU_ITEM_EDIT_SIDECAR ? "}EDIT SIDECAR":" EDIT SIDECAR"};
+        ui_menu_item4,ui_menu_item5,ui_menu_item6,ui_menu_item7,ui_menu_item8,ui_menu_item9,ui_menu_item10,ui_menu_item11,s_menu_selected==MENU_ITEM_EDIT_SIDECAR ? "}EDIT SIDECAR":" EDIT SIDECAR",s_menu_selected==MENU_ITEM_TAPE_ANALYZER ? "}TAPE ANALYZER":" TAPE ANALYZER"};
     unsigned index=app_menu_index(&s_menu),first=index>6 ? index-6:0;
     ui_model.line[0]=s_settings_error ? "SETTINGS ERROR":ui_header;
     for(unsigned row=0;row<7;++row){menu_item_t id=app_menu_item(&s_menu,first+row);ui_model.line[row+1]=id<MENU_ITEM_COUNT ? rows[id]:"";}
@@ -848,6 +858,10 @@ static void ui_build_playback_model(void)
     else if(player_is_ultrafast_active())view.status="UL HANDSHAKE";
     else if(!view.tx.running)view.status="BETWEEN BLOCKS";
     else view.status="PLAY";
+    if(tape_wait_motor)view.status="WAIT MOTOR";
+    if(player_tape_unverified_start())view.warning="UNVERIFIED TIME START";
+    if(tape_active_index)tape_contents_apply_transport(&tape_ui,tape_active_index,&view);
+    tape_play_view=view;
     ui_set_transport_view(false,&view);snprintf(ui_header,sizeof(ui_header),"%s",view.status);ui_model.line[0]=ui_header;
 }
 
@@ -1126,17 +1140,186 @@ static void diagnostics_tick(btn_event_t button)
         (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
 }
 
+static void tape_utility_open(void) {
+    player_state_t state=player_get_state();
+    if(!s_sd_ready || recorder_is_active() || sc_editor_active() || play_wait_motor ||
+       state==PLAYER_STATE_PLAYING || state==PLAYER_STATE_PAUSED)return;
+    player_stop_for(PLAYER_STOP_API);clear_play_preview();ui_clear_overlay();
+    s_menu_active=false;tape_wait_motor=false;tape_scan_route=switch_ext_mode;tape_from_normal=false;
+    buttons_set_nav_mode(BUTTONS_NAV_NORMAL);tape_contents_open(&tape_ui);
+    if(!tape_analyzer_begin(file_list_get_path()))tape_ui.page=TAPE_UI_ERROR;
+    else if(tape_analyzer_result()->state==TAPE_INDEX_FINISHED)tape_ui.page=TAPE_UI_LIST;
+    tape_active_index=tape_analyzer_result();
+}
+/* Called with the player mutex held during source positioning/prefill.
+ * Never call player/storage-policy services recursively from this callback. */
+static bool tape_prepare_control(void *context) {
+    (void)context;
+    btn_event_t event=buttons_poll();
+    if(event==BTN_STOP || event==BTN_STOP_LONG || !sd_detect_card_inserted())return false;
+    if(route_switch_is_external(switch_signal_is_high())) {
+        if(!tape_prepare_route_since)tape_prepare_route_since=esp_timer_get_time();
+        if(esp_timer_get_time()-tape_prepare_route_since>=40000)return false;
+    }else tape_prepare_route_since=0;
+    static int64_t shown_at;
+    int percent=tape_time_seek_percent();int64_t now=esp_timer_get_time();
+    if(percent>=0 && now-shown_at>=100000) {
+        char text[22];snprintf(text,sizeof(text),"SEEKING %u%%",(unsigned)percent);
+        ui_transport_view_t view=tape_play_view;view.status="PAUSE SEEK";view.warning=text;view.tx_expected=false;
+        ui_set_transport_view(false,&view);ui_render(&ui_model);shown_at=now;
+    }
+    return true;
+}
+static bool tape_length_seek_control(void *context) {
+    if(!tape_prepare_control(context))return false;
+    static int64_t shown_at;int64_t now=esp_timer_get_time();
+    const tape_index_t *idx=tape_time_result();
+    if(idx->state==TAPE_INDEX_SCANNING && now-shown_at>=100000) {
+        unsigned percent=idx->source.size_bytes ? (unsigned)(idx->scanned_bytes*100/idx->source.size_bytes):0;
+        char text[22];snprintf(text,sizeof(text),"COUNTING %u%%",percent);
+        ui_transport_view_t view=tape_play_view;view.status="PAUSE SEEK";view.warning=text;view.tx_expected=false;
+        ui_set_transport_view(false,&view);ui_render(&ui_model);shown_at=now;
+    }
+    return true;
+}
+static void tape_transport_snapshot(tape_transport_view_t *tx) {
+    memset(tx,0,sizeof(*tx));player_state_t state=player_get_state();
+    tx->playing=state==PLAYER_STATE_PLAYING;
+    tx->user_paused=state==PLAYER_STATE_PAUSED && player_get_pause_reason()==PLAYER_PAUSE_USER;
+    tx->motor_paused=state==PLAYER_STATE_PAUSED && player_get_pause_reason()==PLAYER_PAUSE_MOTOR;
+    tx->finished=state==PLAYER_STATE_EOF || state==PLAYER_STATE_STOPPED;
+    tx->waiting=tape_wait_motor;tx->error=state==PLAYER_STATE_ERROR || state==PLAYER_STATE_UNDERRUN;
+    tx->error_message=player_error_message();
+    tx->position_us=player_tape_position_us();tx->total_us=player_tape_total_us();tx->tape_position_us=tx->position_us;
+    raw_pulse_status_t status;raw_pulse_status(&status);
+    tx->buffer_percent=status.fifo_capacity ? (unsigned)((uint64_t)status.fifo_used*100/status.fifo_capacity):0;
+}
+static void tape_normal_seek_open(btn_event_t event) {
+    if(!s_sd_ready || switch_ext_mode || recorder_is_active() || !player_can_time_seek())return;
+    if(player_get_state()==PLAYER_STATE_PLAYING)player_pause_user();
+    ui_build_playback_model();
+    tape_prepare_route_since=0;
+    const tape_index_t *idx=player_time_index(tape_length_seek_control,NULL);
+    if(!idx) {
+        player_stop_for(PLAYER_STOP_BUTTON);ui_show_overlay("SEEK CANCELLED",1000);
+        service_sense_output();service_monitor_output();return;
+    }
+    tape_contents_open(&tape_ui);tape_ui.page=TAPE_UI_TRANSPORT;
+    tape_from_normal=true;tape_active_index=idx;tape_wait_motor=false;
+    tape_transport_view_t tx;tape_transport_snapshot(&tx);
+    (void)tape_contents_event(&tape_ui,idx,event,(uint32_t)(esp_timer_get_time()/1000),&tx);
+}
+static void tape_utility_service(btn_event_t event) {
+    const tape_index_t *idx=tape_active_index ? tape_active_index:tape_analyzer_result();
+    tape_transport_view_t tx;tape_transport_snapshot(&tx);
+    bool source_lost=!s_sd_ready || (idx->source.stat_valid && idx->source.storage_epoch!=cmt_storage_epoch());
+    if(source_lost) {
+        tape_analyzer_invalidate();tape_wait_motor=false;
+        if(tx.playing || tx.user_paused || tx.motor_paused)player_stop_for(PLAYER_STOP_SD_REMOVED);
+        tape_ui.page=TAPE_UI_ERROR;
+    }
+    if(tape_ui.page==TAPE_UI_SCAN && switch_ext_mode!=tape_scan_route) {
+        tape_analyzer_cancel();tape_ui.page=TAPE_UI_ERROR;
+    }
+    tape_ui_action_t action=tape_contents_event(&tape_ui,idx,event,(uint32_t)(esp_timer_get_time()/1000),&tx);
+    if(action==TAPE_ACTION_BEGIN_SEEK) {
+        player_pause_user();tape_transport_snapshot(&tx);
+        action=tape_contents_event(&tape_ui,idx,event,(uint32_t)(esp_timer_get_time()/1000),&tx);
+    }
+    if(action==TAPE_ACTION_CLOSE || action==TAPE_ACTION_CANCEL_SCAN) {
+        tape_analyzer_cancel();player_stop_for(PLAYER_STOP_BUTTON);
+        tape_ui.page=TAPE_UI_CLOSED;tape_wait_motor=false;tape_from_normal=false;tape_active_index=NULL;buttons_set_nav_mode(BUTTONS_NAV_NORMAL);
+        service_sense_output();service_monitor_output();return;
+    }
+    if(action==TAPE_ACTION_STOP){player_stop_for(PLAYER_STOP_BUTTON);tape_wait_motor=false;}
+    if(action==TAPE_ACTION_PAUSE){player_pause_user();tape_wait_motor=false;}
+    bool prepare=action==TAPE_ACTION_START || action==TAPE_ACTION_SEEK ||
+        (action==TAPE_ACTION_RESUME && tx.finished);
+    if(action==TAPE_ACTION_RESUME && !prepare && !tape_index_source_valid(idx)) {
+        player_stop_for(PLAYER_STOP_SD_RESTORE_FAILED);tape_analyzer_invalidate();
+        tape_ui.page=TAPE_UI_ERROR;tape_wait_motor=false;action=TAPE_ACTION_NONE;
+    }
+    if((prepare || action==TAPE_ACTION_RESUME) && switch_ext_mode) {
+        tape_wait_motor=false;ui_show_overlay("EXTERNAL CMT",1200);
+    } else {
+        if(prepare) {
+            ui_build_playback_model();
+            if(action==TAPE_ACTION_START) {
+                tape_play_view.filename=basename_ptr(idx->source.path);
+                if(tape_ui.selected)tape_play_view.program=idx->programs[tape_ui.selected-1].metadata;
+                else program_metadata_reset(&tape_play_view.program,idx->source.format);
+            }
+            tape_prepare_route_since=0;
+            uint32_t selected=action==TAPE_ACTION_SEEK || !tape_ui.selected ? TAPE_INDEX_NO_ENTRY:tape_ui.selected-1;
+            bool ok=player_prepare_tape(idx,selected,tape_ui.seek_us,action==TAPE_ACTION_SEEK,tape_prepare_control,NULL);
+            tape_wait_motor=ok && player_get_state()==PLAYER_STATE_PAUSED;
+            if(!ok && player_get_state()==PLAYER_STATE_STOPPED)tape_ui.page=TAPE_UI_LIST;
+            else if(!ok) {
+                player_stop_for(PLAYER_STOP_SD_RESTORE_FAILED);tape_analyzer_invalidate();tape_ui.page=TAPE_UI_ERROR;
+            }
+        } else if(action==TAPE_ACTION_RESUME && !tx.error)tape_wait_motor=true;
+    }
+    /* USER_PAUSED is retained while waiting. MOTOR cannot resume a seek on
+     * its own unless the user explicitly requested PLAY above. */
+    if(tape_wait_motor && !switch_ext_mode && !route_switch_is_external(switch_signal_is_high()) &&
+       sd_detect_card_inserted() && transport_motor_is_on()) {
+        service_sense_output();player_resume_user();tape_wait_motor=false;
+    }
+    if(switch_ext_mode)tape_wait_motor=false;
+    if(tx.motor_paused && motor_is_on() && !tape_index_source_valid(idx)) {
+        player_stop_for(PLAYER_STOP_SD_RESTORE_FAILED);tape_analyzer_invalidate();tape_ui.page=TAPE_UI_ERROR;
+    }else service_motor_pause_resume();
+    if(tape_ui.page==TAPE_UI_SCAN) {
+        /* Bound CPU work by time, not by a fixed delay per KiB. At the actual
+         * 100 Hz RTOS rate that delay would dominate a large-file scan. */
+        int64_t scan_started=esp_timer_get_time();
+        for(unsigned i=0;i<64;++i) {
+            if(!tape_analyzer_step() || esp_timer_get_time()-scan_started>=8000)break;
+        }
+        if(idx->state==TAPE_INDEX_FINISHED)tape_ui.page=TAPE_UI_LIST;
+        else if(idx->state!=TAPE_INDEX_SCANNING)tape_ui.page=TAPE_UI_ERROR;
+    }
+    tape_transport_snapshot(&tx);
+    if(tape_from_normal && (tape_ui.page==TAPE_UI_LIST ||
+       (tape_ui.page==TAPE_UI_TRANSPORT && !tape_wait_motor))) {
+        tape_ui.page=TAPE_UI_CLOSED;tape_from_normal=false;tape_active_index=NULL;
+        service_sense_output();service_monitor_output();return;
+    }
+    bool seek_mode=tape_ui.page==TAPE_UI_SEEK ||
+        (tape_ui.page==TAPE_UI_TRANSPORT && !tape_wait_motor && (tx.playing || tx.user_paused || tx.finished));
+    buttons_set_nav_mode(seek_mode ? BUTTONS_NAV_SEEK:BUTTONS_NAV_NORMAL);
+    service_sense_output();service_monitor_output();
+    static int64_t rendered_at;
+    static tape_ui_page_t rendered_page;
+    int64_t now=esp_timer_get_time();
+    if(event==BTN_NONE && tape_ui.page==TAPE_UI_SCAN && rendered_page==tape_ui.page && now-rendered_at<100000)return;
+    rendered_at=now;rendered_page=tape_ui.page;
+    if(tape_ui.page==TAPE_UI_TRANSPORT || tape_ui.page==TAPE_UI_SEEK)ui_build_playback_model();
+    else {ui_use_text_view();tape_contents_render(&tape_ui,idx,&ui_model,(uint32_t)(esp_timer_get_time()/1000),&tx);}
+    ui_set_external(switch_ext_mode);ui_render(&ui_model);
+}
+
 static void app_task(void *arg)
 {
     (void)arg;
 
     while (1) {
+        if(tape_ui.page==TAPE_UI_CLOSED) {
+            bool seek=!menu_is_active() && !sc_editor_active() && !recorder_is_active() && !play_wait_motor && player_can_time_seek();
+            buttons_set_nav_mode(seek ? BUTTONS_NAV_SEEK:BUTTONS_NAV_NORMAL);
+        }
         btn_event_t e = buttons_poll();
         if(e==BTN_STOP || e==BTN_STOP_LONG)ui_overlay_clear(true);
 
         service_sd_detect();
         service_route_switch();
         diagnostics_tick(e);
+
+        if(tape_ui.page!=TAPE_UI_CLOSED) {
+            tape_utility_service(e);
+            vTaskDelay(pdMS_TO_TICKS(APP_TASK_DELAY_MS) ? pdMS_TO_TICKS(APP_TASK_DELAY_MS):1);
+            continue;
+        }
 
         if(sc_editor_active()) {
             bool available=s_sd_ready && !recorder_is_active() && !play_wait_motor &&
@@ -1227,7 +1410,10 @@ static void app_task(void *arg)
             continue;
         }
 
-        if(e==BTN_REC_LONG || e==BTN_PLAY_LONG){
+        if((e==BTN_NEXT_LONG || e==BTN_PREV_LONG) && player_can_time_seek()) {
+            tape_normal_seek_open(e);service_sense_output();service_monitor_output();
+        }
+        else if(e==BTN_REC_LONG || e==BTN_PLAY_LONG){
             player_state_t state=player_get_state();
             if(e==BTN_PLAY_LONG && state==PLAYER_STATE_READY && !recorder_is_active() && !play_wait_motor)editor_open(true);
             else if(!recorder_is_active() && !play_wait_motor && (state==PLAYER_STATE_IDLE || state==PLAYER_STATE_STOPPED)){
@@ -1466,7 +1652,7 @@ static void app_task(void *arg)
 void app_main(void)
 {
     setvbuf(stdout,NULL,_IOLBF,0);
-    printf("MZCMTEmu TX-TRACE r41 EDGE PREFLIGHT S1 GPIO21 LOW=EXT HIGH=INT 2026-11-20; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
+    printf("MZCMTEmu TX-TRACE r44 ABSOLUTE TIME / INLINE SEEK S1 GPIO21 LOW=EXT HIGH=INT 2026-11-21; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
     // Give the USB console time to enumerate.
     vTaskDelay(pdMS_TO_TICKS(500));
     fflush(stdout);

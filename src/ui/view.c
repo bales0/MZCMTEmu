@@ -137,22 +137,14 @@ static const char *compact_loader(loader_mode_t value){
 }
 
 void ui_build_edge_analysis(ui_model_t *model,const edge_analysis_t *scan,unsigned percent){
- static char text[8][24];const program_metadata_t *p=&scan->program;
- bool reliable=p->confidence==PROGRAM_HEADER_VALID || p->confidence==PROGRAM_PAYLOAD_VALID;
+ static char text[8][24];
  for(unsigned i=0;i<8;++i){text[i][0]=0;model->line[i]=text[i];}
- snprintf(text[0],sizeof(text[0]),"ANALYZING %u %%",percent>100 ? 100:percent);
- snprintf(text[1],sizeof(text[1]),"%.21s",reliable && (p->valid&PROGRAM_TITLE) ? p->title:"--");
- static const char *const aux[]={"--","SIN1:1","SIN1:2","SIN1:3","SIN1:4","CPM1:1","CPM1:2","CPM1:3","CPM1:4"};
- const char *profile=reliable && (p->valid&PROGRAM_RECORDED_MODE) ? compact_loader(p->recorded_loader_mode):reliable && scan->aux_profile<9 ? aux[scan->aux_profile]:"--";
- const char *type=reliable ? (p->protocol==PROGRAM_CPM ? "CP/M":program_metadata_type(p)):"--";
- snprintf(text[2],sizeof(text[2]),"%s %s",type,profile);
- if(reliable && (p->valid&PROGRAM_SIZE))snprintf(text[3],sizeof(text[3]),"SIZE %lu",(unsigned long)p->declared_size);else strcpy(text[3],"SIZE --");
- char load[8],exec[8];
- if(reliable && (p->valid&PROGRAM_LOAD))snprintf(load,sizeof(load),"%04X",p->load);else strcpy(load,"--");
- if(reliable && (p->valid&PROGRAM_EXEC))snprintf(exec,sizeof(exec),"%04X",p->exec);else strcpy(exec,"--");
- snprintf(text[4],sizeof(text[4]),"LOAD %s EXEC %s",load,exec);
- strcpy(text[5],p->confidence==PROGRAM_PAYLOAD_VALID ? "PREVIEW VERIFIED":p->confidence==PROGRAM_HEADER_VALID ? "PREVIEW HEADER":p->confidence==PROGRAM_LOADER_ONLY ? "LOADER ONLY":p->confidence==PROGRAM_INVALID ? "INVALID":"UNKNOWN");
- if(scan->programs)snprintf(text[6],sizeof(text[6]),"PROGRAMS >= %lu",(unsigned long)scan->programs);
+ snprintf(text[0],sizeof(text[0]),"COUNTING %u %%",percent>100 ? 100:percent);
+ strcpy(text[1],"LENGTH ONLY");
+ snprintf(text[2],sizeof(text[2]),"READ %lu",(unsigned long)scan->scanned_bytes);
+ snprintf(text[3],sizeof(text[3]),"OF %lu BYTES",(unsigned long)scan->total_bytes);
+ strcpy(text[4],"NO CONTENT SCAN");
+ if(scan->cache_hit)strcpy(text[5],"LENGTH CACHED");
  strcpy(text[7],UI_HELP_SCAN_SKIP_CANCEL);
 }
 
@@ -225,6 +217,7 @@ static void draw_transport(uint32_t now){
   }else row_text(5,line);
  }
  unsigned progress=v->progress;
+ if(v->seek_preview && v->preview_metadata)row_text(6,"INDEX PREVIEW");
  /* The QD selector is a minibrowser, without transfer statistics. */
  if(qd && !strcmp(status,"SELECT RECORD"))return;
  /* Shared footer: time/progress at left, fixed BUF at x=80. RX uses free space. */

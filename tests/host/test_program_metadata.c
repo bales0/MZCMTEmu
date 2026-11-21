@@ -7,6 +7,7 @@
 #include "audio/tap_stream.h"
 #include "audio/edge_writer.h"
 #include "audio/edge_stream.h"
+#include "formats/tape_analyzer.h"
 #include "audio/wav_writer.h"
 #include "audio/wav_reader.h"
 #include "audio/wav_pulse_stream.h"
@@ -137,6 +138,10 @@ else record_autoname_begin(true,FILE_FORMAT_L16,0);
 
 
 static bool preview_before_end;
+static const tape_index_t *explicit_analysis(const char *path){
+ assert(tape_analyzer_begin(path));while(tape_analyzer_step()){}
+ const tape_index_t *index=tape_analyzer_result();assert(index->state==TAPE_INDEX_FINISHED);return index;
+}
 static edge_scan_action_t observe_preflight(uint32_t done,uint32_t total,void *unused){
  (void)unused;edge_analysis_t view;edge_stream_analysis_snapshot(&view);
  if(done<total && (view.program.confidence==PROGRAM_HEADER_VALID || view.program.confidence==PROGRAM_PAYLOAD_VALID))preview_before_end=true;
@@ -182,10 +187,12 @@ else{
    program_metadata_t before,unchanged;tape_metadata_snapshot(&before);
    assert(edge_stream_open(path,&info));
    tape_metadata_snapshot(&unchanged);assert(!memcmp(&before,&unchanged,sizeof(before)));
-   assert(info.analysis.state==EDGE_ANALYSIS_COMPLETE && info.analysis.program.confidence==PROGRAM_PAYLOAD_VALID);
-   assert(info.analysis.program.declared_size==4 && info.analysis.program.load==0x1200 && info.analysis.program.exec==0x1200);
-   assert(info.analysis.program.source==(k ? PROGRAM_LOADER_EMBEDDED:PROGRAM_TAPE_DECODE));
-   assert(!info.analysis.cache_hit && preview_before_end);
+   assert(info.analysis.state==EDGE_ANALYSIS_COMPLETE && !info.analysis.program.valid && !info.analysis.programs);
+   assert(!info.analysis.cache_hit && !preview_before_end);
+   const tape_index_t *index=explicit_analysis(path);assert(index->program_count_recognized==1);
+   const program_metadata_t *p=&index->programs[0].metadata;
+   assert(p->confidence==PROGRAM_PAYLOAD_VALID && p->declared_size==4 && p->load==0x1200 && p->exec==0x1200);
+   assert(p->source==(k ? PROGRAM_LOADER_EMBEDDED:PROGRAM_TAPE_DECODE));
    edge_stream_set_scan_control(NULL,NULL);
    while(edge_stream_next_pulse(&level,&width,&count))tape_metadata_feed(level,width,edge_stream_monitor_muted());
    assert(!edge_stream_has_error());
@@ -307,8 +314,10 @@ static void preflight_sequences(void){
   passive=false;record_autoname_begin(true,fmt,0);block(0,native,128,true,false);
   program_metadata_t before,after;record_autoname_metadata(&before);assert(before.confidence==PROGRAM_HEADER_VALID);
   edge_stream_info_t info;assert(edge_stream_open(path,&info));
-  assert(info.analysis.program.confidence==PROGRAM_PAYLOAD_VALID && !strcmp(info.analysis.program.title,"FIRST"));
-  assert(info.analysis.program.load==0x1200 && info.analysis.program.exec==0x1200 && info.analysis.programs==2 && !info.analysis.programs_exact);
+  assert(!info.analysis.program.valid && !info.analysis.programs);
+  const tape_index_t *index=explicit_analysis(path);assert(index->program_count_recognized==2);
+  assert(index->programs[0].metadata.confidence==PROGRAM_PAYLOAD_VALID && !strcmp(index->programs[0].metadata.title,"FIRST"));
+  assert(index->programs[0].metadata.load==0x1200 && index->programs[0].metadata.exec==0x1200);
   record_autoname_metadata(&after);assert(!memcmp(&before,&after,sizeof(before)));
   block(0,data,4,false,false);record_autoname_metadata(&after);assert(after.confidence==PROGRAM_PAYLOAD_VALID && after.load==0x1200);
   edge_stream_close();assert(!remove(path));
@@ -317,12 +326,14 @@ static void preflight_sequences(void){
   assert(edge_writer_open(bad,f ? 62500:20000));writing_file=true;
   block(0,h,128,true,false);block(0,loader,90,false,true);duration(0,100000);
   writing_file=false;assert(edge_writer_finalize());assert(edge_stream_open(bad,&info));
-  assert(info.analysis.program.confidence==PROGRAM_INVALID && !(info.analysis.program.valid&(PROGRAM_LOAD|PROGRAM_EXEC|PROGRAM_TITLE)));
+  assert(!info.analysis.program.valid);index=explicit_analysis(bad);
+  assert(index->program_count_recognized==1 && index->programs[0].metadata.confidence==PROGRAM_INVALID && !index->programs[0].metadata.valid);
   edge_stream_close();assert(!remove(bad));
   assert(edge_writer_open(bad,f ? 62500:20000));writing_file=true;
   block(0,h,128,true,false);block(0,loader,45,false,false);duration(0,100000);
   writing_file=false;assert(edge_writer_finalize());assert(edge_stream_open(bad,&info));
-  assert(info.analysis.program.confidence==PROGRAM_LOADER_ONLY && !(info.analysis.program.valid&(PROGRAM_LOAD|PROGRAM_EXEC|PROGRAM_TITLE)));
+  assert(!info.analysis.program.valid);index=explicit_analysis(bad);
+  assert(index->program_count_recognized==1 && index->programs[0].metadata.confidence==PROGRAM_LOADER_ONLY && !(index->programs[0].metadata.valid&(PROGRAM_LOAD|PROGRAM_EXEC|PROGRAM_TITLE)));
   edge_stream_close();assert(!remove(bad));
   assert(edge_writer_open(bad,f ? 62500:20000));writing_file=true;block(0,native,128,true,true);duration(0,100000);
   writing_file=false;assert(edge_writer_finalize());assert(edge_stream_open(bad,&info));assert(!info.analysis.program.valid);
@@ -332,10 +343,11 @@ static void preflight_sequences(void){
   memcpy(h,native,128);memcpy(h+1,"FIRST\r",6);block(0,h,128,true,false);block(0,data,4,false,false);duration(0,1000000);
   unhex(loader_golden[9].header_hex,h,128);block(0,h,128,true,false);block(0,loader,90,false,true);duration(0,100000);
   writing_file=false;assert(edge_writer_finalize());assert(edge_stream_open(path,&info));
-  assert(info.analysis.program.confidence==PROGRAM_PAYLOAD_VALID && !strcmp(info.analysis.program.title,"FIRST"));
+  assert(!info.analysis.program.valid);index=explicit_analysis(path);
+  assert(index->programs[0].metadata.confidence==PROGRAM_PAYLOAD_VALID && !strcmp(index->programs[0].metadata.title,"FIRST"));
   edge_stream_close();assert(!remove(path));
  }
- puts("PASS preflight preserves first of two programs, canonical IC/TC and invalid TC refusal, live decoder remains paused between header/data across an independent scan");
+ puts("PASS explicit TAPE ANALYZER preserves first of two programs, canonical IC/TC and invalid TC refusal; duration-only preflight and analyzer preserve the independent live decoder");
 }
 
 int main(void){unhex(loader_golden[0].header_hex,native,128);

@@ -227,15 +227,15 @@ static void graphics(void){
  preflight.program.declared_size=44033;preflight.program.load=preflight.program.exec=0x1200;preflight.program.recorded_loader_mode=LOADER_MODE_IC_1_4;preflight.programs=1;
  ui_model_t edge_scan;ui_build_edge_analysis(&edge_scan,&preflight,90);
  ui_set_analysis_view(3);tick+=100;ui_render(&edge_scan);
- expect_text(0,0,"ANALYZING 90 %",1);expect_text(0,8,"REAL GAME",1);expect_text(0,16,"OBJ IC1:4",1);
- expect_text(0,24,"SIZE 44033",1);expect_text(0,32,"LOAD 1200 EXEC 1200",1);expect_text(0,40,"PREVIEW VERIFIED",1);
+ expect_text(0,0,"COUNTING 90 %",1);expect_text(0,8,"LENGTH ONLY",1);expect_text(0,16,"READ 0",1);
+ expect_text(0,24,"OF 0 BYTES",1);expect_text(0,32,"NO CONTENT SCAN",1);assert(!count_text("REAL GAME"));
  expect_text(0,56,UI_HELP_SCAN_SKIP_CANCEL,1);artifact("edge-analysis-metadata");
  preflight.program.confidence=PROGRAM_LOADER_ONLY;ui_build_edge_analysis(&edge_scan,&preflight,50);tick+=100;ui_render(&edge_scan);
- expect_text(0,8,"--",1);expect_text(0,32,"LOAD -- EXEC --",1);expect_text(0,40,"LOADER ONLY",1);artifact("edge-analysis-loader-only");
+ expect_text(0,8,"LENGTH ONLY",1);expect_text(0,32,"NO CONTENT SCAN",1);artifact("edge-analysis-loader-only");
  preflight.program.confidence=PROGRAM_HEADER_VALID;preflight.program.protocol=PROGRAM_CPM;preflight.program.valid=PROGRAM_TITLE|PROGRAM_SIZE;preflight.aux_profile=8;ui_build_edge_analysis(&edge_scan,&preflight,95);tick+=100;ui_render(&edge_scan);
- expect_text(0,16,"CP/M CPM1:4",1);expect_text(0,32,"LOAD -- EXEC --",1);artifact("edge-analysis-cpm");
+ expect_text(0,8,"LENGTH ONLY",1);expect_text(0,32,"NO CONTENT SCAN",1);artifact("edge-analysis-cpm");
  preflight.program.confidence=PROGRAM_INVALID;ui_build_edge_analysis(&edge_scan,&preflight,100);tick+=100;ui_render(&edge_scan);
- expect_text(0,32,"LOAD -- EXEC --",1);expect_text(0,40,"INVALID",1);
+ expect_text(0,32,"NO CONTENT SCAN",1);assert(!count_text("INVALID"));artifact("edge-length-only");
  puts("PASS uniform 6x8 UI: fixed BUF at x80; current/total or percent on physical last row; LEP fallback; no redundant PLAY bar with time/percent, RECORD uses elapsed/estimated total without bar; long durations; FINISHED once with STOP; QD/MZF shared status header, no SELECT RECORD text or selector footer, round RECORD versus square STOP, MIN without RX, unified RECORD layout and state/warning priority, overlays and eight animation phases");
 }
 static void record_estimate(void){

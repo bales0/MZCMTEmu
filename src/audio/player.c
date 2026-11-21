@@ -49,6 +49,12 @@ static uint64_t metadata_source_us;
 static uint32_t metadata_revision;
 static bool metadata_audio;
 static bool preflight_preview_allowed;
+static bool s_indexed,s_index_armed,s_index_mute,s_index_finished,s_index_time_seek;
+static tape_cursor_t s_index_cursor;
+static uint64_t s_index_base_ticks,s_index_end_ticks,s_index_waveform_us,s_index_waveform_ticks,s_index_final_us,s_index_queued_ticks;
+static uint64_t s_index_legacy_source_us,s_index_legacy_limit_us;
+static uint32_t s_index_preroll,s_index_tail,s_index_preroll_total;
+static program_metadata_t s_index_preview;
 void player_metadata(program_metadata_t *out){program_metadata_snapshot(&metadata_store,out);
 }
 static void metadata_reset(file_format_t format){
@@ -100,8 +106,8 @@ static edge_stream_info_t s_edge_info;
 static bool s_binary_tape = false;
 static bool s_edge_tape = false;
 bool player_preflight_metadata(program_metadata_t *out){
- if(!out || !s_edge_tape || !preflight_preview_allowed)return false;
- *out=s_edge_info.analysis.program;return true;
+ if(out && s_indexed && preflight_preview_allowed){*out=s_index_preview;return true;}
+ return false;
 }
 static bool s_tap_tape = false;
 static uint64_t s_wav_final_us;
@@ -171,6 +177,42 @@ static void player_unlock(void)
     if (s_player_mutex != NULL) {
         xSemaphoreGive(s_player_mutex);
     }
+}
+
+uint64_t player_tape_elapsed_us(void) {
+    player_lock();
+    bool active=s_state==PLAYER_STATE_PLAYING || s_state==PLAYER_STATE_PAUSED;
+    uint64_t value=0;
+    if(s_indexed)value=s_index_armed ? 0:active ? raw_pulse_get_completed_us():s_index_final_us;
+    else if(tape_analyzer_supported(s_current_path))value=active ? raw_pulse_get_completed_us():s_edge_tape ? s_edge_final_us:s_wav_final_us;
+    player_unlock();return value;
+}
+uint64_t player_tape_total_us(void){
+    if(s_indexed)return s_index_waveform_us;
+    if(s_edge_tape)return s_edge_info.total_us>=800000 ? s_edge_info.total_us-800000:0;
+    return tape_analyzer_supported(s_current_path) && s_info.sample_rate ? wav_pulse_time(s_info.data_size,s_info.sample_rate,1000000):0;
+}
+bool player_tape_unverified_start(void){return s_indexed && s_index_time_seek;}
+uint64_t player_tape_position_us(void) {
+    uint64_t played=player_tape_elapsed_us();
+    if(!s_indexed) {
+        uint64_t preroll=s_edge_tape ? 300000:0,total=player_tape_total_us();
+        uint64_t position=played>preroll ? played-preroll:0;
+        return total && position>total ? total:position;
+    }
+    if(s_index_finished)return s_index_end_ticks==s_index_waveform_ticks ? s_index_waveform_us:s_index_end_ticks/16;
+    uint64_t content=played>s_index_preroll_total ? (played-s_index_preroll_total)*16:0;
+    uint64_t span=s_index_end_ticks-s_index_base_ticks;
+    if(content>span)content=span;
+    return (s_index_base_ticks+content)/16;
+}
+bool player_can_time_seek(void) {
+    return tape_analyzer_supported(s_current_path) && (s_state==PLAYER_STATE_PLAYING ||
+        (s_state==PLAYER_STATE_PAUSED && s_pause_reason==PLAYER_PAUSE_USER) || s_state==PLAYER_STATE_EOF);
+}
+const tape_index_t *player_time_index(tape_analyzer_control_fn control,void *context) {
+    if(!player_can_time_seek() || s_state==PLAYER_STATE_PLAYING)return NULL;
+    return tape_time_prepare(s_current_path,control,context);
 }
 
 /* Serialize application policy with UL ownership changes on the player task.
@@ -260,6 +302,7 @@ static bool player_pulse_has_pending(void)
 
 static void player_mark_pulse_source_end(void)
 {
+    if(s_indexed){s_read_error=s_index_cursor.error;s_eof=!s_read_error;return;}
     if (s_tap_tape) {
         if (tap_stream_has_error()) s_read_error = 1;
         else if (tap_stream_is_eof()) s_eof = 1;
@@ -298,6 +341,9 @@ static void player_finish_stop(player_state_t final_state)
 {
     printf("player: finish %s -> %s completed_us=%llu path=%s\n",player_state_name(s_state),player_state_name(final_state),(unsigned long long)raw_pulse_get_completed_us(),s_current_path);
     if(final_state==PLAYER_STATE_ERROR && !__atomic_load_n(&last_error,__ATOMIC_ACQUIRE))player_error("SOURCE / TX ERROR");
+    if(s_indexed){s_index_final_us=raw_pulse_get_completed_us();s_index_armed=false;
+        if(final_state==PLAYER_STATE_EOF)s_index_finished=true;
+        tape_cursor_close(&s_index_cursor);}
     if (s_edge_tape) s_edge_final_us = raw_pulse_get_completed_us();
     if (s_tap_tape) s_tap_final_us = raw_pulse_get_completed_us();
     if (player_is_wav()) s_wav_final_us=raw_pulse_get_completed_us();
@@ -359,7 +405,31 @@ static bool player_fill_pulse_pending(void)
         bool count_pulse = true;
         bool ok;
 
-        if (s_binary_tape) {
+        if(s_indexed) {
+            uint32_t ticks=0;
+            s_index_mute=false;
+            if(s_index_preroll){
+                ticks=s_index_preroll>480000 ? 480000:s_index_preroll;
+                s_index_preroll-=ticks;s_index_mute=true;ok=true;
+            } else {
+                ok=tape_cursor_next(&s_index_cursor,&level,&ticks);
+                if(!ok && !s_index_cursor.error && s_index_tail){
+                    ticks=s_index_tail>480000 ? 480000:s_index_tail;s_index_tail-=ticks;s_index_mute=true;ok=true;
+                }
+            }
+            if(ok){
+                s_index_queued_ticks+=ticks;
+                duration_us=native ? ticks:ticks/16;
+                if(!native && !s_index_mute && s_index_cursor.format==FILE_FORMAT_WAV) {
+                    /* Quantize original absolute sample boundaries directly.
+                     * Rounding 16 MHz ticks a second time can add 1 us. */
+                    uint64_t end=s_index_cursor.ticks16==s_index_end_ticks ? s_index_legacy_limit_us:
+                        wav_pulse_time(s_index_cursor.sample_index,s_index_cursor.wav.sample_rate,1000000);
+                    duration_us=(uint32_t)(end-s_index_legacy_source_us);s_index_legacy_source_us=end;
+                }
+                count_pulse=!s_index_mute && level!=0;
+            }
+        } else if (s_binary_tape) {
             ok = native ? mzf_stream_next_ticks16(&level,&duration_us):mzf_stream_next_pulse(&level, &duration_us);
         } else if (s_tap_tape) {
             uint32_t ticks;
@@ -387,19 +457,20 @@ static bool player_fill_pulse_pending(void)
             player_mark_pulse_source_end();
             break;
         }
+        if(s_indexed && !native && !duration_us)continue;
 
         if(metadata_audio){
-            tape_metadata_feed(level,native && !s_edge_tape ? (duration_us+8U)/16U:duration_us,
-                s_edge_tape && edge_stream_monitor_muted());
+            tape_metadata_feed(level,native && (!s_edge_tape || s_indexed) ? (duration_us+8U)/16U:duration_us,
+                s_indexed ? s_index_mute:s_edge_tape && edge_stream_monitor_muted());
             metadata_collect();
         } else if(s_tap_tape)metadata_collect();
-        metadata_source_us+=native && !s_edge_tape ? duration_us:(uint64_t)duration_us*16U;
-        pulse_ticks[count]=native && !s_edge_tape ? duration_us:duration_us*16U;
+        metadata_source_us+=native && (!s_edge_tape || s_indexed) ? duration_us:(uint64_t)duration_us*16U;
+        pulse_ticks[count]=native && (!s_edge_tape || s_indexed) ? duration_us:duration_us*16U;
         pulse_buf[count].level = level ? 1U : 0U;
         pulse_buf[count].count_pulse = count_pulse ? RAW_PULSE_COUNT : 0U;
-        if((s_edge_tape && edge_stream_monitor_muted()) || (!count_pulse && s_tap_tape && duration_us >= (native ? 1600000U:100000U)))
+        if((s_indexed ? s_index_mute:s_edge_tape && edge_stream_monitor_muted()) || (!count_pulse && s_tap_tape && duration_us >= (native ? 1600000U:100000U)))
             pulse_buf[count].count_pulse |= RAW_PULSE_MONITOR_MUTE;
-        if((s_edge_tape && !edge_stream_monitor_muted()) ||
+        if((s_edge_tape && !s_indexed && !edge_stream_monitor_muted()) ||
            (s_binary_tape && mzf_stream_last_pulse_source_byte()))pulse_buf[count].count_pulse|=RAW_PULSE_SOURCE_BYTE;
         pulse_buf[count].duration_us = duration_us == 0U ? 1U : duration_us;
         count++;
@@ -444,6 +515,7 @@ static bool player_feed_one_pulse_chunk(void)
 
 void player_init(void)
 {
+    tape_cursor_close(&s_index_cursor);s_indexed=s_index_armed=false;
     if (!s_record_modes) s_record_modes=heap_caps_malloc(65536U,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if (s_record_modes) memset(s_record_modes,255,65536U);
     metadata_reset(FILE_FORMAT_UNKNOWN);
@@ -509,6 +581,7 @@ void player_start(const char *path)
     if (s_state == PLAYER_STATE_PLAYING || s_state == PLAYER_STATE_PAUSED) {
         player_finish_stop(PLAYER_STATE_STOPPED);
     }
+    s_indexed=s_index_armed=false;
 
     snprintf(s_current_path,sizeof(s_current_path),"%s",path);
     metadata_reset(file_format_detect_from_name(path));
@@ -558,9 +631,7 @@ void player_start(const char *path)
             return;
         }
 
-        if (s_info.audio_format != 1U ||
-            s_info.num_channels != 1U ||
-            s_info.bits_per_sample != 8U) {
+        if (!wav_reader_supported(&s_info)) {
             player_error("WAV FORMAT");
             wav_reader_close();
             s_state = PLAYER_STATE_ERROR;
@@ -570,9 +641,8 @@ void player_start(const char *path)
     }
 
     if(s_edge_tape){
-        program_metadata_t *preview=&s_edge_info.analysis.program;
-        preflight_preview_allowed=(preview->confidence==PROGRAM_HEADER_VALID || preview->confidence==PROGRAM_PAYLOAD_VALID) && (preview->valid&PROGRAM_TITLE);
-        printf("edge: analysis=%u cache=%s bytes=%lu programs>=%lu total_us=%llu\n",(unsigned)s_edge_info.analysis.state,s_edge_info.analysis.cache_status==EDGE_CACHE_HIT ? "HIT":s_edge_info.analysis.cache_status==EDGE_CACHE_INVALID ? "INVALID":"MISS",(unsigned long)s_edge_info.analysis.scanned_bytes,(unsigned long)s_edge_info.analysis.programs,(unsigned long long)s_edge_info.total_us);
+        preflight_preview_allowed=false;
+        printf("edge: LENGTH ONLY state=%u cache=%s bytes=%lu total_us=%llu\n",(unsigned)s_edge_info.analysis.state,s_edge_info.analysis.cache_status==EDGE_CACHE_HIT ? "HIT":s_edge_info.analysis.cache_status==EDGE_CACHE_INVALID ? "INVALID":"MISS",(unsigned long)s_edge_info.analysis.scanned_bytes,(unsigned long long)s_edge_info.total_us);
     }
     if(player_is_wav() && !wav_pulse_stream_begin(s_info.sample_rate)) {
         wav_reader_close();
@@ -668,6 +738,88 @@ bool player_stop_to_selector(void) {
 }
 void player_stop(void){player_stop_for(PLAYER_STOP_API);}
 
+typedef struct {tape_analyzer_control_fn callback;void *context;bool cancelled;} indexed_control_t;
+static bool indexed_control(void *argument) {
+    indexed_control_t *request=argument;
+    if(request->callback && !request->callback(request->context))request->cancelled=true;
+    return !request->cancelled;
+}
+
+bool player_prepare_tape(const tape_index_t *idx,uint32_t program,uint64_t time_us,
+                         bool time_seek,tape_analyzer_control_fn control,void *context) {
+    indexed_control_t request={control,context,false};
+    player_lock();
+    if(!idx || (time_seek && program!=TAPE_INDEX_NO_ENTRY) || s_state==PLAYER_STATE_PLAYING ||
+       (s_state==PLAYER_STATE_PAUSED && s_pause_reason!=PLAYER_PAUSE_USER) ||
+       !idx->scan_complete || !tape_index_source_valid(idx) ||
+       (program!=TAPE_INDEX_NO_ENTRY && (program>=idx->program_count_recognized || !idx->programs[program].seekable))) {
+        player_unlock();return false;
+    }
+    player_finish_stop(PLAYER_STATE_STOPPED);
+    __atomic_store_n(&last_error,NULL,__ATOMIC_RELEASE);
+    __atomic_store_n(&last_stop_cause,PLAYER_STOP_NONE,__ATOMIC_RELEASE);
+    s_indexed=true;s_index_armed=s_index_finished=false;s_index_time_seek=time_seek;s_binary_tape=s_tap_tape=false;
+    s_edge_tape=idx->source.format!=FILE_FORMAT_WAV;
+    s_index_final_us=0;s_index_end_ticks=s_index_waveform_ticks=idx->waveform_ticks16;s_index_waveform_us=idx->waveform_us;
+    snprintf(s_current_path,sizeof(s_current_path),"%s",idx->source.path);
+    metadata_reset(idx->source.format);preflight_preview_allowed=false;
+    player_reset_pulse_pending();s_eof=s_read_error=0;s_bytes_queued=0;
+    /* STOP above disabled callbacks and discarded unsent FIFO. init resets
+     * the encoder, physical completion clock and error state before prefill. */
+    raw_pulse_init();raw_pulse_set_output_enabled(true);raw_pulse_clear_underrun();
+    bool ok=false;
+    if(!raw_pulse_error()) {
+        if(time_seek)ok=tape_cursor_seek(&s_index_cursor,idx,time_us,indexed_control,&request);
+        else {
+            const tape_checkpoint_t *start=NULL;
+            if(program!=TAPE_INDEX_NO_ENTRY) {
+                const tape_program_t *p=&idx->programs[program];
+                if(p->start_checkpoint<idx->checkpoint_count)start=&idx->checkpoints[p->start_checkpoint];
+                if(!start || !start->valid)goto failed;
+                s_index_end_ticks=p->chain_end_ticks16;
+                s_index_preview=p->metadata;preflight_preview_allowed=true;
+            }
+            ok=tape_cursor_open(&s_index_cursor,idx,start);
+        }
+    }
+    if(!ok || !indexed_control(&request))goto failed;
+    s_index_base_ticks=s_index_cursor.ticks16;s_index_queued_ticks=s_index_base_ticks;
+    if(s_index_end_ticks<s_index_base_ticks)goto failed;
+    if(time_seek && s_index_base_ticks==s_index_end_ticks) {
+        /* Clamped end-of-tape is an empty successful range. Do not launch
+         * silence, an empty DMA transaction or a spurious SOURCE error. */
+        s_index_preroll_total=0;
+        player_finish_stop(PLAYER_STATE_EOF);player_unlock();return true;
+    }
+    s_index_cursor.limit_ticks16=s_index_end_ticks;
+    if(s_index_cursor.format==FILE_FORMAT_WAV) {
+        s_index_legacy_source_us=s_index_cursor.remaining_ticks16 ? s_index_base_ticks/16:
+            wav_pulse_time(s_index_cursor.sample_index,s_index_cursor.wav.sample_rate,1000000);
+        uint64_t last_sample=program==TAPE_INDEX_NO_ENTRY ? s_index_cursor.wav.data_size:
+            idx->programs[program].chain.offset_end-s_index_cursor.wav.data_offset;
+        s_index_legacy_limit_us=wav_pulse_time(last_sample,s_index_cursor.wav.sample_rate,1000000);
+    }
+    s_index_preroll_total=idx->synthetic_preroll_us;
+    s_index_preroll=idx->synthetic_preroll_us*16U;s_index_tail=idx->synthetic_tail_us*16U;
+    metadata_audio=true;tape_metadata_begin(idx->source.format);
+    while(raw_pulse_level()<PULSE_PREFILL_PULSES && !s_read_error &&
+          (raw_pulse_level()<WAV_PREFILL_MIN_PULSES ||
+           s_index_queued_ticks-s_index_base_ticks<WAV_PREFILL_US*16)) {
+        if(!player_feed_one_pulse_chunk())break;
+        if(!indexed_control(&request))goto failed;
+    }
+    if(s_read_error || !raw_pulse_level())goto failed;
+    s_index_armed=true;s_playing=0;s_state=PLAYER_STATE_PAUSED;s_pause_reason=PLAYER_PAUSE_USER;
+    printf("player: INDEX READY start_us=%llu end_us=%llu program=%lu unverified=%u fifo=%lu\n",
+        (unsigned long long)(s_index_base_ticks/16),(unsigned long long)(s_index_end_ticks/16),
+        (unsigned long)program,(unsigned)time_seek,(unsigned long)raw_pulse_level());
+    player_unlock();return true;
+failed:
+    if(request.cancelled)player_finish_stop(PLAYER_STATE_STOPPED);
+    else {player_error("INDEX SOURCE");player_finish_stop(PLAYER_STATE_ERROR);}
+    player_unlock();return false;
+}
+
 void player_pause_user(void)
 {
     player_lock();
@@ -704,7 +856,10 @@ void player_resume_user(void)
         mzf_stream_pause_ul(false);
         if(s_binary_waiting) s_binary_wait_until=esp_timer_get_time()+s_binary_pause_remaining;
     }
-    raw_pulse_resume();
+    if(s_indexed && s_index_armed){
+        if(!raw_pulse_start()){player_error("INDEX TX START");player_finish_stop(PLAYER_STATE_ERROR);player_unlock();return;}
+        s_index_armed=false;
+    } else raw_pulse_resume();
 
     s_playing = 1;
     s_state = PLAYER_STATE_PLAYING;
@@ -848,10 +1003,10 @@ static void player_service_locked(void)
             return;
         }
 
-        uint64_t wav_read_start=wav_pulse_stream_samples();
+        uint64_t wav_read_start=s_indexed ? s_index_cursor.sample_index:wav_pulse_stream_samples();
         while (!s_read_error && raw_pulse_free() != 0U &&
                (!s_eof || player_pulse_has_pending()) &&
-               (!player_is_wav() || wav_pulse_stream_samples()-wav_read_start<65536)) {
+               (!player_is_wav() || (s_indexed ? s_index_cursor.sample_index:wav_pulse_stream_samples())-wav_read_start<65536)) {
             if (!player_feed_one_pulse_chunk()) {
                 break;
             }
@@ -981,6 +1136,7 @@ const char *player_get_current_path(void)
 
 uint32_t player_get_sample_rate(void)
 {
+    if(s_indexed)return s_index_cursor.format==FILE_FORMAT_WAV ? s_index_cursor.wav.sample_rate:1000000U;
     if (s_tap_tape) return 0U;
     return s_binary_tape ? s_mzf_info.sample_rate :
            s_edge_tape ? s_edge_info.sample_rate :
@@ -1008,6 +1164,7 @@ uint32_t player_get_pulses_per_second(void)
 
 uint32_t player_get_total_seconds(void)
 {
+    if(s_indexed || s_edge_tape)return (uint32_t)(player_tape_total_us()/1000000);
     if(s_state==PLAYER_STATE_READY || s_binary_tape) {
         const sharp_stream_info_t *details=mzf_stream_details();
         /* UL timing covers only the loader; deferred timing is not a duration. */
@@ -1050,6 +1207,7 @@ static uint64_t player_tap_elapsed_us(void)
 
 uint32_t player_get_position_seconds(void)
 {
+    if(s_indexed || s_edge_tape)return (uint32_t)(player_tape_position_us()/1000000);
     if(s_state==PLAYER_STATE_READY)return 0;
     if(player_is_wav()) {
         uint64_t elapsed=s_state==PLAYER_STATE_EOF || s_state==PLAYER_STATE_STOPPED || s_state==PLAYER_STATE_ERROR ? s_wav_final_us:raw_pulse_get_completed_us();
@@ -1083,6 +1241,12 @@ uint32_t player_get_position_seconds(void)
 
 uint8_t player_get_progress_percent(void)
 {
+    if(s_indexed || (s_edge_tape && player_tape_total_us())){
+        uint64_t total=player_tape_total_us();
+        uint64_t percent=total ? player_tape_position_us()*100/total:0;
+        if(percent>=100)return s_state==PLAYER_STATE_EOF ? 100:99;
+        return (uint8_t)percent;
+    }
     if(s_state==PLAYER_STATE_READY)return 0;
     if(player_is_wav()) {
         if(s_state==PLAYER_STATE_EOF) return 100;
@@ -1203,6 +1367,7 @@ bool player_prepare_record(const char *path,uint16_t record) {
     if (!path || !record || !s_record_modes || strlen(path)>=sizeof(s_record_modes_path)) { player_unlock();
     return false;
     }
+    s_indexed=s_index_armed=false;
     if(strcmp(path,s_record_modes_path)) {
         memset(s_record_modes,255,65536U);
         snprintf(s_record_modes_path,sizeof(s_record_modes_path),"%s",path);

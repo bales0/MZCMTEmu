@@ -1,6 +1,6 @@
 #include "storage/fs.h"
 #include "audio/edge_stream.h"
-#include "formats/preflight_metadata.h"
+#include "formats/tape_analyzer.h"
 #if CMT_EDGE_DIAGNOSTICS
 #ifdef ESP_PLATFORM
 #include "esp_timer.h"
@@ -93,21 +93,10 @@ static edge_scan_action_t scan_poll(uint32_t done){
  return action;
 }
 static bool scan_finish_action(edge_scan_action_t action){
+ tape_time_scan_cancel();
  if(action==EDGE_SCAN_CANCEL){scan_cancelled=true;analysis.state=EDGE_ANALYSIS_CANCELLED;analysis.cache_status=EDGE_CACHE_INVALID;program_metadata_reset(&analysis.program,s_is_l16 ? FILE_FORMAT_L16:FILE_FORMAT_LEP);session_cache.valid=false;return false;}
  analysis.state=EDGE_ANALYSIS_SKIPPED;analysis.cache_status=EDGE_CACHE_INVALID;analysis.total_us=0;analysis.cache_hit=false;session_cache.valid=false;
  return cmt_fseek(s_fp,0,SEEK_SET)==0;
-}
-static bool program_is_header(const program_metadata_t *p){return (p->confidence==PROGRAM_HEADER_VALID || p->confidence==PROGRAM_PAYLOAD_VALID) && (p->valid&PROGRAM_TITLE);}
-static void scan_collect(uint64_t elapsed,bool *first){
- program_metadata_t current;preflight_tape_metadata_snapshot(&current);
- if(program_is_header(&current)){
-  uint32_t number=current.record ? current.record:1;
-  if(number>analysis.programs)analysis.programs=number;
-  if(!*first){analysis.program=current;analysis.discovered_us=EDGE_IDLE_PREROLL_US+elapsed;
-   (void)preflight_record_autoname_get_detected_aux_profile(&analysis.aux_profile);*first=true;}
-  else if(analysis.program.confidence!=PROGRAM_PAYLOAD_VALID && current.record==analysis.program.record && !strcmp(current.title,analysis.program.title) && current.load==analysis.program.load && current.declared_size==analysis.program.declared_size)analysis.program=current;
- }else if(!*first)analysis.program=current;
- else if(analysis.program.confidence!=PROGRAM_PAYLOAD_VALID && current.confidence==PROGRAM_INVALID && current.record==analysis.program.record && !strcmp(current.title,analysis.program.title) && current.load==analysis.program.load && current.declared_size==analysis.program.declared_size){analysis.program.confidence=PROGRAM_INVALID;analysis.program.valid=0;}
 }
 static bool scan_duration(const char *path,uint64_t *duration){
  *duration=0;memset(&analysis,0,sizeof(analysis));analysis.total_bytes=s_total_bytes;analysis.state=EDGE_ANALYSIS_RUNNING;
@@ -129,8 +118,8 @@ static bool scan_duration(const char *path,uint64_t *duration){
   *duration=analysis.total_us;return true;
   }
  }
- preflight_tape_metadata_begin(s_is_l16 ? FILE_FORMAT_L16:FILE_FORMAT_LEP);
- uint32_t done=0,partial[3]={2166136261U,2166136261U,2166136261U};uint64_t units=0,run=0;uint8_t level=0;bool have_first=false;
+ if(!tape_time_scan_begin(path,s_is_l16 ? FILE_FORMAT_L16:FILE_FORMAT_LEP,s_total_bytes))goto failed;
+ uint32_t done=0,partial[3]={2166136261U,2166136261U,2166136261U};
  while(done<s_total_bytes){
   size_t n=s_total_bytes-done;if(n>sizeof(scan_block))n=sizeof(scan_block);
   SCAN_TIME(read_started);
@@ -138,27 +127,17 @@ static bool scan_duration(const char *path,uint64_t *duration){
   SCAN_ADD(read_us,read_started);
   SCAN_TIME(decode_started);
   fingerprint_update(partial,done,scan_block,n);
-  for(size_t j=0;j<n;++j){
-   int value=(int8_t)scan_block[j];uint32_t ticks=value==0 ? EDGE_ZERO_UNITS:value<0 ? (unsigned)-value:(unsigned)value;
-   uint8_t next=value ? value>0:level;
-   if(next!=level){
-    if(run)preflight_tape_metadata_feed(level,run>UINT32_MAX ? UINT32_MAX:(uint32_t)run,false);
-    run=0;level=next;
-   }
-   units+=ticks;run+=(uint64_t)ticks*(s_is_l16 ? 16:50);
-  }
-  scan_collect(units*(s_is_l16 ? 16:50),&have_first);
+  if(!tape_time_scan_feed(scan_block,n))goto failed;
   SCAN_ADD(decode_us,decode_started);
   done+=(uint32_t)n;action=scan_poll(done);
   if(action!=EDGE_SCAN_CONTINUE)return scan_finish_action(action);
  }
- if(run)preflight_tape_metadata_feed(level,run>UINT32_MAX ? UINT32_MAX:(uint32_t)run,false);
- preflight_tape_metadata_end();scan_collect(units*(s_is_l16 ? 16:50),&have_first);
+ if(!tape_time_scan_end())goto failed;
  if(cmt_fseek(s_fp,0,SEEK_SET) || cmt_stat(path,&after) || !same_identity(&identity,&after) || epoch!=cmt_storage_epoch())goto failed;
  fingerprint=fingerprint_join(partial);
- analysis.total_us=units*(s_is_l16 ? 16:50)+EDGE_IDLE_PREROLL_US+EDGE_IDLE_TAIL_US;
+ analysis.total_us=tape_time_result()->waveform_us+EDGE_IDLE_PREROLL_US+EDGE_IDLE_TAIL_US;
  analysis.state=EDGE_ANALYSIS_COMPLETE;
- /* Decoder record counter is a recognized-program lower bound, not a seek index. */
+ /* No content decoder is invoked by ordinary PLAY. */
  analysis.programs_exact=false;
  if(strlen(path)<sizeof(session_cache.path)){
   strcpy(session_cache.path,path);session_cache.identity=identity;session_cache.epoch=epoch;session_cache.fingerprint=fingerprint;
@@ -166,6 +145,7 @@ static bool scan_duration(const char *path,uint64_t *duration){
  }
  *duration=analysis.total_us;return true;
 failed:
+ tape_time_scan_cancel();
  analysis.state=EDGE_ANALYSIS_ERROR;analysis.cache_status=EDGE_CACHE_INVALID;analysis.total_us=0;session_cache.valid=false;
  program_metadata_reset(&analysis.program,s_is_l16 ? FILE_FORMAT_L16:FILE_FORMAT_LEP);return false;
 }
