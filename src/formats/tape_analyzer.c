@@ -40,6 +40,36 @@ static uint8_t time_samples[3][64],time_block[1024],time_level;
 static uint64_t time_stride,time_next;
 static bool time_owner;
 static int seek_percent=-1;
+typedef struct {uint64_t begin,end,begin_offset,end_offset;uint8_t level;bool have;} gap_tracker_t;
+static gap_tracker_t deep_gap,time_gap;
+static tape_gap_t *deep_gaps,*time_gaps;
+static tape_cursor_t gap_cursor;
+static int gap_percent=-1;
+static const tape_index_t *byte_scan_index;
+static tape_checkpoint_t byte_scan_resume;
+static gap_tracker_t byte_scan_tracker;
+static uint8_t gap_target_buffer[1024];
+static uint64_t gap_offset_reads;
+static bool gap_offset_cancelled;
+
+static void gap_init(tape_index_t *idx,tape_gap_t **pool,gap_tracker_t *tracker) {
+    byte_scan_index=NULL;
+    if(!*pool)*pool=POOL_ALLOC(TAPE_GAP_CAPACITY*sizeof(**pool));
+    idx->gaps=*pool;idx->gap_capacity=*pool ? TAPE_GAP_CAPACITY:0;
+    idx->gap_count=0;idx->gaps_ready=idx->gaps_truncated=false;
+    memset(tracker,0,sizeof(*tracker));
+}
+static void gap_store(tape_index_t *idx,const gap_tracker_t *t) {
+    if(!t->have || t->end-t->begin<TAPE_GAP_MIN_US*16)return;
+    if(idx->gap_count==idx->gap_capacity){idx->gaps_truncated=true;return;}
+    tape_gap_t *pool=idx==&index_data ? deep_gaps:time_gaps;
+    pool[idx->gap_count++]=(tape_gap_t){t->begin/16,t->end/16,t->begin_offset,t->end_offset,UINT64_MAX};
+}
+static void gap_feed(tape_index_t *idx,gap_tracker_t *t,uint8_t level,uint64_t begin,uint64_t end,uint64_t offset,uint64_t next_offset) {
+    if(t->have && t->level!=level){gap_store(idx,t);t->have=false;}
+    if(!t->have){t->begin=begin;t->begin_offset=offset;t->level=level;t->have=true;}
+    t->end=end;t->end_offset=next_offset;
+}
 
 bool tape_analyzer_supported(const char *path) {
     const char *ext=path ? strrchr(path,'.'):NULL;
@@ -47,7 +77,8 @@ bool tape_analyzer_supported(const char *path) {
 }
 size_t tape_analyzer_pool_bytes(void) {
     return TAPE_INDEX_PROGRAM_CAPACITY*sizeof(tape_program_t)+
-        TAPE_INDEX_BLOCK_CAPACITY*sizeof(tape_block_t)+TAPE_INDEX_CHECKPOINT_CAPACITY*sizeof(tape_checkpoint_t);
+        TAPE_INDEX_BLOCK_CAPACITY*sizeof(tape_block_t)+TAPE_INDEX_CHECKPOINT_CAPACITY*sizeof(tape_checkpoint_t)+
+        TAPE_GAP_CAPACITY*sizeof(tape_gap_t);
 }
 static bool allocate_pools(void) {
     if(!programs)programs=POOL_ALLOC(TAPE_INDEX_PROGRAM_CAPACITY*sizeof(*programs));
@@ -85,12 +116,12 @@ static bool time_identity(const char *path,file_format_t format,uint64_t size) {
     struct stat st;
     if(!path || strlen(path)>=TAPE_INDEX_PATH_CAPACITY || cmt_stat(path,&st) ||
        !S_ISREG(st.st_mode) || st.st_size<0 || (uint64_t)st.st_size!=size || size>LONG_MAX)return false;
-    memset(&time_index,0,sizeof(time_index));
+    byte_scan_index=NULL;memset(&time_index,0,sizeof(time_index));
     strcpy(time_index.source.path,path);time_index.source.format=format;time_index.source.size_bytes=size;
     time_index.source.mtime_seconds=st.st_mtime;time_index.source.ctime_seconds=st.st_ctime;
     time_index.source.device=st.st_dev;time_index.source.inode=st.st_ino;
     time_index.source.storage_epoch=cmt_storage_epoch();time_index.source.stat_valid=true;
-    time_index.schema_version=TAPE_INDEX_SCHEMA_VERSION;time_index.algorithm_version=1;time_index.time_only=true;
+    time_index.schema_version=TAPE_INDEX_SCHEMA_VERSION;time_index.algorithm_version=3;time_index.time_only=true;
     return true;
 }
 static void time_add(const tape_checkpoint_t *cp) {
@@ -114,6 +145,7 @@ bool tape_time_scan_begin(const char *path,file_format_t format,uint64_t bytes) 
     time_index.checkpoints=time_points ? time_points:&time_start;
     time_index.synthetic_preroll_us=300000;time_index.synthetic_tail_us=500000;
     time_index.state=TAPE_INDEX_SCANNING;time_stride=time_next=1000000;time_level=0;
+    gap_init(&time_index,&time_gaps,&time_gap);
     memset(time_samples,0,sizeof(time_samples));
     tape_checkpoint_t cp={.kind=TAPE_CHECKPOINT_EDGE,.valid=true};time_add(&cp);return true;
 }
@@ -138,6 +170,7 @@ bool tape_time_scan_feed(const uint8_t *bytes,size_t count) {
         if(value)time_level=value>0;
         uint32_t ticks=units*unit;
         if(time_index.waveform_ticks16>UINT64_MAX-ticks)return false;
+        gap_feed(&time_index,&time_gap,time_level,time_index.waveform_ticks16,time_index.waveform_ticks16+ticks,begin+i,begin+i+1);
         time_index.waveform_ticks16+=ticks;
     }
     time_index.scanned_bytes+=count;time_index.waveform_us=time_index.waveform_ticks16/16;
@@ -149,6 +182,9 @@ bool tape_time_scan_end(void) {
     bool ok=time_index.state==TAPE_INDEX_SCANNING && time_index.scanned_bytes==time_index.source.size_bytes &&
         time_index.source.storage_epoch==cmt_storage_epoch() && !cmt_stat(time_index.source.path,&st) && stat_matches(&time_index.source,&st);
     if(ok) {
+        /* Only closed gaps lead to a following signal. Trailing silence
+         * must not create a skip target just before EOF. */
+        time_index.gaps_ready=!time_index.gaps_truncated;
         uint32_t hash=2166136261U;size_t n=time_index.source.size_bytes<64 ? (size_t)time_index.source.size_bytes:64;
         for(unsigned p=0;p<3;++p)for(size_t i=0;i<n;++i)hash=(hash^time_samples[p][i])*16777619U;
         time_index.source.fingerprint=hash;time_index.source.fingerprint_valid=true;time_index.source.fingerprint_version=1;
@@ -163,9 +199,34 @@ void tape_time_scan_cancel(void) {
     __atomic_store_n(&time_owner,false,__ATOMIC_RELEASE);
 }
 const tape_index_t *tape_time_result(void){return &time_index;}
-const tape_index_t *tape_time_prepare(const char *path,tape_analyzer_control_fn control,void *context) {
+void tape_time_navigation_duration(const tape_index_t *idx,uint64_t ticks) {
+    if(idx==&time_index && !time_index.duration_known) {
+        time_index.waveform_ticks16=ticks;time_index.waveform_us=(ticks+8)/16;
+        time_index.duration_known=true;
+    }
+}
+const tape_index_t *tape_time_navigation(const char *path,tape_analyzer_control_fn control,void *context) {
     if(!tape_analyzer_supported(path) || __atomic_load_n(&time_owner,__ATOMIC_ACQUIRE))return NULL;
     if(time_index.scan_complete && !strcmp(time_index.source.path,path) && tape_index_source_valid(&time_index))return &time_index;
+    file_format_t format=file_format_detect_from_name(path);
+    if(format==FILE_FORMAT_WAV)return tape_time_prepare(path,control,context);
+    if(control && !control(context))return NULL;
+    struct stat st;
+    if(cmt_stat(path,&st) || st.st_size<0 || !time_identity(path,format,(uint64_t)st.st_size))return NULL;
+    cmt_file_t *file=cmt_fopen(path,"rb");
+    bool ok=file && fingerprint(file,time_index.source.size_bytes,&time_index.source.fingerprint);
+    if(file)cmt_fclose(file);
+    if(!ok){time_index.state=TAPE_INDEX_ERROR;return NULL;}
+    time_index.source.fingerprint_valid=true;time_index.source.fingerprint_version=1;
+    time_index.synthetic_preroll_us=300000;time_index.synthetic_tail_us=500000;
+    time_start=(tape_checkpoint_t){.kind=TAPE_CHECKPOINT_EDGE,.valid=true};
+    time_index.checkpoints=&time_start;time_index.checkpoint_count=time_index.checkpoint_capacity=1;
+    time_index.scan_complete=true;time_index.state=TAPE_INDEX_FINISHED;
+    return tape_index_source_valid(&time_index) ? &time_index:NULL;
+}
+const tape_index_t *tape_time_prepare(const char *path,tape_analyzer_control_fn control,void *context) {
+    if(!tape_analyzer_supported(path) || __atomic_load_n(&time_owner,__ATOMIC_ACQUIRE))return NULL;
+    if(time_index.scan_complete && time_index.duration_known && !strcmp(time_index.source.path,path) && tape_index_source_valid(&time_index))return &time_index;
     struct stat st;if(cmt_stat(path,&st) || st.st_size<0)return NULL;
     file_format_t format=file_format_detect_from_name(path);
     if(format==FILE_FORMAT_WAV) {
@@ -196,6 +257,179 @@ const tape_index_t *tape_time_prepare(const char *path,tape_analyzer_control_fn 
     return tape_time_scan_end() ? &time_index:NULL;
 }
 int tape_time_seek_percent(void){return seek_percent;}
+int tape_gap_scan_percent(void){return gap_percent;}
+uint64_t tape_gap_offset_read_bytes(void){return gap_offset_reads;}
+static bool gap_offset_target(const tape_index_t *idx,tape_gap_t *gap,
+                               tape_analyzer_control_fn control,void *context) {
+    if(gap->target_offset!=UINT64_MAX)return true;
+    cmt_file_t *file=cmt_fopen(idx->source.path,"rb");if(!file)return false;
+    uint64_t at=gap->end_offset,ticks=0;
+    unsigned unit=idx->source.format==FILE_FORMAT_L16 ? 256:800;
+    bool ok=true;
+    while(at>gap->begin_offset && ticks<TAPE_GAP_LEAD_US*16) {
+        if(control && !control(context)){gap_offset_cancelled=true;ok=false;break;}
+        size_t n=at-gap->begin_offset;if(n>sizeof(gap_target_buffer))n=sizeof(gap_target_buffer);
+        uint64_t first=at-n;
+        if(cmt_fseek(file,(long)first,SEEK_SET) || cmt_fread(gap_target_buffer,1,n,file)!=n){ok=false;break;}
+        gap_offset_reads+=n;
+        for(size_t i=n;i && ticks<TAPE_GAP_LEAD_US*16;--i) {
+            int value=(int8_t)gap_target_buffer[i-1];
+            ticks+=(value==0 ? 127:value<0 ? -value:value)*unit;--at;
+        }
+    }
+    cmt_fclose(file);if(ok)gap->target_offset=at;return ok;
+}
+static bool gap_offset_consider(const tape_index_t *idx,tape_gap_t *gap,uint64_t position,bool forward,
+                                uint64_t exclude,bool *found,uint64_t *target,
+                                tape_analyzer_control_fn control,void *context) {
+    if((forward && gap->end_offset<=position) || (!forward && gap->begin_offset>=position))return true;
+    if(!gap_offset_target(idx,gap,control,context))return false;
+    uint64_t at=gap->target_offset;
+    if(at==exclude || (forward ? at<=position:at>=position))return true;
+    if(!*found || (forward ? at<*target:at>*target)){*found=true;*target=at;}
+    return true;
+}
+static bool gap_offset_cached(const tape_index_t *idx,uint64_t position,bool forward,uint64_t exclude,
+                              bool *found,uint64_t *target,tape_analyzer_control_fn control,void *context) {
+    tape_gap_t *pool=idx==&time_index ? time_gaps:idx==&index_data ? deep_gaps:NULL;
+    for(unsigned step=0;step<idx->gap_count;++step) {
+        unsigned i=forward ? step:idx->gap_count-1-step;
+        tape_gap_t gap=idx->gaps[i];
+        if(!gap_offset_consider(idx,&gap,position,forward,exclude,found,target,control,context))return false;
+        if(pool)pool[i].target_offset=gap.target_offset;
+        if(*found)break;
+    }
+    return true;
+}
+tape_gap_result_t tape_gap_find_offset(const tape_index_t *idx,uint64_t position,bool forward,
+                                      uint64_t exclude,uint64_t *target,
+                                      tape_analyzer_control_fn control,void *context) {
+    gap_offset_reads=0;gap_offset_cancelled=false;
+    if(!idx || !target || !idx->scan_complete ||
+       (idx->source.format!=FILE_FORMAT_LEP && idx->source.format!=FILE_FORMAT_L16) || !tape_index_source_valid(idx))return TAPE_GAP_ERROR;
+    if(control && !control(context))return TAPE_GAP_CANCELLED;
+    bool found=false;uint64_t at=0;
+    bool covered=idx->gaps_ready || (byte_scan_index==idx && byte_scan_tracker.begin_offset>=position);
+    if((forward || covered) && !idx->gaps_truncated) {
+        if(!gap_offset_cached(idx,position,forward,exclude,&found,&at,control,context))goto offset_error;
+        if(found || idx->gaps_ready || (!forward && covered)){if(found)*target=at;return found ? TAPE_GAP_FOUND:TAPE_GAP_NONE;}
+    }
+    tape_index_t *owned=idx==&time_index ? &time_index:idx==&index_data ? &index_data:NULL;
+    if(!owned)return TAPE_GAP_ERROR;
+    if(byte_scan_index!=idx || (!forward && idx->gaps_truncated)) {
+        gap_init(owned,owned==&time_index ? &time_gaps:&deep_gaps,&byte_scan_tracker);
+        memset(&byte_scan_resume,0,sizeof(byte_scan_resume));byte_scan_index=idx;
+    }
+    if(!tape_cursor_open(&gap_cursor,idx,byte_scan_resume.valid ? &byte_scan_resume:NULL))goto offset_error;
+    gap_tracker_t tracker=byte_scan_tracker;uint64_t last=gap_cursor.offset;
+    gap_percent=idx->source.size_bytes ? (int)(gap_cursor.offset*100/idx->source.size_bytes):100;
+    if(control && !control(context)){gap_offset_cancelled=true;goto offset_scan_error;}
+    for(;;) {
+        if(gap_cursor.offset-last>=1024) {
+            last=gap_cursor.offset;gap_percent=(int)(gap_cursor.offset*100/idx->source.size_bytes);
+            if(control && !control(context)){gap_offset_cancelled=true;goto offset_scan_error;}
+        }
+        uint8_t level;uint32_t ticks;uint64_t begin=gap_cursor.ticks16,offset=gap_cursor.offset;
+        if(!tape_cursor_next(&gap_cursor,&level,&ticks))break;
+        if(tracker.have && tracker.level!=level) {
+            unsigned before=owned->gap_count;gap_store(owned,&tracker);
+            if(tracker.end-tracker.begin>=TAPE_GAP_MIN_US*16) {
+                tape_gap_t gap={tracker.begin/16,tracker.end/16,tracker.begin_offset,tracker.end_offset,UINT64_MAX};
+                if(!gap_offset_consider(idx,&gap,position,forward,exclude,&found,&at,control,context))goto offset_scan_error;
+                if(owned->gap_count>before) {
+                    tape_gap_t *pool=owned==&time_index ? time_gaps:deep_gaps;pool[before].target_offset=gap.target_offset;
+                }
+            }
+            tracker.have=false;
+        }
+        if(!tracker.have){tracker.begin=begin;tracker.begin_offset=offset;tracker.level=level;tracker.have=true;}
+        tracker.end=gap_cursor.ticks16;tracker.end_offset=gap_cursor.offset;
+        if((forward && found) || (!forward && tracker.begin_offset>position))break;
+    }
+    if(gap_cursor.error)goto offset_scan_error;
+    bool complete=gap_cursor.offset==gap_cursor.end && !gap_cursor.remaining_ticks16;
+    if(complete){owned->gaps_ready=!owned->gaps_truncated;tape_time_navigation_duration(idx,gap_cursor.ticks16);gap_percent=100;}
+    if(control && !control(context)){gap_offset_cancelled=true;goto offset_scan_error;}
+    tape_cursor_checkpoint(&gap_cursor,&byte_scan_resume);byte_scan_tracker=tracker;
+    gap_offset_reads+=gap_cursor.read_bytes;tape_cursor_close(&gap_cursor);gap_percent=-1;
+    if(!tape_index_source_valid(idx))return TAPE_GAP_ERROR;
+    /* A resumed scan can end before another qualifying gap. Previously cached
+     * entries still supply the closest backward candidate. */
+    if(!found && !forward && !owned->gaps_truncated &&
+       !gap_offset_cached(idx,position,forward,exclude,&found,&at,control,context))goto offset_error;
+    if(found)*target=at;
+    return found ? TAPE_GAP_FOUND:TAPE_GAP_NONE;
+offset_scan_error:
+    gap_offset_reads+=gap_cursor.read_bytes;tape_cursor_close(&gap_cursor);
+offset_error:
+    byte_scan_index=NULL;gap_percent=-1;
+    return gap_offset_cancelled ? TAPE_GAP_CANCELLED:TAPE_GAP_ERROR;
+}
+static void gap_candidate(uint64_t begin,uint64_t end,uint64_t position,bool forward,uint64_t exclude,bool *found,uint64_t *target) {
+    if(end<begin || end-begin<TAPE_GAP_MIN_US)return;
+    uint64_t at=end-TAPE_GAP_LEAD_US;
+    if(at==exclude)return;
+    if((forward && at<=position) || (!forward && at>=position))return;
+    if(!*found || (forward ? at<*target:at>*target)){*found=true;*target=at;}
+}
+tape_gap_result_t tape_gap_find(const tape_index_t *idx,uint64_t position,bool forward,
+                               uint64_t *target,tape_analyzer_control_fn control,void *context) {
+    return tape_gap_find_excluding(idx,position,forward,UINT64_MAX,target,control,context);
+}
+tape_gap_result_t tape_gap_find_excluding(const tape_index_t *idx,uint64_t position,bool forward,
+                                         uint64_t exclude,uint64_t *target,
+                                         tape_analyzer_control_fn control,void *context) {
+    if(!idx || !target || !idx->scan_complete || !tape_index_source_valid(idx))return TAPE_GAP_ERROR;
+    if(control && !control(context))return TAPE_GAP_CANCELLED;
+    bool found=false;uint64_t at=0;
+    if(idx->gaps_ready) {
+        for(unsigned i=0;i<idx->gap_count;++i)
+            gap_candidate(idx->gaps[i].begin_us,idx->gaps[i].end_us,position,forward,exclude,&found,&at);
+    } else {
+        /* WAV ordinary PLAY reaches here only on an explicit gap request.
+         * The cursor uses PLAY hysteresis, with no content decoder state. */
+        tape_index_t *owned=idx==&time_index ? &time_index:idx==&index_data ? &index_data:NULL;
+        gap_tracker_t tracker={0};
+        if(owned)gap_init(owned,owned==&time_index ? &time_gaps:&deep_gaps,&tracker);
+        if(!tape_cursor_open(&gap_cursor,idx,NULL))return TAPE_GAP_ERROR;
+        uint64_t first=gap_cursor.offset,last=first;
+        gap_percent=0;
+        for(;;) {
+            if(gap_cursor.offset-last>=1024 || gap_cursor.offset==first) {
+                gap_percent=gap_cursor.end>first ? (int)((gap_cursor.offset-first)*100/(gap_cursor.end-first)):100;
+                if(control && !control(context)) {
+                    tape_cursor_close(&gap_cursor);gap_percent=-1;return TAPE_GAP_CANCELLED;
+                }
+                last=gap_cursor.offset;
+            }
+            uint8_t level;uint32_t ticks;uint64_t begin=gap_cursor.ticks16,offset=gap_cursor.offset;
+            if(!tape_cursor_next(&gap_cursor,&level,&ticks))break;
+            if(tracker.have && tracker.level!=level) {
+                gap_candidate(tracker.begin/16,tracker.end/16,position,forward,exclude,&found,&at);
+                if(owned)gap_store(owned,&tracker);
+                tracker.have=false;
+            }
+            if(!tracker.have){tracker.begin=begin;tracker.begin_offset=offset;tracker.level=level;tracker.have=true;}
+            tracker.end=gap_cursor.ticks16;tracker.end_offset=gap_cursor.offset;
+            if(!idx->duration_known) {
+                uint64_t lookahead=position>UINT64_MAX-TAPE_GAP_LEAD_US ? UINT64_MAX:position+TAPE_GAP_LEAD_US;
+                if((forward && found) || (!forward && gap_cursor.ticks16/16>lookahead))break;
+            }
+        }
+        bool ok=!gap_cursor.error;
+        bool complete=gap_cursor.offset==gap_cursor.end && !gap_cursor.remaining_ticks16;
+        uint64_t total_ticks=gap_cursor.ticks16;
+        tape_cursor_close(&gap_cursor);
+        if(complete)gap_percent=100;
+        if(control && !control(context)){gap_percent=-1;return TAPE_GAP_CANCELLED;}
+        gap_percent=-1;
+        if(!ok || !tape_index_source_valid(idx))return TAPE_GAP_ERROR;
+        if(owned)owned->gaps_ready=complete && !owned->gaps_truncated;
+        if(complete)tape_time_navigation_duration(idx,total_ticks);
+    }
+    if(found)*target=at;
+    return found ? TAPE_GAP_FOUND:TAPE_GAP_NONE;
+}
 void tape_cursor_close(tape_cursor_t *c) {
     if(c && c->file){cmt_fclose(c->file);c->file=NULL;}
 }
@@ -215,7 +449,7 @@ static bool cursor_restore(tape_cursor_t *c,const tape_checkpoint_t *cp) {
 }
 bool tape_cursor_open(tape_cursor_t *c,const tape_index_t *idx,const tape_checkpoint_t *cp) {
     if(!c || !idx || !tape_analyzer_supported(idx->source.path))return false;
-    tape_cursor_close(c);memset(c,0,sizeof(*c));c->format=idx->source.format;
+    tape_cursor_close(c);memset(c,0,sizeof(*c));c->format=idx->source.format;c->time_known=true;
     c->file=cmt_fopen(idx->source.path,"rb");if(!c->file)return false;
     c->end=idx->source.size_bytes;c->limit_ticks16=UINT64_MAX;
     if(c->format==FILE_FORMAT_WAV) {
@@ -232,7 +466,36 @@ void tape_cursor_checkpoint(const tape_cursor_t *c,tape_checkpoint_t *cp) {
     memset(cp,0,sizeof(*cp));cp->source_offset=c->offset;cp->time_ticks16=c->ticks16;
     cp->time_us=c->ticks16/16;cp->sample_index=c->sample_index;cp->remaining_ticks16=c->remaining_ticks16;
     cp->kind=c->format==FILE_FORMAT_WAV ? TAPE_CHECKPOINT_WAV:TAPE_CHECKPOINT_EDGE;
-    cp->level=c->level;cp->hysteresis=c->hysteresis;cp->valid=!c->error;
+    cp->level=c->level;cp->hysteresis=c->hysteresis;cp->valid=!c->error && c->time_known;
+}
+bool tape_cursor_seek_offset(tape_cursor_t *c,const tape_index_t *idx,uint64_t offset,
+                             tape_analyzer_control_fn control,void *context) {
+    if(!c || !idx || (idx->source.format!=FILE_FORMAT_LEP && idx->source.format!=FILE_FORMAT_L16))return false;
+    tape_cursor_close(c);
+    if(!idx->scan_complete || !tape_index_source_valid(idx) || (control && !control(context)) ||
+       !tape_cursor_open(c,idx,NULL))return false;
+    if(offset>c->end)offset=c->end;
+    uint8_t level=0;bool found=false;
+    if(offset<c->end) {
+        if(cmt_fseek(c->file,(long)offset,SEEK_SET) || cmt_fread(c->buffer,1,1,c->file)!=1)goto fail_offset;
+        ++c->read_calls;++c->read_bytes;
+        if(c->buffer[0]){level=c->buffer[0]<128;found=true;}
+    }else found=true; /* Empty EOF needs no level reconstruction. */
+    uint64_t before=offset;
+    while(!found && before) {
+        if(control && !control(context))goto fail_offset;
+        size_t n=before>sizeof(c->buffer) ? sizeof(c->buffer):(size_t)before;
+        before-=n;
+        if(cmt_fseek(c->file,(long)before,SEEK_SET) || cmt_fread(c->buffer,1,n,c->file)!=n)goto fail_offset;
+        ++c->read_calls;c->read_bytes+=n;
+        for(size_t i=n;i;--i)if(c->buffer[i-1]){level=c->buffer[i-1]<128;found=true;break;}
+    }
+    if(cmt_fseek(c->file,(long)offset,SEEK_SET))goto fail_offset;
+    c->offset=offset;c->level=level;c->time_known=offset==0;
+    c->ticks16=0;c->position=c->available=0;c->remaining_ticks16=0;
+    return true;
+fail_offset:
+    tape_cursor_close(c);return false;
 }
 static int peek(tape_cursor_t *c) {
     if(c->offset>=c->end)return -1;
@@ -444,6 +707,7 @@ static void finish_scan(bool success) {
     flush_run();preflight_tape_metadata_end();preflight_mz_tape_decoder_set_observer(NULL,NULL);
     index_data.cursor_read_calls=scan.read_calls;index_data.cursor_read_bytes=scan.read_bytes;
     if(success) {
+        index_data.gaps_ready=!index_data.gaps_truncated;
         index_data.waveform_ticks16=scan.ticks16;index_data.waveform_us=(scan.ticks16+8)/16;
         index_data.duration_known=true;index_data.scan_complete=true;
         tape_checkpoint_t end;tape_cursor_checkpoint(&scan,&end);
@@ -482,10 +746,11 @@ bool tape_analyzer_begin(const char *path) {
     if(!fingerprint(scan.file,index_data.source.size_bytes,&index_data.source.fingerprint) ||
        cmt_fseek(scan.file,(long)scan.offset,SEEK_SET))goto fail;
     index_data.source.fingerprint_valid=true;index_data.source.fingerprint_version=1;
-    index_data.schema_version=TAPE_INDEX_SCHEMA_VERSION;index_data.algorithm_version=1;
+    index_data.schema_version=TAPE_INDEX_SCHEMA_VERSION;index_data.algorithm_version=3;
     index_data.program_capacity=TAPE_INDEX_PROGRAM_CAPACITY;index_data.block_capacity=TAPE_INDEX_BLOCK_CAPACITY;
     index_data.checkpoint_capacity=TAPE_INDEX_CHECKPOINT_CAPACITY;
     index_data.programs=programs;index_data.blocks=blocks;index_data.checkpoints=checkpoints;
+    gap_init(&index_data,&deep_gaps,&deep_gap);
     memset(checkpoints,0,TAPE_INDEX_PROGRAM_CAPACITY*sizeof(*checkpoints));
     index_data.checkpoint_count=TAPE_INDEX_PROGRAM_CAPACITY;
     tape_checkpoint_t start;tape_cursor_checkpoint(&scan,&start);add_checkpoint(&start);
@@ -512,6 +777,7 @@ bool tape_analyzer_step(void) {
         tape_checkpoint_t at;tape_cursor_checkpoint(&scan,&at);
         uint8_t level;uint32_t ticks;
         if(!tape_cursor_next(&scan,&level,&ticks)){finish_scan(!scan.error);return false;}
+        gap_feed(&index_data,&deep_gap,level,at.time_ticks16,scan.ticks16,at.source_offset,scan.offset);
         if(at.time_us>=next_checkpoint){add_checkpoint(&at);next_checkpoint=at.time_us+checkpoint_stride;}
         if(have_run && level!=run_level)flush_run();
         if(level!=long_level)long_continuation=false;
@@ -582,9 +848,10 @@ failed:
 bool tape_cursor_seek(tape_cursor_t *c,const tape_index_t *idx,uint64_t us,tape_analyzer_control_fn control,void *ctx) {
     if(!c)return false;
     tape_cursor_close(c);
-    if(!idx || !idx->scan_complete || !idx->duration_known || !tape_index_source_valid(idx))return false;
-    if(us>idx->waveform_us)us=idx->waveform_us;
-    uint64_t target=us==idx->waveform_us ? idx->waveform_ticks16:us*16;
+    if(!idx || !idx->scan_complete || !tape_index_source_valid(idx))return false;
+    if(idx->duration_known && us>idx->waveform_us)us=idx->waveform_us;
+    if(us>UINT64_MAX/16)us=UINT64_MAX/16;
+    uint64_t target=idx->duration_known && us==idx->waveform_us ? idx->waveform_ticks16:us*16;
     if(idx->time_only && idx->source.format==FILE_FORMAT_WAV) {
         if(control && !control(ctx))return false;
         return seek_wav_time(c,idx,target,control,ctx);
@@ -603,7 +870,10 @@ bool tape_cursor_seek(tape_cursor_t *c,const tape_index_t *idx,uint64_t us,tape_
             if(idx->source.storage_epoch!=cmt_storage_epoch() || (control && !control(ctx)))goto fail;
         }
         uint8_t level;uint32_t ticks;
-        if(!tape_cursor_next(c,&level,&ticks))goto fail;
+        if(!tape_cursor_next(c,&level,&ticks)) {
+            if(!c->error && c->offset==c->end && !idx->duration_known){tape_time_navigation_duration(idx,c->ticks16);return true;}
+            goto fail;
+        }
         if(c->ticks16>target) {
             c->remaining_ticks16=(uint32_t)(c->ticks16-target);c->ticks16=target;
         }

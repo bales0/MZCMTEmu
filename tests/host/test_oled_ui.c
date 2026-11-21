@@ -225,12 +225,15 @@ static void graphics(void){
  preflight.program.valid=PROGRAM_TITLE|PROGRAM_TYPE|PROGRAM_SIZE|PROGRAM_LOAD|PROGRAM_EXEC|PROGRAM_RECORDED_MODE;
  preflight.program.protocol=PROGRAM_SHARP;preflight.program.file_type=1;strcpy(preflight.program.title,"REAL GAME");
  preflight.program.declared_size=44033;preflight.program.load=preflight.program.exec=0x1200;preflight.program.recorded_loader_mode=LOADER_MODE_IC_1_4;preflight.programs=1;
+ preflight.total_bytes=2048;preflight.scanned_bytes=1700;
  ui_model_t edge_scan;ui_build_edge_analysis(&edge_scan,&preflight,90);
  ui_set_analysis_view(3);tick+=100;ui_render(&edge_scan);
- expect_text(0,0,"COUNTING 90 %",1);expect_text(0,8,"LENGTH ONLY",1);expect_text(0,16,"READ 0",1);
- expect_text(0,24,"OF 0 BYTES",1);expect_text(0,32,"NO CONTENT SCAN",1);assert(!count_text("REAL GAME"));
+ expect_text(0,0,"COUNTING 90 %",1);expect_text(0,8,"LENGTH ONLY",1);expect_text(0,16,"SIZE 2.0 KB",1);
+ assert(!edge_scan.line[3][0]);expect_text(0,32,"NO CONTENT SCAN",1);assert(!count_text("REAL GAME"));
  expect_text(0,56,UI_HELP_SCAN_SKIP_CANCEL,1);artifact("edge-analysis-metadata");
+ preflight.total_bytes=33554432;
  preflight.program.confidence=PROGRAM_LOADER_ONLY;ui_build_edge_analysis(&edge_scan,&preflight,50);tick+=100;ui_render(&edge_scan);
+ expect_text(0,16,"SIZE 32.0 MB",1);assert(!edge_scan.line[3][0]);
  expect_text(0,8,"LENGTH ONLY",1);expect_text(0,32,"NO CONTENT SCAN",1);artifact("edge-analysis-loader-only");
  preflight.program.confidence=PROGRAM_HEADER_VALID;preflight.program.protocol=PROGRAM_CPM;preflight.program.valid=PROGRAM_TITLE|PROGRAM_SIZE;preflight.aux_profile=8;ui_build_edge_analysis(&edge_scan,&preflight,95);tick+=100;ui_render(&edge_scan);
  expect_text(0,8,"LENGTH ONLY",1);expect_text(0,32,"NO CONTENT SCAN",1);artifact("edge-analysis-cpm");

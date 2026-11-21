@@ -15,7 +15,7 @@ static void capture_model(const ui_model_t *m,const char *name) {
 static void capture_transport(const tape_contents_t *v,const tape_index_t *idx,const char *name) {
     ui_transport_view_t view={.program=idx->programs[0].metadata,.filename="LONG WAVEFORM TITLE.wav",
         .tx={.fifo_used=2048,.fifo_capacity=4095},.status="PLAY",.seconds=3,.total_seconds=(uint32_t)(idx->waveform_us/1000000),
-        .warning=v->seek_unverified ? "UNVERIFIED TIME START":NULL};
+        .warning=NULL};
     tape_contents_apply_transport(v,idx,&view);
     assert(view.total_seconds==idx->waveform_us/1000000);
     if(v->page==TAPE_UI_SEEK){assert(view.seconds==v->seek_us/1000000);assert(strstr(view.status,"PAUSE") && view.warning);}
@@ -30,7 +30,7 @@ int main(void) {
     oled_init();ui_init();
     tape_contents_t v;tape_contents_open(&v);
     tape_program_t programs[2]={0};
-    tape_index_t idx={.program_count_recognized=2,.programs=programs,.waveform_us=6000000000ULL};
+    tape_index_t idx={.program_count_recognized=2,.programs=programs,.waveform_us=6000000000ULL,.duration_known=true};
     strcpy(idx.source.path,"/sd/LONG WAVEFORM TITLE.wav");
     strcpy(programs[0].metadata.title,"FIRST PROGRAM TITLE IS LONG");
     programs[0].metadata.confidence=PROGRAM_PAYLOAD_VALID;programs[0].seekable=true;
@@ -40,24 +40,42 @@ int main(void) {
     programs[0].metadata.declared_size=65535;programs[0].range_flags=TAPE_RANGE_TIME_VALID;
     programs[0].chain.time_end_us=60000000;
     strcpy(programs[1].metadata.title,"UNCERTAIN PART");
-    tape_transport_view_t tx={.user_paused=true,.total_us=6000000000ULL,.tape_position_us=3000000};
+    tape_transport_view_t tx={.user_paused=true,.total_us=6000000000ULL,.tape_position_us=3000000,.absolute_time=true};
     ui_model_t model;tape_contents_render(&v,&idx,&model,0,&tx);fits(&model);
     assert(strstr(model.line[0],"90%") && strstr(model.line[4],"CANDIDATE"));
     capture_model(&model,"tape-analysis");
     assert(tape_contents_event(&v,&idx,BTN_STOP,0,&tx)==TAPE_ACTION_CANCEL_SCAN);
     v.page=TAPE_UI_LIST;idx.cache_hit=true;tape_contents_render(&v,&idx,&model,0,&tx);fits(&model);
-    assert(strstr(model.line[7],"CACHE HIT") && strstr(model.line[6],"INCOMPLETE"));
+    assert(!model.line[6][0] && strstr(model.line[7],"OPEN") && !strstr(model.line[7],"CACHE"));
     capture_model(&model,"tape-contents");
+    tape_program_t many[6]={0};tape_index_t list=idx;list.programs=many;list.program_count_recognized=6;list.truncated=true;
+    for(unsigned i=0;i<6;++i)snprintf(many[i].metadata.title,sizeof(many[i].metadata.title),"PROGRAM %u",i+1);
+    v.selected=3;tape_contents_render(&v,&list,&model,0,&tx);fits(&model);
+    assert(strstr(model.line[2],"PROGRAM 1") && model.line[4][0]=='}' && strstr(model.line[6],"PROGRAM 5"));
+    v.selected=6;tape_contents_render(&v,&list,&model,0,&tx);fits(&model);
+    assert(strstr(model.line[2],"PROGRAM 2") && model.line[6][0]=='}' && strstr(model.line[6],"PROGRAM 6"));
+    for(unsigned i=0;i<8;++i)assert(!strstr(model.line[i],"INDEX") && !strstr(model.line[i],"CACHE") && !strstr(model.line[i],"TRUNCATED"));
+    v.selected=0;
     assert(tape_contents_event(&v,&idx,BTN_NEXT,0,&tx)==TAPE_ACTION_NONE && v.selected==1);
     assert(tape_contents_event(&v,&idx,BTN_PLAY,0,&tx)==TAPE_ACTION_NONE && v.page==TAPE_UI_DETAIL);
     tape_contents_render(&v,&idx,&model,0,&tx);fits(&model);assert(strstr(model.line[5],"1200"));
+    assert(!strcmp(model.line[0],"PROGRAM 1/2"));
     capture_model(&model,"tape-details");
+    for(unsigned validity=0;validity<3;++validity) {
+        programs[0].validity=(tape_validity_t)validity;programs[0].seekable=validity==TAPE_VALIDITY_VERIFIED;
+        tape_contents_render(&v,&idx,&model,0,&tx);assert(!strcmp(model.line[0],"PROGRAM 1/2"));
+    }
+    programs[0].validity=TAPE_VALIDITY_VERIFIED;programs[0].seekable=true;
     assert(tape_contents_event(&v,&idx,BTN_PLAY,0,&tx)==TAPE_ACTION_START && v.selected==1);
     tx.playing=true;tx.user_paused=false;
+    assert(tape_contents_event(&v,&idx,BTN_NEXT,0,&tx)==TAPE_ACTION_GAP_NEXT);
+    assert(tape_contents_event(&v,&idx,BTN_PREV,0,&tx)==TAPE_ACTION_GAP_PREV);
     assert(tape_contents_event(&v,&idx,BTN_NEXT_LONG,0,&tx)==TAPE_ACTION_BEGIN_SEEK && v.page==TAPE_UI_TRANSPORT);
     /* The app must acknowledge physical pause, then replay the same long
      * gesture using the frozen connector clock, never a prefetched position. */
     tx.playing=false;tx.user_paused=true;
+    assert(tape_contents_event(&v,&idx,BTN_NEXT,0,&tx)==TAPE_ACTION_GAP_NEXT);
+    tx.waiting=true;assert(tape_contents_event(&v,&idx,BTN_NEXT,0,&tx)==TAPE_ACTION_NONE);tx.waiting=false;
     assert(tape_contents_event(&v,&idx,BTN_NEXT_LONG,0,&tx)==TAPE_ACTION_NONE && v.page==TAPE_UI_SEEK && v.seek_origin_us==3000000);
     assert(tape_contents_event(&v,&idx,BTN_STOP,0,&tx)==TAPE_ACTION_NONE && v.page==TAPE_UI_TRANSPORT);
     tx.playing=true;tx.user_paused=false;
@@ -101,15 +119,40 @@ int main(void) {
     capture_transport(&v,&idx,"tape-play-time");
     assert(tape_contents_event(&v,&idx,BTN_STOP,0,&tx)==TAPE_ACTION_STOP && v.page==TAPE_UI_LIST);
     v.selected=2;tape_contents_event(&v,&idx,BTN_PLAY,0,&tx);tape_contents_render(&v,&idx,&model,0,&tx);fits(&model);
-    assert(strstr(model.line[7],"WHOLE"));
-    assert(tape_contents_event(&v,&idx,BTN_PLAY,0,&tx)==TAPE_ACTION_NONE && v.selected==2 && v.page==TAPE_UI_DETAIL);
-    tape_contents_render(&v,&idx,&model,0,&tx);fits(&model);assert(!strcmp(model.line[6],"UNVERIFIED CHAIN"));
+    assert(strstr(model.line[7],"PLAY") && strstr(model.line[6],"~01:00"));
+    assert(tape_contents_event(&v,&idx,BTN_PLAY,0,&tx)==TAPE_ACTION_START_TIME && v.selected==2 && v.page==TAPE_UI_TRANSPORT && v.seek_us==60000000);
+    tape_contents_render(&v,&idx,&model,0,&tx);fits(&model);
+    for(unsigned i=0;i<8;++i)assert(!strstr(model.line[i],"UNVERIFIED"));
+    v.page=TAPE_UI_DETAIL;programs[1].range_flags=0;
+    assert(tape_contents_event(&v,&idx,BTN_PLAY,0,&tx)==TAPE_ACTION_NONE && v.page==TAPE_UI_DETAIL);
+    tape_contents_render(&v,&idx,&model,0,&tx);assert(!strcmp(model.line[6],"START --"));
     assert(tape_contents_event(&v,&idx,BTN_STOP,0,&tx)==TAPE_ACTION_NONE && v.page==TAPE_UI_LIST);
     tape_contents_event(&v,&idx,BTN_NEXT,0,&tx);assert(v.selected==0);
     tape_contents_event(&v,&idx,BTN_PLAY,0,&tx);
     assert(tape_contents_event(&v,&idx,BTN_PLAY,0,&tx)==TAPE_ACTION_START && v.selected==0);
     v.page=TAPE_UI_ERROR;tape_contents_render(&v,&idx,&model,0,&tx);fits(&model);
     assert(tape_contents_event(&v,&idx,BTN_STOP,0,&tx)==TAPE_ACTION_CLOSE);
-    puts("PASS analyzer UI: inline PLAY seek preserves metadata/footer, one PLAY commits, STOP cancels, uncertain selection retained, whole tape explicit");
+    /* Unknown length must not clamp a live absolute clock to zero or invent
+     * a total. The footer retains the physical byte percentage during preview. */
+    tape_contents_open(&v);v.page=TAPE_UI_TRANSPORT;
+    thin.duration_known=false;thin.waveform_us=thin.waveform_ticks16=0;
+    thin.source.size_bytes=100000;
+    thin.source.format=FILE_FORMAT_L16;strcpy(thin.source.path,"/sd/UNKNOWN.L16");
+    tx.user_paused=true;tx.playing=tx.finished=false;tx.tape_position_us=7000000;tx.source_offset=37000;
+    assert(tape_contents_event(&v,&thin,BTN_NEXT_LONG,0,&tx)==TAPE_ACTION_NONE && v.page==TAPE_UI_SEEK);
+    assert(v.seek_by_byte && v.seek_origin_offset==37000 && v.seek_offset==38000);
+    preview=(ui_transport_view_t){.progress=37,.filename="UNKNOWN.L16",.tx={.fifo_used=2048,.fifo_capacity=4095}};
+    tape_contents_apply_transport(&v,&thin,&preview);
+    assert(!preview.seconds && !preview.total_seconds && preview.progress==38);
+    ui_set_transport_view(false,&preview);tick+=100;ui_render(&model);
+    expect_text(0,56,"38 %",1);for(int y=48;y<56;++y)for(int x=0;x<128;++x)assert(!pixel(x,y));
+    assert(!count_text("DETECTING"));
+    expect_text(80,56,"BUF  50%",1);artifact("tape-unknown-length");
+    tape_contents_event(&v,&thin,BTN_NEXT_REPEAT,2000,&tx);assert(v.seek_offset==43000);
+    tape_contents_event(&v,&thin,BTN_PREV_LONG,3000,&tx);assert(v.seek_offset==42000);
+    tape_contents_event(&v,&thin,BTN_STOP,3001,&tx);assert(v.seek_offset==37000 && v.page==TAPE_UI_TRANSPORT);
+    tape_contents_event(&v,&thin,BTN_NEXT_LONG,4000,&tx);
+    assert(tape_contents_event(&v,&thin,BTN_PLAY,1,&tx)==TAPE_ACTION_SEEK);
+    puts("PASS analyzer UI: inline seek, gap click actions without MOTOR-wait interference, estimated-time candidate starts without warning, missing time never invented, target index preview");
     return 0;
 }

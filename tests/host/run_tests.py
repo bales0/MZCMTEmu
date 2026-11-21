@@ -16,9 +16,11 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--cc', default=os.environ.get('CC', 'gcc'))
 p.add_argument('--sanitize', action='store_true')
 p.add_argument('--suite',action='append',help='Run only named suite(s), repeatable')
+p.add_argument('--l16-fixture',type=Path,help='Optional read-only L16 regression sample')
 p.add_argument('--qd-fixtures', type=Path, action='append', default=[], help='Read-only QuickDisk fixture directory, repeatable')
 p.add_argument('--tap-fixtures', type=Path, help='Optional read-only directory of TAP files')
 args = p.parse_args()
+if args.l16_fixture and not args.l16_fixture.is_file():p.error('--l16-fixture must be an existing file')
 fixtures = []
 if args.tap_fixtures:
     if not args.tap_fixtures.is_dir():
@@ -133,6 +135,7 @@ for name, sources in SUITES.items():
                '-I', str(ROOT / 'src'), *[str(ROOT / s) for s in sources], '-o', str(exe)]
         subprocess.run(cmd, cwd=tmp, env=env, check=True)
         extra = [str(f.resolve()) for d in args.qd_fixtures for f in sorted(d.iterdir()) if f.suffix.lower() in ('.qd','.qdf','.mzq')] if name=='test_quickdisk' else fixtures if name == 'test_tap_stream' else []
+        if args.l16_fixture and name in ('test_tape_analyzer','test_tape_seek'):extra=[str(args.l16_fixture.resolve())]
         for launch_attempt in range(4):
             try:
                 subprocess.run([str(exe), *extra], cwd=tmp, env=env, check=True)

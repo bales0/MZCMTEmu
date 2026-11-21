@@ -15,7 +15,7 @@ typedef struct {
     uint8_t level,hysteresis;
     uint8_t buffer[1024];
     unsigned position,available;
-    bool error;
+    bool error,time_known;
 } tape_cursor_t;
 typedef bool (*tape_analyzer_control_fn)(void *context); /* false cancels */
 
@@ -39,6 +39,11 @@ bool tape_cursor_next(tape_cursor_t *,uint8_t *level,uint32_t *ticks16);
  * On cancellation the cursor is closed. */
 bool tape_cursor_seek(tape_cursor_t *,const tape_index_t *,uint64_t target_us,
                       tape_analyzer_control_fn,void *);
+/* LEP/L16 byte seek. Restores zero-continuation level by looking back only
+ * when needed; never sums durations from the beginning. Nonzero offsets do
+ * not establish an absolute source clock (time_known=false). */
+bool tape_cursor_seek_offset(tape_cursor_t *,const tape_index_t *,uint64_t offset,
+                             tape_analyzer_control_fn,void *);
 /* Active recognized candidate, immutable snapshot for scan UI. */
 void tape_analyzer_preview(program_metadata_t *);
 
@@ -51,5 +56,26 @@ bool tape_time_scan_end(void);
 void tape_time_scan_cancel(void);
 const tape_index_t *tape_time_result(void);
 const tape_index_t *tape_time_prepare(const char *,tape_analyzer_control_fn,void *);
+/* Source identity/start anchor only when duration was skipped. Never forces a
+ * full LEP/L16 length pass. WAV still obtains duration from its RIFF header. */
+const tape_index_t *tape_time_navigation(const char *,tape_analyzer_control_fn,void *);
+/* Publish an exact total learned from a cursor reaching source EOF. */
+void tape_time_navigation_duration(const tape_index_t *,uint64_t ticks16);
 /* -1 outside a potentially long WAV deadband-state lookup. */
 int tape_time_seek_percent(void);
+typedef enum {TAPE_GAP_FOUND,TAPE_GAP_NONE,TAPE_GAP_CANCELLED,TAPE_GAP_ERROR} tape_gap_result_t;
+/* Cached gaps when available; otherwise a cancellable gap-only waveform pass.
+ * Never invokes program decoders. No target wraps around the tape ends. */
+tape_gap_result_t tape_gap_find(const tape_index_t *,uint64_t position_us,bool forward,
+                               uint64_t *target_us,tape_analyzer_control_fn,void *);
+/* Navigation can exclude the last successful landing point on PREV. This is
+ * a filter in the existing pass, never an additional source scan. UINT64_MAX
+ * excludes nothing. Ordinary mathematical nearest-gap queries remain above. */
+tape_gap_result_t tape_gap_find_excluding(const tape_index_t *,uint64_t position_us,bool forward,
+                                         uint64_t exclude_us,uint64_t *target_us,
+                                         tape_analyzer_control_fn,void *);
+int tape_gap_scan_percent(void);
+tape_gap_result_t tape_gap_find_offset(const tape_index_t *,uint64_t offset,bool forward,
+                                      uint64_t exclude,uint64_t *target,
+                                      tape_analyzer_control_fn,void *);
+uint64_t tape_gap_offset_read_bytes(void); /* Last query waveform reads, excludes identity probes. */

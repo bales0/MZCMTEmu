@@ -49,11 +49,14 @@ static uint64_t metadata_source_us;
 static uint32_t metadata_revision;
 static bool metadata_audio;
 static bool preflight_preview_allowed;
-static bool s_indexed,s_index_armed,s_index_mute,s_index_finished,s_index_time_seek;
+static bool s_indexed,s_index_armed,s_index_mute,s_index_finished,s_index_time_seek,s_index_absolute;
 static tape_cursor_t s_index_cursor;
 static uint64_t s_index_base_ticks,s_index_end_ticks,s_index_waveform_us,s_index_waveform_ticks,s_index_final_us,s_index_queued_ticks;
 static uint64_t s_index_legacy_source_us,s_index_legacy_limit_us;
 static uint32_t s_index_preroll,s_index_tail,s_index_preroll_total;
+static uint64_t s_index_source_bytes,s_index_base_byte;
+static uint32_t s_index_final_bytes;
+static struct {int64_t mtime,ctime;uint64_t device,inode;uint32_t fingerprint,epoch;} s_index_identity;
 static program_metadata_t s_index_preview;
 void player_metadata(program_metadata_t *out){program_metadata_snapshot(&metadata_store,out);
 }
@@ -72,6 +75,8 @@ static void metadata_collect(void){
  program_metadata_t value;
  if(metadata_audio)tape_metadata_snapshot(&value);
  else tap_stream_metadata(&value);
+ if(s_indexed && s_index_time_seek && s_index_base_byte && value.confidence==PROGRAM_WAITING && !value.valid)
+  value.confidence=PROGRAM_UNKNOWN;
  program_metadata_t key=value;
  key.received_bytes=0;
  program_metadata_t old=metadata_last;
@@ -193,7 +198,17 @@ uint64_t player_tape_total_us(void){
     return tape_analyzer_supported(s_current_path) && s_info.sample_rate ? wav_pulse_time(s_info.data_size,s_info.sample_rate,1000000):0;
 }
 bool player_tape_unverified_start(void){return s_indexed && s_index_time_seek;}
+bool player_tape_absolute_time(void){return !s_indexed || s_index_absolute;}
+uint64_t player_tape_source_offset(void) {
+    if(!s_edge_tape)return 0;
+    if(!s_indexed)return raw_pulse_completed_source_bytes();
+    bool active=s_state==PLAYER_STATE_PLAYING || s_state==PLAYER_STATE_PAUSED;
+    uint64_t count=s_index_armed ? 0:active ? raw_pulse_completed_source_bytes():s_index_final_bytes;
+    uint64_t offset=s_index_base_byte+count;
+    return offset>s_index_source_bytes ? s_index_source_bytes:offset;
+}
 uint64_t player_tape_position_us(void) {
+    if(s_indexed && !s_index_absolute)return 0;
     uint64_t played=player_tape_elapsed_us();
     if(!s_indexed) {
         uint64_t preroll=s_edge_tape ? 300000:0,total=player_tape_total_us();
@@ -212,7 +227,15 @@ bool player_can_time_seek(void) {
 }
 const tape_index_t *player_time_index(tape_analyzer_control_fn control,void *context) {
     if(!player_can_time_seek() || s_state==PLAYER_STATE_PLAYING)return NULL;
-    return tape_time_prepare(s_current_path,control,context);
+    const tape_index_t *idx=tape_time_navigation(s_current_path,control,context);
+    if(idx && s_indexed) {
+        const tape_source_identity_t *id=&idx->source;
+        if(id->size_bytes!=s_index_source_bytes || id->fingerprint!=s_index_identity.fingerprint ||
+           id->storage_epoch!=s_index_identity.epoch || id->mtime_seconds!=s_index_identity.mtime ||
+           id->ctime_seconds!=s_index_identity.ctime || id->device!=s_index_identity.device || id->inode!=s_index_identity.inode)return NULL;
+        if(s_index_absolute && s_index_waveform_us)tape_time_navigation_duration(idx,s_index_waveform_ticks);
+    }
+    return idx;
 }
 
 /* Serialize application policy with UL ownership changes on the player task.
@@ -341,7 +364,9 @@ static void player_finish_stop(player_state_t final_state)
 {
     printf("player: finish %s -> %s completed_us=%llu path=%s\n",player_state_name(s_state),player_state_name(final_state),(unsigned long long)raw_pulse_get_completed_us(),s_current_path);
     if(final_state==PLAYER_STATE_ERROR && !__atomic_load_n(&last_error,__ATOMIC_ACQUIRE))player_error("SOURCE / TX ERROR");
-    if(s_indexed){s_index_final_us=raw_pulse_get_completed_us();s_index_armed=false;
+    if(s_indexed){s_index_final_us=raw_pulse_get_completed_us();
+        if(!s_index_armed)s_index_final_bytes=raw_pulse_completed_source_bytes();
+        s_index_armed=false;
         if(final_state==PLAYER_STATE_EOF)s_index_finished=true;
         tape_cursor_close(&s_index_cursor);}
     if (s_edge_tape) s_edge_final_us = raw_pulse_get_completed_us();
@@ -403,6 +428,7 @@ static bool player_fill_pulse_pending(void)
         uint8_t level = 0U;
         uint32_t duration_us = 0U;
         bool count_pulse = true;
+        bool index_source_byte=false;
         bool ok;
 
         if(s_indexed) {
@@ -412,7 +438,16 @@ static bool player_fill_pulse_pending(void)
                 ticks=s_index_preroll>480000 ? 480000:s_index_preroll;
                 s_index_preroll-=ticks;s_index_mute=true;ok=true;
             } else {
+                uint64_t before=s_index_cursor.offset;
+                bool remainder=s_index_cursor.remaining_ticks16!=0;
                 ok=tape_cursor_next(&s_index_cursor,&level,&ticks);
+                index_source_byte=ok && s_edge_tape && (remainder || s_index_cursor.offset>before);
+                if(!ok && !s_index_cursor.error && s_index_end_ticks==UINT64_MAX && s_index_absolute) {
+                    /* Source EOF, reached through ordinary streaming, provides
+                     * the exact total without a separate duration pass. */
+                    s_index_end_ticks=s_index_waveform_ticks=s_index_cursor.ticks16;
+                    s_index_waveform_us=(s_index_waveform_ticks+8)/16;
+                }
                 if(!ok && !s_index_cursor.error && s_index_tail){
                     ticks=s_index_tail>480000 ? 480000:s_index_tail;s_index_tail-=ticks;s_index_mute=true;ok=true;
                 }
@@ -470,7 +505,7 @@ static bool player_fill_pulse_pending(void)
         pulse_buf[count].count_pulse = count_pulse ? RAW_PULSE_COUNT : 0U;
         if((s_indexed ? s_index_mute:s_edge_tape && edge_stream_monitor_muted()) || (!count_pulse && s_tap_tape && duration_us >= (native ? 1600000U:100000U)))
             pulse_buf[count].count_pulse |= RAW_PULSE_MONITOR_MUTE;
-        if((s_edge_tape && !s_indexed && !edge_stream_monitor_muted()) ||
+        if(index_source_byte || (s_edge_tape && !s_indexed && !edge_stream_monitor_muted()) ||
            (s_binary_tape && mzf_stream_last_pulse_source_byte()))pulse_buf[count].count_pulse|=RAW_PULSE_SOURCE_BYTE;
         pulse_buf[count].duration_us = duration_us == 0U ? 1U : duration_us;
         count++;
@@ -745,8 +780,8 @@ static bool indexed_control(void *argument) {
     return !request->cancelled;
 }
 
-bool player_prepare_tape(const tape_index_t *idx,uint32_t program,uint64_t time_us,
-                         bool time_seek,tape_analyzer_control_fn control,void *context) {
+static bool player_prepare_indexed(const tape_index_t *idx,uint32_t program,uint64_t time_us,
+                                   bool time_seek,bool byte_seek,tape_analyzer_control_fn control,void *context) {
     indexed_control_t request={control,context,false};
     player_lock();
     if(!idx || (time_seek && program!=TAPE_INDEX_NO_ENTRY) || s_state==PLAYER_STATE_PLAYING ||
@@ -758,9 +793,16 @@ bool player_prepare_tape(const tape_index_t *idx,uint32_t program,uint64_t time_
     player_finish_stop(PLAYER_STATE_STOPPED);
     __atomic_store_n(&last_error,NULL,__ATOMIC_RELEASE);
     __atomic_store_n(&last_stop_cause,PLAYER_STOP_NONE,__ATOMIC_RELEASE);
-    s_indexed=true;s_index_armed=s_index_finished=false;s_index_time_seek=time_seek;s_binary_tape=s_tap_tape=false;
+    s_indexed=true;s_index_armed=s_index_finished=false;s_index_time_seek=time_seek;s_index_absolute=true;s_binary_tape=s_tap_tape=false;
     s_edge_tape=idx->source.format!=FILE_FORMAT_WAV;
-    s_index_final_us=0;s_index_end_ticks=s_index_waveform_ticks=idx->waveform_ticks16;s_index_waveform_us=idx->waveform_us;
+    s_index_final_us=0;s_index_final_bytes=0;
+    s_index_waveform_ticks=idx->duration_known && !byte_seek ? idx->waveform_ticks16:0;
+    s_index_end_ticks=idx->duration_known && !byte_seek ? idx->waveform_ticks16:UINT64_MAX;
+    s_index_waveform_us=idx->duration_known && !byte_seek ? idx->waveform_us:0;
+    s_index_source_bytes=idx->source.size_bytes;
+    s_index_identity.mtime=idx->source.mtime_seconds;s_index_identity.ctime=idx->source.ctime_seconds;
+    s_index_identity.device=idx->source.device;s_index_identity.inode=idx->source.inode;
+    s_index_identity.fingerprint=idx->source.fingerprint;s_index_identity.epoch=idx->source.storage_epoch;
     snprintf(s_current_path,sizeof(s_current_path),"%s",idx->source.path);
     metadata_reset(idx->source.format);preflight_preview_allowed=false;
     player_reset_pulse_pending();s_eof=s_read_error=0;s_bytes_queued=0;
@@ -769,7 +811,8 @@ bool player_prepare_tape(const tape_index_t *idx,uint32_t program,uint64_t time_
     raw_pulse_init();raw_pulse_set_output_enabled(true);raw_pulse_clear_underrun();
     bool ok=false;
     if(!raw_pulse_error()) {
-        if(time_seek)ok=tape_cursor_seek(&s_index_cursor,idx,time_us,indexed_control,&request);
+        if(byte_seek)ok=tape_cursor_seek_offset(&s_index_cursor,idx,time_us,indexed_control,&request);
+        else if(time_seek)ok=tape_cursor_seek(&s_index_cursor,idx,time_us,indexed_control,&request);
         else {
             const tape_checkpoint_t *start=NULL;
             if(program!=TAPE_INDEX_NO_ENTRY) {
@@ -783,9 +826,20 @@ bool player_prepare_tape(const tape_index_t *idx,uint32_t program,uint64_t time_
         }
     }
     if(!ok || !indexed_control(&request))goto failed;
+    s_index_absolute=s_index_cursor.time_known;
+    if(program==TAPE_INDEX_NO_ENTRY && !idx->duration_known && s_index_absolute && s_index_cursor.offset==s_index_cursor.end && !s_index_cursor.remaining_ticks16) {
+        s_index_end_ticks=s_index_waveform_ticks=s_index_cursor.ticks16;
+        s_index_waveform_us=(s_index_waveform_ticks+8)/16;
+        tape_time_navigation_duration(idx,s_index_cursor.ticks16);
+    }
+    if(program==TAPE_INDEX_NO_ENTRY && idx->duration_known && s_index_absolute) {
+        s_index_end_ticks=s_index_waveform_ticks=idx->waveform_ticks16;s_index_waveform_us=idx->waveform_us;
+    }
     s_index_base_ticks=s_index_cursor.ticks16;s_index_queued_ticks=s_index_base_ticks;
+    s_index_base_byte=s_index_cursor.offset-(s_edge_tape && s_index_cursor.remaining_ticks16 ? 1:0);
+    if(time_seek && s_index_base_byte){metadata_last.confidence=PROGRAM_UNKNOWN;program_metadata_publish(&metadata_store,&metadata_last);}
     if(s_index_end_ticks<s_index_base_ticks)goto failed;
-    if(time_seek && s_index_base_ticks==s_index_end_ticks) {
+    if(time_seek && (s_index_base_ticks==s_index_end_ticks || (byte_seek && s_index_cursor.offset==s_index_cursor.end))) {
         /* Clamped end-of-tape is an empty successful range. Do not launch
          * silence, an empty DMA transaction or a spurious SOURCE error. */
         s_index_preroll_total=0;
@@ -810,14 +864,24 @@ bool player_prepare_tape(const tape_index_t *idx,uint32_t program,uint64_t time_
     }
     if(s_read_error || !raw_pulse_level())goto failed;
     s_index_armed=true;s_playing=0;s_state=PLAYER_STATE_PAUSED;s_pause_reason=PLAYER_PAUSE_USER;
-    printf("player: INDEX READY start_us=%llu end_us=%llu program=%lu unverified=%u fifo=%lu\n",
-        (unsigned long long)(s_index_base_ticks/16),(unsigned long long)(s_index_end_ticks/16),
-        (unsigned long)program,(unsigned)time_seek,(unsigned long)raw_pulse_level());
+    if(s_index_end_ticks==UINT64_MAX)
+        printf("player: INDEX READY offset=%llu bytes=%llu clock_known=%u end=EOF byte_seek=%u fifo=%lu\n",
+            (unsigned long long)s_index_base_byte,(unsigned long long)s_index_source_bytes,(unsigned)s_index_absolute,(unsigned)byte_seek,(unsigned long)raw_pulse_level());
+    else printf("player: INDEX READY start_us=%llu end_us=%llu program=%lu time_start=%u fifo=%lu\n",
+            (unsigned long long)(s_index_base_ticks/16),(unsigned long long)(s_index_end_ticks/16),
+            (unsigned long)program,(unsigned)time_seek,(unsigned long)raw_pulse_level());
     player_unlock();return true;
 failed:
     if(request.cancelled)player_finish_stop(PLAYER_STATE_STOPPED);
     else {player_error("INDEX SOURCE");player_finish_stop(PLAYER_STATE_ERROR);}
     player_unlock();return false;
+}
+bool player_prepare_tape(const tape_index_t *idx,uint32_t program,uint64_t time_us,
+                         bool time_seek,tape_analyzer_control_fn control,void *context) {
+    return player_prepare_indexed(idx,program,time_us,time_seek,false,control,context);
+}
+bool player_prepare_tape_offset(const tape_index_t *idx,uint64_t offset,tape_analyzer_control_fn control,void *context) {
+    return player_prepare_indexed(idx,TAPE_INDEX_NO_ENTRY,offset,true,true,control,context);
 }
 
 void player_pause_user(void)
@@ -1243,6 +1307,13 @@ uint8_t player_get_progress_percent(void)
 {
     if(s_indexed || (s_edge_tape && player_tape_total_us())){
         uint64_t total=player_tape_total_us();
+        if(s_indexed && !total) {
+            if(s_index_finished)return 100;
+            bool active=s_state==PLAYER_STATE_PLAYING || s_state==PLAYER_STATE_PAUSED;
+            uint64_t completed=s_index_armed ? 0:active ? raw_pulse_completed_source_bytes():s_index_final_bytes;
+            uint64_t percent=s_index_source_bytes ? (s_index_base_byte+completed)*100/s_index_source_bytes:0;
+            return percent>=100 ? 99:(uint8_t)percent;
+        }
         uint64_t percent=total ? player_tape_position_us()*100/total:0;
         if(percent>=100)return s_state==PLAYER_STATE_EOF ? 100:99;
         return (uint8_t)percent;

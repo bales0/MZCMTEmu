@@ -1,4 +1,4 @@
-# TAPE ANALYZER a běžný PLAY — r44
+# TAPE ANALYZER a běžný PLAY — r47
 
 Implementace podle zadání z 21. 11. 2026, výchozí commit
 `4ea885ef68b1aa8392ed17b9b86d13f983bed11a`.
@@ -11,6 +11,10 @@ startem pouze sečte délky intervalů a uloží řídké časové checkpointy p
 případný posun. Obrazovka uvádí COUNTING a LENGTH ONLY, bez názvů programů,
 LOAD/EXEC nebo počtu kandidátů. PLAY může délkový průchod přeskočit, STOP
 zruší celý start. WAV vezme délku přímo z RIFF/PCM hlavičky, bez skenu vzorků.
+Přeskočená analýza délky se při navigaci automaticky neobnovuje.
+Průběh ukazuje procenta a jediný řádek SIZE v KB/MB (jednotky 1024 B),
+bez dvojice přečtené/celkové bajty. Délkový průchod LEP/L16 také levně
+uchová dlouhé úseky bez změny úrovně; nezapíná tím obsahové dekodéry.
 
 Předběžná obsahová metadata se při běžném PLAY nezobrazují. Živá metadata
 nadále vznikají z přehrávaného signálu a publikují se až podle fyzicky
@@ -27,18 +31,20 @@ TAPE ANALYZER v PLAY menu.
    nebo ztrátě SD skončí; změna generace média zneplatní cache.
 3. **TAPE CONTENTS** obsahuje PLAY WHOLE TAPE a rozpoznané položky. PLAY
    otevře detail s názvem, typem, loaderem/rychlostí, velikostí, LOAD/EXEC,
-   absolutním START a stavem VERIFIED / UNCERTAIN / INVALID.
+   absolutním START a neutrálním nadpisem PROGRAM N/N. Seznam ukazuje pět
+   položek; stavové texty indexu a jeho cache nezabírají řádek obrazovky.
 4. U ověřené položky další PLAY spustí známý načítací řetězec od jeho
    skutečné pozice, včetně potřebného IC/TC loaderu. U nejisté nebo poškozené
-   položky PLAY ponechá výběr i detail a ukáže UNVERIFIED CHAIN. To znamená,
-   že není ověřený bezpečný začátek celého samostatného načítání; samotný
-   nález názvu či hlavičky nestačí. Přehrání celé nahrávky se vybírá zvlášť
+   položky s dostupným časovým začátkem PLAY spustí původní nahrávku od
+   START ~čas do konce souboru. Chybějící ověření řetězce neblokuje časový
+   start a nezobrazuje rušivou hlášku ani další potvrzení. Bez známé pozice
+   zůstane START --; začátek se nevymýšlí. Přehrání celé nahrávky se vybírá zvlášť
    přes PLAY WHOLE TAPE v seznamu, bez tichého přepnutí výběru. Neznámé
-   adresy a profily nejsou odhadovány. UNKNOWN úseky, neúplnost a limity jsou
-   označené INDEX INCOMPLETE nebo INDEX TRUNCATED. Bez kandidátů se zobrazí
-   NO RECOGNIZED PROGRAMS na dvou řádcích.
+   adresy a profily nejsou odhadovány. Interní neúplnost, validita a limity
+   zůstávají zachované pro rozhodování o startu; nezobrazují se jako varovné
+   nadpisy. Bez kandidátů zůstává volba PLAY WHOLE TAPE.
 5. STOP během přenosu vrací seznam bez opakování analýzy. Opětovné otevření
-   platného RAM indexu ukáže CACHE HIT a rovnou seznam, bez falešného skenu.
+   platného RAM indexu otevře rovnou seznam, bez falešného skenu a CACHE HIT.
 
 ### Přetáčení
 
@@ -54,8 +60,8 @@ posouvají o 5 sekund až při uvolnění.
 
 STOP návrh zahodí a ponechá původní přenos pozastavený. Jediný PLAY
 spustí původní waveform od zvoleného času; není další potvrzovací ani
-samostatná obrazovka posunu. Neověřený časový start označuje řádek
-UNVERIFIED TIME START přímo při PLAY. Pozastavení může přerušit LOAD na
+samostatná obrazovka posunu ani hlášky UNVERIFIED START/CHAIN.
+Pozastavení může přerušit LOAD na
 Sharpu; uprostřed bloku se nemusí znovu synchronizovat. Zdroj se přestavuje
 vždy až po pozastavení TX; zrychlené pulzy se nevysílají. MOTOR pauza seek
 sama nezapíná. Posun přes konec skončí jako EOF
@@ -76,12 +82,74 @@ bez přenesených údajů původního programu. STOP náhled zruší a obnoví p
 metadata. Potvrzený časový start resetuje živý dekodér; předběžná metadata
 z indexu se nevydávají za fyzicky přehrané údaje nového místa.
 
+Při neznámé délce otevře dlouhý NEXT/PREV skutečný procentní FF/REW.
+Držení mění cílovou bajtovou pozici v krocích 1/5/10 % (po 2/6 s), rovnou
+viditelnou ve spodním řádku vedle BUF. Časový řádek SEEK se nezobrazuje.
+PLAY provede přímý seek na zvolený offset. Nenulový signed bajt sám určuje
+úroveň; u pokračovací nuly se zpětně dohledá předchozí nenulový bajt.
+Nesčítají se znovu délky od začátku. Dlouhá řada nul může vyžadovat delší,
+stále zrušitelný lookback pro obnovu úrovně. STOP vrátí původní pozici.
+Přesah za EOF se omezí na skutečný konec bez prázdné DMA transakce.
+Bez známého absolutního času cílové pozice zůstane PLAY v procentech;
+čas dočteného zbytku se nesmí vydávat za celkovou délku nahrávky.
+
 Běžný browser a menu zachovávají původní okamžité NEXT/PREV a repeat
-400/120 ms. Při PLAY LEP/L16/WAV se krátký NEXT/PREV provede při uvolnění;
-zachová svou dosavadní akci. Dlouhý stisk nikdy nejdřív neposune browser.
+400/120 ms. Při PLAY LEP/L16/WAV se krátký NEXT/PREV provede při uvolnění
+a přeskočí na následující/předchozí dlouhou mezeru. Dlouhý stisk nikdy nejdřív neposune browser.
 Kontext seeku odděluje krátký stisk, dlouhý
 stisk, repeat a uvolnění. Změna kontextu potlačí držené směrové klávesy do
 uvolnění; STOP má prioritu. V utilitě navigace neposouvá browser na pozadí.
+
+### Skoky přes mezery
+
+Mezera je souvislý úsek bez změny digitální úrovně dlouhý alespoň 250 ms,
+v libovolné polaritě. LEP/L16 zahrnuje pokračovací nuly přes čtecí bloky;
+WAV používá totožnou hysterezi jako PLAY, včetně deadbandu. Nález mezery
+není důkazem logické hranice programu; mohou existovat i uvnitř načítání.
+U WAV tedy nejde o test nízké amplitudy ani o jediný práh 128: LOW vznikne
+při hodnotě ≤ 0x40, HIGH při ≥ 0xC0 a mezilehlé hodnoty drží stav. Test
+zašuměného úseku opakovaně překračuje střední hodnotu v obou výchozích
+úrovních, aniž by vytvořil falešné pulzy nebo přerušil detekovanou mezeru.
+Nepřidává se detektor série po sobě jdoucích pulzů ani další dekódování.
+Špičky překračující oba hysterezní prahy tedy stále mohou mezeru rozdělit.
+
+Krátký NEXT/PREV při přenosu nebo uživatelské pauze vyhledá nejbližší cíl
+200 ms před koncem mezery v požadovaném směru. Cíle jsou přísně před/za
+aktuální absolutní pozicí, bez cyklického přetečení. Pro skok se používají
+jen mezery ukončené následujícím signálem; samotné
+koncové ticho nevytvoří cíl těsně před EOF. Při původně běžícím PLAY
+se přenos po přestavení automaticky obnoví za stávajících podmínek MOTOR/S1;
+uživatelská pauza zůstane pauzou. MOTOR pauza ani čekání na MOTOR tyto akce
+neaktivují. Bez nálezu se pozice nemění a krátce se ukáže NO NEXT/PREV GAP.
+PREV navíc vynechá poslední úspěšný cíl skoku, pokud by jej po automatickém
+pokračování vybral znovu. Filtr je součástí téhož průchodu i cache lookupu;
+nezpůsobí druhý sken. Nový PLAY, start programu a potvrzený ruční FF/REW
+historii posledního cíle zruší. Směr NEXT tento filtr nepoužívá.
+
+Obsahový sken a délkový LEP/L16 průchod uchovají nejvýše 256 mezer. U WAV
+bez gap indexu první krátký skok spustí samostatný gap-only průchod, se
+SEARCH GAP procenty a STOP pro zrušení. Nevolá obsahové dekodéry a normální
+start WAV nezpomaluje. Výsledek se uchová v RAM; při zaplnění tabulky nebo
+nedostatku paměti se hledá zrušitelným průchodem, takže pozdější mezery
+nejsou mylně vydávány za konec nahrávky. STOP hledání ukončí i přenos.
+Obsluha tlačítka STOP zůstává beze změny.
+
+U LEP/L16 s přeskočenou délkou navigace nejprve ověří pouze identitu zdroje
+a výchozí checkpoint, bez čtení celé nahrávky. Mezery mají bajtové hranice
+a cachovaný cílový offset v původním zdroji. NEXT hledá do prvního vhodného
+cíle; PREV podle potřeby dokončí mapování úseku před aktuálním offsetem.
+Rozpracovaný průchod uchová checkpoint i stav právě sledovaného intervalu;
+další požadavek pokračuje odtud. Již nalezené cíle se použijí bez dalšího
+čtení waveformu. Částečný průchod se nevydává za hotový index mezer.
+Pokud další mezera neexistuje, NEXT samozřejmě musí dojít až k EOF.
+Při průchodu od známého časového počátku až k EOF se zjistí skutečná délka;
+po přímém skoku na neznámý čas ji nelze odvodit ze zbytku. Přesný celkový
+čas se neodhaduje z poměru bajtů a času. Procenta po seeku zahrnují zdrojový offset i fyzicky
+dokončené bajty, nikoliv předplněný buffer. Pauza a STOP je zmrazí.
+Živý dekodér se při změně pozice resetuje, aby se nepřenesla stará metadata.
+Pro start uprostřed dat se počáteční stav ukáže jako UNKNOWN / FILENAME;
+nejde o nový obsahový sken a nápis DETECTING se neopakuje. Skutečně přehraná
+hlavička může později metadata normálně potvrdit.
 
 ## Waveform, metadata a vlastnictví
 
@@ -125,8 +193,9 @@ uvolnění; STOP má prioritu. V utilitě navigace neposouvá browser na pozadí
 Index a checkpointy používají původní waveform bez syntetického prerollu
 300 ms a tailu 500 ms LEP/L16. Tyto úseky se nepředávají dekodéru; při PLAY
 zůstávají součástí fyzického času a mají vypnutý odposlech. START a SEEK
-ukazují absolutní čas pásky. Spodní řádek přenosu ukazuje uplynulý/celkový
-absolutní čas od začátku / celkový čas celé původní nahrávky a BUF.
+ukazují absolutní čas pásky. Spodní řádek přenosu ukazuje absolutní čas
+od začátku / celkový čas celé původní nahrávky a BUF, nebo klasická procenta,
+pokud celková délka dosud není známá.
 
 Checkpoint obsahuje zdrojový offset, úroveň, stav hystereze, absolutní
 vzorek, přesný čas v 16MHz tickách a případný zbytek intervalu. Programové
@@ -138,12 +207,15 @@ WAV při běžném PLAY nevyžaduje předběžné časové checkpointy. Až při
 se přesná úroveň a hystereze zjistí zpětným hledáním posledního prahového
 vzorku. Dlouhé pásmo hodnot mezi prahy může vyžadovat delší čtení dozadu;
 zobrazí se SEEKING s průběhem a STOP jej zruší. Nepoužívá se odhad úrovně ani
-obsahový dekodér. Jestliže uživatel délkový průchod LEP/L16 přeskočil nebo
-časová cache patří jinému souboru, čas se dopočítá až při požadavku na seek.
+obsahový dekodér. Pokud délka LEP/L16 chybí, připraví navigace pouze
+identitu a počáteční checkpoint. Přirozené dočtení zdroje zjistí celkový čas
+jen tehdy, pokud má průchod známý časový počátek. Byte seek tuto podmínku
+obecně nesplňuje a nepřejde po dočtení zbytku na falešný časový údaj.
 
 Přestavení má pořadí STOP TX → vyřazení pending/FIFO/DMA → obnova zdroje →
 reset metadatové timeline a dokončeného času → prefill → USER_PAUSED.
-Teprve povolený PLAY spustí TX; MOTOR nesmí sám obnovit návrh seeku.
+TX spustí povolený PLAY nebo explicitní krátký skok z již běžícího přenosu;
+MOTOR nesmí sám obnovit návrh ručního FF/REW.
 SENSE je před spuštěním aktivní LOW, MOTOR zůstává HIGH=ON. Indexové
 metadata jsou preview, živé potvrzení dál čeká na fyzicky dokončený TX.
 PAUSE/STOP/EOF používají dokončený čas, nikoli čtecí pozici nebo prefetch.
@@ -158,16 +230,20 @@ Velikosti ověřené cílovým Xtensa překladačem:
 | Programy | 256 | 152 | 38 912 |
 | Bloky | 2048 | 56 | 114 688 |
 | Checkpointy | 4096 | 40 | 163 840 |
-| PSRAM pooly celkem | | | **317 440 (310 KiB)** |
+| Mezery obsahového indexu | 256 | 40 | 10 240 |
+| PSRAM pooly utility celkem | | | **327 680 (320 KiB)** |
 
 Pooly se alokují jednou v PSRAM a znovu používají; per-edge cesta nealokuje.
 Tyto programové/blokové pooly se kvůli běžnému PLAY nealokují. Samostatná
-lehká časová cache LEP/L16 má nejvýše dalších 4096 × 40 B = 160 KiB PSRAM.
-Pokud její alokace selže, délka se stále vypočte a seek může číst od počátku
-se zrušitelným průchodem. WAV před běžným PLAY tento pool nepotřebuje.
+lehká časová cache LEP/L16 má nejvýše dalších 4096 × 40 B = 160 KiB PSRAM
+a vlastní 10KiB tabulku mezer. WAV ji alokuje až při explicitním hledání mezery.
+Pokud její alokace selže, délka se stále vypočte a časový seek může číst od
+počátku zrušitelným průchodem. Přímý procentní byte seek checkpointový pool
+nevyžaduje. WAV před běžným PLAY tento pool nepotřebuje.
 Prvních 256 checkpointových míst rezervují kotvy programů. Přetečení
-programové/blokové tabulky zachová nalezené položky a délku, ale vypne
-samostatné PLAY místo předstírání úplného indexu. Selhání alokace je chyba
+programové/blokové tabulky zachová nalezené položky a délku. Zakáže ověřený
+samostatný řetězec, ale známá časová pozice dál umožňuje explicitní start.
+Selhání alokace základních poolů je chyba
 utility; běžné přehrávání z browseru zůstává samostatné.
 
 RAM cache obsahového a časového indexu kontroluje cestu, formát, velikost, stat časy/identitu, generaci
@@ -182,6 +258,15 @@ Offsety/časy mají 64 bitů; soubory za rozsahem existujícího `long` seek API
 (na cíli nad LONG_MAX) se odmítnou, nikoli přetečou.
 
 ## Ověření
+
+Read-only reference `Barbarian2.l16` (2 577 411 B) má délku waveformu
+333,240640 s. Obsahuje jednu pauzu 345,072 ms, na čase 6,359152–6,704224 s,
+v byte rozsahu 24508–24854. Původní limit 500 ms ji správně vyřadil;
+uživatelem schválených 250 ms ji najde v obou směrech. Testy ověřují
+opakované přímé procentní seeky a přesnou délku původního suffixu přes RMT,
+bez výpočtu časového prefixu. Zdroj se nikdy neotevírá pro zápis.
+SHA256: `71950dd0a4ef25343326fe1f9a0d081ab2eaa00a214fe0bd6420198d080c9f77`.
+Host runner přijímá tento externí vzorek volbou `--l16-fixture PATH`.
 
 Host testy zahrnují waveform všech signed hodnot LEP/L16, nulové intervaly,
 WAV hysterezi a fázi na 44,1/48/96 kHz, legal/invalid RIFF, skutečně

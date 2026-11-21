@@ -96,7 +96,8 @@ bool player_stop_to_selector(void);
 /* Analyzer-program preview only. Ordinary PLAY has no preflight metadata. */
 bool player_preflight_metadata(program_metadata_t *out);
 bool player_can_time_seek(void);
-/* Lightweight duration/checkpoint index, never a content scan. Call paused/EOF. */
+/* Lightweight navigation index, never forces a length/content scan. Duration
+ * can be unknown; callers must inspect duration_known. Call paused/EOF. */
 const tape_index_t *player_time_index(tape_analyzer_control_fn,void *);
 /* Indexed waveform transport. Refuses active PLAY and motor-paused transport. Stops old
  * TX, clears pending/FIFO and metadata, restores source, prefills, then stays
@@ -104,6 +105,9 @@ const tape_index_t *player_time_index(tape_analyzer_control_fn,void *);
  * NO_ENTRY selects whole tape; time_seek is an explicitly unverified start. */
 bool player_prepare_tape(const tape_index_t *,uint32_t program,uint64_t time_us,
                          bool time_seek,tape_analyzer_control_fn,void *);
+bool player_prepare_tape_offset(const tape_index_t *,uint64_t offset,tape_analyzer_control_fn,void *);
+uint64_t player_tape_source_offset(void); /* Physically completed source bytes, not prefill. */
+bool player_tape_absolute_time(void);
 uint64_t player_tape_position_us(void); /* Original tape clock, not prefetch. */
 uint64_t player_tape_elapsed_us(void);  /* Physical selected-session elapsed. */
 uint64_t player_tape_total_us(void); /* Whole original waveform, excludes synthetic silence. */

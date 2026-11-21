@@ -8,7 +8,7 @@
 /* RAM-only schema. No source-file writes, allocation or transport ownership.
  * Capacities are upper bounds, not embedded arrays or allocation requests.
  * Zero-initialized entries are unverified and cannot authorize program PLAY. */
-#define TAPE_INDEX_SCHEMA_VERSION 1U
+#define TAPE_INDEX_SCHEMA_VERSION 3U
 #define TAPE_INDEX_PROGRAM_CAPACITY 256U
 #define TAPE_INDEX_BLOCK_CAPACITY 2048U
 #define TAPE_INDEX_CHECKPOINT_CAPACITY 4096U
@@ -123,6 +123,12 @@ typedef struct {
     bool valid;
 } tape_checkpoint_t;
 
+/* Physical gaps, independent of program validity. Times exclude TX padding. */
+#define TAPE_GAP_CAPACITY 256U
+#define TAPE_GAP_MIN_US 250000ULL
+#define TAPE_GAP_LEAD_US 200000ULL
+typedef struct {uint64_t begin_us,end_us,begin_offset,end_offset,target_offset;} tape_gap_t;
+
 typedef struct {
     tape_source_identity_t source;
     uint32_t schema_version;
@@ -137,11 +143,14 @@ typedef struct {
     uint32_t block_count, checkpoint_count;
     uint32_t program_capacity, block_capacity, checkpoint_capacity;
     bool duration_known;
-    bool scan_complete;  /* Requested pass done; time-only WAV needs RIFF only. */
+    bool scan_complete;  /* Requested preparation done; navigation may use identity/header only. */
     bool index_complete; /* Whole-source coverage/chain classification proven. */
     bool truncated;      /* A bounded pool filled; preserve existing entries. */
     bool cache_hit;
     bool time_only; /* Duration/checkpoints only: no content decoder was run. */
+    bool gaps_ready,gaps_truncated;
+    uint32_t gap_count,gap_capacity;
+    const tape_gap_t *gaps;
     /* One foreground analyzer owner mutates bounded PSRAM pools. Readers
      * receive a stable published result; these pointers convey no ownership.
      * NULL pools and zero capacities describe an empty/unallocated index. */

@@ -141,8 +141,9 @@ void ui_build_edge_analysis(ui_model_t *model,const edge_analysis_t *scan,unsign
  for(unsigned i=0;i<8;++i){text[i][0]=0;model->line[i]=text[i];}
  snprintf(text[0],sizeof(text[0]),"COUNTING %u %%",percent>100 ? 100:percent);
  strcpy(text[1],"LENGTH ONLY");
- snprintf(text[2],sizeof(text[2]),"READ %lu",(unsigned long)scan->scanned_bytes);
- snprintf(text[3],sizeof(text[3]),"OF %lu BYTES",(unsigned long)scan->total_bytes);
+ uint64_t divisor=scan->total_bytes>=1048576 ? 1048576:1024;
+ uint64_t tenths=((uint64_t)scan->total_bytes*10+divisor/2)/divisor;
+ snprintf(text[2],sizeof(text[2]),"SIZE %lu.%lu %s",(unsigned long)(tenths/10),(unsigned long)(tenths%10),divisor==1048576 ? "MB":"KB");
  strcpy(text[4],"NO CONTENT SCAN");
  if(scan->cache_hit)strcpy(text[5],"LENGTH CACHED");
  strcpy(text[7],UI_HELP_SCAN_SKIP_CANCEL);
