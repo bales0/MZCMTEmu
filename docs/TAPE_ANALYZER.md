@@ -1,4 +1,4 @@
-# TAPE ANALYZER a běžný PLAY — r47
+# TAPE ANALYZER a běžný PLAY — r48
 
 Implementace podle zadání z 21. 11. 2026, výchozí commit
 `4ea885ef68b1aa8392ed17b9b86d13f983bed11a`.
@@ -94,15 +94,16 @@ Bez známého absolutního času cílové pozice zůstane PLAY v procentech;
 čas dočteného zbytku se nesmí vydávat za celkovou délku nahrávky.
 
 Běžný browser a menu zachovávají původní okamžité NEXT/PREV a repeat
-400/120 ms. Při PLAY LEP/L16/WAV se krátký NEXT/PREV provede při uvolnění
-a přeskočí na následující/předchozí dlouhou mezeru. Dlouhý stisk nikdy nejdřív neposune browser.
+400/120 ms. Při PLAY LEP/L16/WAV se krátký NEXT provede při uvolnění;
+PREV rozlišuje jednotlivý a dvojitý klik v okně 350 ms. Dlouhý stisk nikdy
+nejdřív neposune browser.
 Kontext seeku odděluje krátký stisk, dlouhý
 stisk, repeat a uvolnění. Změna kontextu potlačí držené směrové klávesy do
 uvolnění; STOP má prioritu. V utilitě navigace neposouvá browser na pozadí.
 
 ### Skoky přes mezery
 
-Mezera je souvislý úsek bez změny digitální úrovně dlouhý alespoň 250 ms,
+Mezera je souvislý úsek bez změny digitální úrovně dlouhý alespoň 500 ms,
 v libovolné polaritě. LEP/L16 zahrnuje pokračovací nuly přes čtecí bloky;
 WAV používá totožnou hysterezi jako PLAY, včetně deadbandu. Nález mezery
 není důkazem logické hranice programu; mohou existovat i uvnitř načítání.
@@ -113,18 +114,28 @@ zašuměného úseku opakovaně překračuje střední hodnotu v obou výchozíc
 Nepřidává se detektor série po sobě jdoucích pulzů ani další dekódování.
 Špičky překračující oba hysterezní prahy tedy stále mohou mezeru rozdělit.
 
-Krátký NEXT/PREV při přenosu nebo uživatelské pauze vyhledá nejbližší cíl
-200 ms před koncem mezery v požadovaném směru. Cíle jsou přísně před/za
-aktuální absolutní pozicí, bez cyklického přetečení. Pro skok se používají
+Krátký NEXT při přenosu nebo uživatelské pauze vyhledá následující cíl
+200 ms před koncem mezery. Cíle nepřetékají cyklicky. Pro skok se používají
 jen mezery ukončené následujícím signálem; samotné
 koncové ticho nevytvoří cíl těsně před EOF. Při původně běžícím PLAY
 se přenos po přestavení automaticky obnoví za stávajících podmínek MOTOR/S1;
 uživatelská pauza zůstane pauzou. MOTOR pauza ani čekání na MOTOR tyto akce
 neaktivují. Bez nálezu se pozice nemění a krátce se ukáže NO NEXT/PREV GAP.
-PREV navíc vynechá poslední úspěšný cíl skoku, pokud by jej po automatickém
-pokračování vybral znovu. Filtr je součástí téhož průchodu i cache lookupu;
-nezpůsobí druhý sken. Nový PLAY, start programu a potvrzený ruční FF/REW
-historii posledního cíle zruší. Směr NEXT tento filtr nepoužívá.
+Jednoklik PREV vrátí začátek aktuálního úseku. První program se vrací na
+offset/čas 0, i když nahrávka začíná tichem. Dvojklik PREV do 350 ms vrátí
+předchozí začátek; v prvním úseku zůstane pozice a zobrazí se NO PREV GAP.
+Začátky se dál určují z fyzických mezer, bez tvrzení o nezávislosti loaderu.
+
+Jednoklik čeká 350 ms. Druhý klik v tomto intervalu provede jediný seek na
+předchozí začátek; neprovedou se dva přenosy za sebou. Cíl se počítá z pozice
+a režimu zachyceného při prvním kliku, i když PLAY mezitím pokračuje.
+Přesná rovnost s aktuálním začátkem stále znamená aktuální úsek, nikoliv
+předchozí. Není už použit historický filtr posledního úspěšného skoku.
+
+Čekání ruší STOP (včetně držení), NEXT, PLAY, dlouhé stisky, změna kontextu,
+MOTOR pauza nebo čekání na MOTOR. Jednoklik ani dvojklik se neuplatňují
+v browseru, menu ani seznamu analyzátoru. Běžná akce STOP, vstupní debounce
+a ovládání FF/REW zůstávají stejné. Uživatelská pauza se po seeku zachová.
 
 Obsahový sken a délkový LEP/L16 průchod uchovají nejvýše 256 mezer. U WAV
 bez gap indexu první krátký skok spustí samostatný gap-only průchod, se
@@ -259,12 +270,18 @@ Offsety/časy mají 64 bitů; soubory za rozsahem existujícího `long` seek API
 
 ## Ověření
 
-Read-only reference `Barbarian2.l16` (2 577 411 B) má délku waveformu
-333,240640 s. Obsahuje jednu pauzu 345,072 ms, na čase 6,359152–6,704224 s,
-v byte rozsahu 24508–24854. Původní limit 500 ms ji správně vyřadil;
-uživatelem schválených 250 ms ji najde v obou směrech. Testy ověřují
-opakované přímé procentní seeky a přesnou délku původního suffixu přes RMT,
-bez výpočtu časového prefixu. Zdroj se nikdy neotevírá pro zápis.
+Read-only reference `Export.l16` (2 589 411 B) má délku waveformu
+343,029776 s a šest pauz nad 500 ms. Úvodní má 1,008240 s, dalších pět
+2,016080 s. Časové začátky úseků pro PREV jsou 0; 23,771600; 109,045616;
+177,404240; 233,115344; 289,607504 s. Z pozice 120 s vrátí jednoklik
+109,045616 s, dvojklik 23,771600 s. Testy zahrnují původní časové i bajtové
+offsety, cache a skutečné obnovení obou odlišných cílů přes simulovaný RMT.
+SHA256: `aa7269685cbd156df411ee401a115932eec13c47d41dd7a2f26b356a4cc6886c`.
+
+Negativní read-only reference `Barbarian2.l16` (2 577 411 B) má délku
+333,240640 s a jedinou pauzu 345,072 ms na 6,359152–6,704224 s (bajty
+24508–24854). Současný limit 500 ms ji vyřadí. Procentní seek a přesný
+přenos suffixu zůstávají stejné. Žádný zdroj se neotevírá pro zápis.
 SHA256: `71950dd0a4ef25343326fe1f9a0d081ab2eaa00a214fe0bd6420198d080c9f77`.
 Host runner přijímá tento externí vzorek volbou `--l16-fixture PATH`.
 

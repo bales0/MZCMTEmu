@@ -8,6 +8,53 @@
 uint8_t tape_analyzer_percent(void){return 90;}
 void tape_analyzer_preview(program_metadata_t *m){memset(m,0,sizeof(*m));strcpy(m->title,"CANDIDATE");}
 static void fits(const ui_model_t *m){for(unsigned i=0;i<8;++i)assert(m->line[i] && strlen(m->line[i])<=21);}
+static tape_gap_result_t mock_before(void *context,uint64_t before,uint64_t *target) {
+    const uint64_t *starts=context;bool found=false;
+    for(unsigned i=0;i<3;++i)if(starts[i]<before){*target=starts[i];found=true;}
+    return found ? TAPE_GAP_FOUND:TAPE_GAP_NONE;
+}
+static void previous_gestures(void) {
+    tape_previous_click_t state={0};
+    tape_previous_request_t request={.time_us=250,.offset=25000,.resume=true,.absolute_time=true},out={0};
+    assert(!tape_previous_click(&state,BTN_PREV,0,true,&request,&out));
+    assert(!tape_previous_click(&state,BTN_NONE,349,true,NULL,&out));
+    assert(tape_previous_click(&state,BTN_NONE,350,true,NULL,&out) && !out.previous && out.offset==25000 && out.resume);
+    assert(!tape_previous_click(&state,BTN_NONE,1000,true,NULL,&out));
+    assert(!tape_previous_click(&state,BTN_PREV,2000,true,&request,&out));
+    tape_previous_request_t advanced=request;advanced.offset=99999;
+    assert(tape_previous_click(&state,BTN_PREV,2350,true,&advanced,&out) && out.previous && out.offset==25000);
+    assert(!tape_previous_click(&state,BTN_NONE,3000,true,NULL,&out));
+    const btn_event_t cancel[]={BTN_STOP,BTN_STOP_LONG,BTN_NEXT,BTN_PREV_LONG,BTN_PLAY,BTN_PLAY_LONG};
+    for(unsigned i=0;i<sizeof(cancel)/sizeof(cancel[0]);++i) {
+        assert(!tape_previous_click(&state,BTN_PREV,4000,true,&request,&out));
+        assert(!tape_previous_click(&state,cancel[i],4100,true,NULL,&out));
+        assert(!tape_previous_click(&state,BTN_NONE,4500,true,NULL,&out) && !state.pending);
+    }
+    assert(!tape_previous_click(&state,BTN_PREV,5000,true,&request,&out));
+    assert(!tape_previous_click(&state,BTN_NONE,5100,false,NULL,&out) && !state.pending);
+    assert(!tape_previous_click(&state,BTN_PREV,UINT32_MAX-100,true,&request,&out));
+    assert(tape_previous_click(&state,BTN_NONE,249,true,NULL,&out) && !out.previous);
+    assert(!tape_previous_click(&state,BTN_PREV,1000,true,&request,&out));
+    assert(tape_previous_click(&state,BTN_PREV,1351,true,&advanced,&out) && !out.previous && state.pending);
+    assert(tape_previous_click(&state,BTN_NONE,1701,true,NULL,&out) && !out.previous && out.offset==99999);
+    /* A leading gap is normalized by the finder to zero. Equal-position
+     * single clicks stay at the current start; doubles move exactly once. */
+    uint64_t starts[]={0,100,200},target=UINT64_MAX;
+    assert(tape_previous_target(250,false,mock_before,starts,&target)==TAPE_GAP_FOUND && target==200);
+    assert(tape_previous_target(250,true,mock_before,starts,&target)==TAPE_GAP_FOUND && target==100);
+    assert(tape_previous_target(200,false,mock_before,starts,&target)==TAPE_GAP_FOUND && target==200);
+    assert(tape_previous_target(200,true,mock_before,starts,&target)==TAPE_GAP_FOUND && target==100);
+    assert(tape_previous_target(50,false,mock_before,starts,&target)==TAPE_GAP_FOUND && target==0);
+    assert(tape_previous_target(50,true,mock_before,starts,&target)==TAPE_GAP_NONE);
+    starts[0]=100;starts[1]=200;starts[2]=300;
+    assert(tape_previous_target(150,true,mock_before,starts,&target)==TAPE_GAP_FOUND && target==0);
+    starts[0]=0;starts[1]=23771600;starts[2]=109045616; /* Export.l16 time starts. */
+    assert(tape_previous_target(120000000,false,mock_before,starts,&target)==TAPE_GAP_FOUND && target==109045616);
+    assert(tape_previous_target(120000000,true,mock_before,starts,&target)==TAPE_GAP_FOUND && target==23771600);
+    assert(tape_previous_target(5000000,false,mock_before,starts,&target)==TAPE_GAP_FOUND && target==0);
+    assert(tape_previous_target(5000000,true,mock_before,starts,&target)==TAPE_GAP_NONE);
+    puts("PASS PREV single/double: 350ms classification, first-click origin retained, one seek intent, exact boundary/wrap, cancellation/context exit, current/previous/first starts");
+}
 static void capture_model(const ui_model_t *m,const char *name) {
     ui_use_text_view();tick+=100;ui_render(m);
     expect_text(0,0,m->line[0],1);expect_text(0,56,m->line[7],1);artifact(name);
@@ -27,6 +74,7 @@ static void capture_transport(const tape_contents_t *v,const tape_index_t *idx,c
     expect_text(80,56,"BUF  50%",1);artifact(name);
 }
 int main(void) {
+    previous_gestures();
     oled_init();ui_init();
     tape_contents_t v;tape_contents_open(&v);
     tape_program_t programs[2]={0};

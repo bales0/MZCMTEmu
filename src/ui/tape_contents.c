@@ -13,6 +13,38 @@ static void timestamp(char *out,size_t size,uint64_t us) {
     else snprintf(out,size,"%uh%02u",(unsigned)(seconds/3600),(unsigned)(seconds/60%60));
 }
 void tape_contents_open(tape_contents_t *v){memset(v,0,sizeof(*v));v->page=TAPE_UI_SCAN;}
+bool tape_previous_click(tape_previous_click_t *state,btn_event_t event,uint32_t now,bool enabled,
+                          const tape_previous_request_t *request,tape_previous_request_t *out) {
+    if(!enabled){state->pending=false;return false;}
+    if(event==BTN_PREV && request) {
+        if(state->pending && (uint32_t)(now-state->pressed_at)<=TAPE_PREV_DOUBLE_MS) {
+            *out=state->request;out->previous=true;state->pending=false;return true;
+        }
+        bool due=state->pending;
+        if(due){*out=state->request;out->previous=false;}
+        state->request=*request;state->pressed_at=now;state->pending=true;
+        return due;
+    }
+    if(event!=BTN_NONE){state->pending=false;return false;}
+    if(state->pending && (uint32_t)(now-state->pressed_at)>=TAPE_PREV_DOUBLE_MS) {
+        *out=state->request;out->previous=false;state->pending=false;return true;
+    }
+    return false;
+}
+tape_gap_result_t tape_previous_target(uint64_t origin,bool previous,tape_previous_find_fn before,
+                                       void *context,uint64_t *target) {
+    uint64_t current=0;
+    if(origin) {
+        tape_gap_result_t result=before(context,origin==UINT64_MAX ? origin:origin+1,&current);
+        if(result!=TAPE_GAP_FOUND && result!=TAPE_GAP_NONE)return result;
+        if(result==TAPE_GAP_NONE)current=0;
+    }
+    if(!previous){*target=current;return TAPE_GAP_FOUND;}
+    if(!current)return TAPE_GAP_NONE;
+    tape_gap_result_t result=before(context,current,target);
+    if(result==TAPE_GAP_NONE){*target=0;return TAPE_GAP_FOUND;}
+    return result;
+}
 tape_ui_action_t tape_contents_event(tape_contents_t *v,const tape_index_t *idx,btn_event_t e,
                                      uint32_t now,const tape_transport_view_t *tx) {
     if(v->page==TAPE_UI_SCAN) {

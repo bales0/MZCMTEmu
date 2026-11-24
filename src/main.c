@@ -84,10 +84,7 @@ static bool tape_from_normal;
 static const tape_index_t *tape_active_index;
 static ui_transport_view_t tape_play_view;
 static int64_t tape_prepare_route_since;
-static const tape_index_t *tape_gap_anchor_index;
-static uint64_t tape_gap_anchor_us;
-static bool tape_gap_anchor_valid;
-static bool tape_gap_anchor_byte;
+static tape_previous_click_t tape_prev_click;
 static void tape_utility_open(void);
 static void tape_utility_service(btn_event_t);
 
@@ -1148,7 +1145,7 @@ static void tape_utility_open(void) {
     if(!s_sd_ready || recorder_is_active() || sc_editor_active() || play_wait_motor ||
        state==PLAYER_STATE_PLAYING || state==PLAYER_STATE_PAUSED)return;
     player_stop_for(PLAYER_STOP_API);clear_play_preview();ui_clear_overlay();
-    tape_gap_anchor_valid=false;
+    tape_prev_click.pending=false;
     s_menu_active=false;tape_wait_motor=false;tape_scan_route=switch_ext_mode;tape_from_normal=false;
     buttons_set_nav_mode(BUTTONS_NAV_NORMAL);tape_contents_open(&tape_ui);
     if(!tape_analyzer_begin(file_list_get_path()))tape_ui.page=TAPE_UI_ERROR;
@@ -1200,19 +1197,31 @@ static void tape_transport_snapshot(tape_transport_view_t *tx) {
     raw_pulse_status_t status;raw_pulse_status(&status);
     tx->buffer_percent=status.fifo_capacity ? (unsigned)((uint64_t)status.fifo_used*100/status.fifo_capacity):0;
 }
-static void tape_gap_jump(const tape_index_t *idx,bool forward,bool resume) {
+typedef struct {const tape_index_t *index;bool bytes;} app_previous_query_t;
+static tape_gap_result_t tape_previous_before(void *context,uint64_t origin,uint64_t *target) {
+    const app_previous_query_t *query=context;const tape_index_t *idx=query->index;
+    tape_gap_result_t result=query->bytes ? tape_gap_find_offset(idx,origin,false,UINT64_MAX,target,tape_prepare_control,NULL):
+        tape_gap_find_excluding(idx,origin,false,UINT64_MAX,target,tape_prepare_control,NULL);
+    if(result==TAPE_GAP_FOUND) {
+        for(unsigned i=0;i<idx->gap_count;++i) {
+            const tape_gap_t *gap=&idx->gaps[i];
+            if(query->bytes ? gap->begin_offset==0 && gap->target_offset==*target:
+               gap->begin_us==0 && gap->end_us-TAPE_GAP_LEAD_US==*target){*target=0;break;}
+        }
+    }
+    return result;
+}
+static void tape_gap_jump(const tape_index_t *idx,bool forward,bool resume,const tape_previous_request_t *previous) {
     if(switch_ext_mode)return;
     if(player_get_state()==PLAYER_STATE_PLAYING)player_pause_user();
-    bool bytes=!idx->duration_known || !player_tape_absolute_time();
-    uint64_t origin=bytes ? player_tape_source_offset():player_tape_position_us(),target=origin;
-    /* Auto-resume advances beyond the last landing point immediately. A
-     * subsequent PREV must not keep selecting that same point forever. New
-     * ordinary PLAY and verified program starts have no time-seek marker. */
-    if(!player_tape_unverified_start() || tape_gap_anchor_index!=idx || tape_gap_anchor_byte!=bytes)tape_gap_anchor_valid=false;
-    uint64_t exclude=!forward && tape_gap_anchor_valid ? tape_gap_anchor_us:UINT64_MAX;
+    bool bytes=!idx->duration_known || !(previous ? previous->absolute_time:player_tape_absolute_time());
+    uint64_t origin=previous ? (bytes ? previous->offset:previous->time_us):
+        bytes ? player_tape_source_offset():player_tape_position_us(),target=origin;
     ui_build_playback_model();tape_prepare_route_since=0;
-    tape_gap_result_t result=bytes ? tape_gap_find_offset(idx,origin,forward,exclude,&target,tape_prepare_control,NULL):
-        tape_gap_find_excluding(idx,origin,forward,exclude,&target,tape_prepare_control,NULL);
+    app_previous_query_t query={idx,bytes};
+    tape_gap_result_t result=!forward ? tape_previous_target(origin,previous && previous->previous,tape_previous_before,&query,&target):
+        bytes ? tape_gap_find_offset(idx,origin,true,UINT64_MAX,&target,tape_prepare_control,NULL):
+        tape_gap_find_excluding(idx,origin,true,UINT64_MAX,&target,tape_prepare_control,NULL);
     if(result==TAPE_GAP_NONE) {
         ui_show_overlay(forward ? "NO NEXT GAP":"NO PREV GAP",1000);
         tape_wait_motor=resume;return;
@@ -1226,15 +1235,14 @@ static void tape_gap_jump(const tape_index_t *idx,bool forward,bool resume) {
     tape_ui.page=TAPE_UI_SEEK;ui_build_playback_model();
     bool ok=bytes ? player_prepare_tape_offset(idx,target,tape_prepare_control,NULL):
         player_prepare_tape(idx,TAPE_INDEX_NO_ENTRY,target,true,tape_prepare_control,NULL);
-    if(ok){tape_gap_anchor_valid=true;tape_gap_anchor_index=idx;tape_gap_anchor_us=target;tape_gap_anchor_byte=bytes;}
-    else tape_gap_anchor_valid=false;
     tape_ui.page=ok ? TAPE_UI_TRANSPORT:player_get_state()==PLAYER_STATE_STOPPED ? TAPE_UI_LIST:TAPE_UI_ERROR;
     tape_wait_motor=ok && resume && player_get_state()==PLAYER_STATE_PAUSED;
 }
-static void tape_normal_seek_open(btn_event_t event) {
+static void tape_normal_seek_open(btn_event_t event,const tape_previous_request_t *previous) {
     if(!s_sd_ready || switch_ext_mode || recorder_is_active() || play_wait_motor || !player_can_time_seek())return;
     bool was_playing=player_get_state()==PLAYER_STATE_PLAYING;
     if(was_playing)player_pause_user();
+    if(previous)was_playing=previous->resume;
     ui_build_playback_model();
     tape_prepare_route_since=0;
     const tape_index_t *idx=player_time_index(tape_length_seek_control,NULL);
@@ -1244,7 +1252,7 @@ static void tape_normal_seek_open(btn_event_t event) {
     }
     tape_contents_open(&tape_ui);tape_ui.page=TAPE_UI_TRANSPORT;
     tape_from_normal=true;tape_active_index=idx;tape_wait_motor=false;
-    if(event==BTN_NEXT || event==BTN_PREV){tape_gap_jump(idx,event==BTN_NEXT,was_playing);return;}
+    if(event==BTN_NEXT || event==BTN_PREV){tape_gap_jump(idx,event==BTN_NEXT,was_playing,previous);return;}
     tape_transport_view_t tx;tape_transport_snapshot(&tx);
     (void)tape_contents_event(&tape_ui,idx,event,(uint32_t)(esp_timer_get_time()/1000),&tx);
 }
@@ -1273,7 +1281,7 @@ static void tape_utility_service(btn_event_t event) {
     if(action==TAPE_ACTION_STOP){player_stop_for(PLAYER_STOP_BUTTON);tape_wait_motor=false;}
     if(action==TAPE_ACTION_PAUSE){player_pause_user();tape_wait_motor=false;}
     if(action==TAPE_ACTION_GAP_NEXT || action==TAPE_ACTION_GAP_PREV) {
-        tape_gap_jump(idx,action==TAPE_ACTION_GAP_NEXT,tx.playing);action=TAPE_ACTION_NONE;
+        tape_gap_jump(idx,action==TAPE_ACTION_GAP_NEXT,tx.playing,NULL);action=TAPE_ACTION_NONE;
     }
     bool prepare=action==TAPE_ACTION_START || action==TAPE_ACTION_START_TIME || action==TAPE_ACTION_SEEK ||
         (action==TAPE_ACTION_RESUME && tx.finished);
@@ -1285,7 +1293,7 @@ static void tape_utility_service(btn_event_t event) {
         tape_wait_motor=false;ui_show_overlay("EXTERNAL CMT",1200);
     } else {
         if(prepare) {
-            tape_gap_anchor_valid=false;
+            tape_prev_click.pending=false;
             ui_build_playback_model();
             if(action==TAPE_ACTION_START) {
                 tape_play_view.filename=basename_ptr(idx->source.path);
@@ -1345,6 +1353,23 @@ static void tape_utility_service(btn_event_t event) {
     ui_set_external(switch_ext_mode);ui_render(&ui_model);
 }
 
+static btn_event_t tape_previous_service(btn_event_t event) {
+    /* Cancel the new pending gesture as soon as STOP is physically held;
+     * the existing debounced STOP action/release semantics stay unchanged. */
+    bool eligible=gpio_get_level(GPIO_NUM_9)!=0 && s_sd_ready && !switch_ext_mode && !menu_is_active() && !sc_editor_active() &&
+        !recorder_is_active() && !play_wait_motor && !tape_wait_motor && player_can_time_seek() &&
+        (tape_ui.page==TAPE_UI_CLOSED || tape_ui.page==TAPE_UI_TRANSPORT);
+    tape_previous_request_t current={0},request={0};
+    if(eligible && event==BTN_PREV) {
+        current.time_us=player_tape_position_us();current.offset=player_tape_source_offset();
+        current.absolute_time=player_tape_absolute_time();current.resume=player_get_state()==PLAYER_STATE_PLAYING;
+    }
+    if(tape_previous_click(&tape_prev_click,event,(uint32_t)(esp_timer_get_time()/1000),eligible,&current,&request)) {
+        if(tape_ui.page==TAPE_UI_CLOSED)tape_normal_seek_open(BTN_PREV,&request);
+        else tape_gap_jump(tape_active_index ? tape_active_index:tape_analyzer_result(),false,request.resume,&request);
+    }
+    return eligible && event==BTN_PREV ? BTN_NONE:event;
+}
 static void app_task(void *arg)
 {
     (void)arg;
@@ -1360,6 +1385,7 @@ static void app_task(void *arg)
         service_sd_detect();
         service_route_switch();
         diagnostics_tick(e);
+        e=tape_previous_service(e);
 
         if(tape_ui.page!=TAPE_UI_CLOSED) {
             tape_utility_service(e);
@@ -1457,7 +1483,7 @@ static void app_task(void *arg)
         }
 
         if((e==BTN_NEXT_LONG || e==BTN_PREV_LONG || e==BTN_NEXT || e==BTN_PREV) && !play_wait_motor && player_can_time_seek()) {
-            tape_normal_seek_open(e);service_sense_output();service_monitor_output();
+            tape_normal_seek_open(e,NULL);service_sense_output();service_monitor_output();
         }
         else if(e==BTN_REC_LONG || e==BTN_PLAY_LONG){
             player_state_t state=player_get_state();
@@ -1698,7 +1724,7 @@ static void app_task(void *arg)
 void app_main(void)
 {
     setvbuf(stdout,NULL,_IOLBF,0);
-    printf("MZCMTEmu TX-TRACE r47 BYTE SEEK / GAP 250MS S1 GPIO21 LOW=EXT HIGH=INT 2026-11-21; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
+    printf("MZCMTEmu TX-TRACE r48 GAP 500MS / PREV SINGLE DOUBLE S1 GPIO21 LOW=EXT HIGH=INT 2026-11-24; IDF %s; MOTOR ON=HIGH; USB console 115200\n",esp_get_idf_version());
     // Give the USB console time to enumerate.
     vTaskDelay(pdMS_TO_TICKS(500));
     fflush(stdout);

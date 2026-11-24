@@ -273,8 +273,8 @@ static void percent_byte_transport(void) {
     edge_stream_set_scan_control(NULL,NULL);assert(!remove("percent.l16"));
     puts("PASS percent byte transport: repeated offsets read no time prefix, no invented absolute clock/total, physical progress, pause/STOP freeze and direct EOF without TX");
 }
-static void barbarian_byte_transport(const char *path) {
-    const tape_index_t *idx=tape_time_navigation(path,NULL,NULL);assert(idx && idx->source.size_bytes==2577411 && !idx->duration_known);
+static void l16_byte_transport(const char *path) {
+    const tape_index_t *idx=tape_time_navigation(path,NULL,NULL);assert(idx && (idx->source.size_bytes==2577411 || idx->source.size_bytes==2589411) && !idx->duration_known);
     const unsigned percentages[]={10,70,35,90};
     for(unsigned i=0;i<4;++i) {
         uint64_t offset=idx->source.size_bytes*percentages[i]/100;
@@ -282,6 +282,19 @@ static void barbarian_byte_transport(const char *path) {
         assert(navigation_polls<=8 && player_tape_source_offset()==offset && !player_tape_absolute_time());
         assert(player_get_progress_percent()==offset*100/idx->source.size_bytes && !player_get_total_seconds());
         program_metadata_t m;player_metadata(&m);assert(!(m.valid&PROGRAM_TITLE) && m.confidence==PROGRAM_UNKNOWN);
+    }
+    if(idx->source.size_bytes==2589411) {
+        uint64_t current=0,previous=0;
+        assert(tape_gap_find_offset(idx,900000,false,UINT64_MAX,&current,NULL,NULL)==TAPE_GAP_FOUND);
+        assert(tape_gap_find_offset(idx,current,false,UINT64_MAX,&previous,NULL,NULL)==TAPE_GAP_FOUND && previous<current);
+        assert(current>=790883 && current<792884 && previous>=134627 && previous<136628);
+        const uint64_t starts[]={current,previous};
+        for(unsigned i=0;i<2;++i) {
+            assert(player_prepare_tape_offset(idx,starts[i],NULL,NULL) && player_tape_source_offset()==starts[i]);
+            player_resume_user();for(unsigned j=0;j<45;++j){advance(10000ULL*16);player_service();}
+            player_pause_user();assert(player_tape_source_offset()>starts[i] && !player_tape_absolute_time());
+        }
+        puts("PASS Export RMT: current and previous starts are distinct, restored byte offsets emit source and preserve pause/percent transport");
     }
     uint64_t offset=idx->source.size_bytes/2;
     FILE *f=fopen(path,"rb");assert(f && !fseek(f,(long)offset,SEEK_SET));
@@ -300,10 +313,10 @@ static void barbarian_byte_transport(const char *path) {
     assert(active_ticks-before==(suffix+800000)*16 && !player_tape_absolute_time() && !player_get_total_seconds());
     assert(player_tape_source_offset()==idx->source.size_bytes && player_get_progress_percent()==100);
     player_stop();assert(player_get_progress_percent()==100);
-    puts("PASS Barbarian2 actual RMT: repeated 10/70/35/90 percent seeks without prefix scan, reset metadata, exact original suffix duration at 50 percent, EOF/STOP100 and no fake total");
+    puts("PASS L16 reference actual RMT: repeated 10/70/35/90 percent seeks without prefix scan, reset metadata, exact original suffix duration at 50 percent, EOF/STOP100 and no fake total");
 }
 int main(int argc,char **argv) {
     setvbuf(stdout,NULL,_IONBF,0);player_init();indexed_edges();indexed_programs();indexed_gap_navigation();unknown_length_navigation();percent_byte_transport();
-    if(argc>1)barbarian_byte_transport(argv[1]);
+    if(argc>1)l16_byte_transport(argv[1]);
     puts("PASS indexed real player/RMT DMA: waveform hash matches ordinary PLAY, reset partial DMA/FIFO, pause precedence, physical time and frozen progress, safe chain end, live metadata, cancel and media invalidation");return 0;
 }

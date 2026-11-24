@@ -125,7 +125,7 @@ typedef struct {
 
 /* Physical gaps, independent of program validity. Times exclude TX padding. */
 #define TAPE_GAP_CAPACITY 256U
-#define TAPE_GAP_MIN_US 250000ULL
+#define TAPE_GAP_MIN_US 500000ULL
 #define TAPE_GAP_LEAD_US 200000ULL
 typedef struct {uint64_t begin_us,end_us,begin_offset,end_offset,target_offset;} tape_gap_t;
 

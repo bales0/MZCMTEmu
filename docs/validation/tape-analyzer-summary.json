@@ -1,8 +1,8 @@
 {
-  "date": "2026-11-21",
-  "feature": "TAPE ANALYZER r47 / DIRECT BYTE PERCENT SEEK / RESUMABLE GAP CACHE / 250MS",
+  "date": "2026-11-24",
+  "feature": "TAPE ANALYZER r48 / GAP 500MS / PREV SINGLE DOUBLE",
   "base_head": "4ea885ef68b1aa8392ed17b9b86d13f983bed11a",
-  "working_head_at_validation": "6a4de05d0a22961eda16090ac663c73b2dace42b",
+  "working_head_at_validation": "017685dba55060a6509f9b44f35592f26155f9d9",
   "host": {
     "status": "PASS",
     "compiler": "GCC 14.2.0 (Debian 14.2.0-19), WSL Debian",
@@ -47,8 +47,7 @@
     ],
     "full_regression_count": 33,
     "final_change_rechecks": [
-      "test_tape_analyzer",
-      "test_tape_seek"
+      "test_tape_analyzer (negative Barbarian2 reference)"
     ],
     "rechecks_status": "PASS",
     "pixel_frames": 11,
@@ -56,8 +55,8 @@
       {
         "source": "L16",
         "mib": 1,
-        "wall_seconds": 0.220915,
-        "cpu_seconds": 0.100746,
+        "wall_seconds": 0.233332,
+        "cpu_seconds": 0.085995,
         "cursor_read_calls": 1024,
         "cursor_read_bytes": 1048576,
         "checkpoint_slots": 2384
@@ -65,8 +64,8 @@
       {
         "source": "LENGTH_L16",
         "mib": 1,
-        "wall_seconds": 0.121005,
-        "cpu_seconds": 0.015662,
+        "wall_seconds": 0.121248,
+        "cpu_seconds": 0.014895,
         "cursor_read_calls": 1024,
         "cursor_read_bytes": 1048576,
         "checkpoint_slots": 2128
@@ -74,8 +73,8 @@
       {
         "source": "L16",
         "mib": 10,
-        "wall_seconds": 3.004801,
-        "cpu_seconds": 1.036816,
+        "wall_seconds": 1.847494,
+        "cpu_seconds": 0.805429,
         "cursor_read_calls": 10240,
         "cursor_read_bytes": 10485760,
         "checkpoint_slots": 2919
@@ -83,8 +82,8 @@
       {
         "source": "LENGTH_L16",
         "mib": 10,
-        "wall_seconds": 1.468173,
-        "cpu_seconds": 0.169269,
+        "wall_seconds": 1.011536,
+        "cpu_seconds": 0.149447,
         "cursor_read_calls": 10240,
         "cursor_read_bytes": 10485760,
         "checkpoint_slots": 2663
@@ -92,8 +91,8 @@
       {
         "source": "DENSE_L16",
         "mib": 1,
-        "wall_seconds": 0.253662,
-        "cpu_seconds": 0.144395,
+        "wall_seconds": 0.213711,
+        "cpu_seconds": 0.114069,
         "cursor_read_calls": 1024,
         "cursor_read_bytes": 1048576,
         "checkpoint_slots": 274
@@ -101,14 +100,14 @@
       {
         "source": "DENSE_L16",
         "mib": 10,
-        "wall_seconds": 3.566639,
-        "cpu_seconds": 1.543573,
+        "wall_seconds": 2.199774,
+        "cpu_seconds": 1.144205,
         "cursor_read_calls": 10240,
         "cursor_read_bytes": 10485760,
         "checkpoint_slots": 425
       }
     ],
-    "benchmark_notes": "Host ASan/UBSan full regression with target compilation and reference rechecks concurrent. Caller read counts exclude lower-layer VFS/RPC behavior. No native SD speedup or HW acceptance inferred. Gap byte-cache zero-read assertions exclude identity probes.",
+    "benchmark_notes": "Host ASan/UBSan regression with target compilation concurrent. Reference Export is read-only. No native SD or GPIO timing inferred; the 350ms window is an application timer tested with mocked timestamps.",
     "new_pixel_frame": "docs/validation/ui/tape-unknown-length.pbm"
   },
   "target": {
@@ -119,10 +118,10 @@
     "compiler_package": "toolchain-xtensa-esp-elf 15.2.0+20251204",
     "flash_size": "16MB",
     "psram_mode": "OCT 80MHz",
-    "ram_static_bytes": 181372,
-    "application_flash_bytes": 515135,
-    "firmware_bytes": 515552,
-    "firmware_sha256": "2c5aa592823386fbfc8612697d39d31bcabad4d652e8876835629afe827dd12f"
+    "ram_static_bytes": 181388,
+    "application_flash_bytes": 516271,
+    "firmware_bytes": 516688,
+    "firmware_sha256": "a3dd0be4c48f8349b2f2fe09ea7e169b23d76c6fa6616959da678c23f7c01fff"
   },
   "memory": {
     "program_capacity": 256,
@@ -209,7 +208,9 @@
     "contents_view_bytes": 240,
     "transport_view_bytes": 56,
     "gap_target_buffer_bytes": 1024,
-    "byte_scan_resume_checkpoint_bytes": 40
+    "byte_scan_resume_checkpoint_bytes": 40,
+    "previous_click_bytes": 32,
+    "previous_request_bytes": 24
   },
   "hardware": {
     "tested": false,
@@ -247,10 +248,10 @@
     "index_list_visible_rows": 5,
     "no_gap_notification_preserved": true,
     "gap_detector_changed_in_ui_cleanup": false,
-    "gap_min_us": 250000,
+    "gap_min_us": 500000,
     "consecutive_pulse_detector_added": false,
     "stop_behavior_changed": false,
-    "prev_excludes_last_landing_without_second_scan": true,
+    "prev_excludes_last_landing_without_second_scan": false,
     "navigation_forces_length_analysis": false,
     "unknown_length_uses_physical_byte_percent": true,
     "partial_gap_pass_claims_complete_index": false,
@@ -261,7 +262,13 @@
     "relative_suffix_not_published_as_full_duration": true,
     "midstream_seek_does_not_show_detecting": true,
     "index_schema_version": 3,
-    "index_algorithm_version": 3
+    "index_algorithm_version": 3,
+    "previous_double_window_ms": 350,
+    "previous_single_delay_ms": 350,
+    "previous_first_click_origin_retained": true,
+    "previous_double_emits_one_seek_intent": true,
+    "previous_first_program_starts_at_zero": true,
+    "previous_pending_cancel_on_other_input_or_context": true
   },
   "limitations": [
     "Byte seek at a nonzero offset does not establish an absolute source clock; percentage display is retained instead of inventing a full time from the suffix.",
@@ -272,49 +279,95 @@
     "No physical Sharp/SD/RMT measurement, runtime stack high-water test, flash, commit or branch creation performed."
   ],
   "logs": [
-    ".tmp/r47-all-host-tests.txt",
-    ".tmp/r47-final-analysis.txt",
-    ".tmp/r47-final-reference.txt",
-    ".tmp/r47-final-build.txt"
+    ".tmp/r48-all-host-tests.txt",
+    ".tmp/r48-negative-reference.txt",
+    ".tmp/r48-final-build.txt"
   ],
   "regressions": [
-    "250ms gap accepted versus 249.6ms rejection; source level and waveform remain unchanged",
-    "Direct byte seek restores signed-byte/zero-continuation state, with no duration-prefix decoding",
-    "Percent preview uses 1/5/10 percent steps, cancel restores prior byte position; no SEEK time or DETECTING text",
-    "Partial gap scans resume from checkpoint; repeated forward/back cached targets read zero waveform bytes; cancellation/retry preserves correctness",
-    "Actual Barbarian2 345072us gap found both directions under 250ms rule; 15 direct cursor positions read at most 1025 bytes each before source playback",
-    "Actual RMT 10/70/35/90 percent seeks use bounded callbacks, fresh metadata and no prefix time scan",
-    "Actual RMT 50 percent source suffix emits exactly suffix duration plus existing 800ms TX padding; no relative suffix duration is published as full time",
-    "Physical byte percentage includes source base and emitted bytes, freezes in pause/STOP, remains 100 after EOF/STOP; seek to EOF emits no DMA",
-    "Original STOP button driver, GPIO assignments, source files, index reliability/start policy and ordinary browser controls retained"
+    "500ms gap accepted versus 499.2ms rejection; Export reference has six qualifying gaps; old 345ms reference correctly has zero",
+    "Single PREV fires after 350ms and selects current start; second release up to 350ms emits one previous-start intent using the first origin and resume state",
+    "Exact deadline, delayed second click, monotonic timestamp wrap, STOP/NEXT/PLAY/hold cancellation and disabled context clear pending gestures",
+    "Current-start equality never decrements on a single click; first-file fallback is zero; double in first program reports no previous target",
+    "Export time origin 120s maps to current 109.045616s or previous 23.771600s; corresponding source byte ranges and actual RMT playback are distinct",
+    "Ordinary percentage seek, source-state restoration, cached gaps, waveform durations, user pause and physical byte progress remain covered by the full regression",
+    "Buttons driver/STOP actions, GPIO assignments and source waveform data unchanged; browser/list navigation does not enable the double-click classifier"
   ],
   "gap_diagnosis": {
-    "previous_min_us": 500000,
-    "current_min_us": 250000,
-    "reference_gap_us": 345072,
-    "previous_no_gap_reason": "The only physical gap in the supplied file is shorter than the former 500ms threshold.",
-    "repeated_scan_reason": "Unknown-length time-target seeking had only the start checkpoint; percentage mode now seeks source offsets directly. Gap prefix state/targets persist across requests.",
-    "status": "Reference analyzer and real RMT regression pass; STOP unchanged."
+    "current_min_us": 500000,
+    "export_qualifying_gaps": 6,
+    "previous_behavior": "The historical last-landing filter was not an explicit single/double-click policy.",
+    "new_behavior": "Collect PREV clicks before source work: single current start, double previous start; one actual seek per classified gesture. Leading silence maps to source zero.",
+    "status": "Full regression and positive/negative source references pass; physical hardware validation pending."
   },
   "reference_fixture": {
-    "path": "/mnt/c/Dokumenty/GitHub/MZTools/MZTool.Tests/LEP/Barbarian2.l16",
-    "size_bytes": 2577411,
-    "sha256_before": "71950dd0a4ef25343326fe1f9a0d081ab2eaa00a214fe0bd6420198d080c9f77",
-    "sha256_after": "71950dd0a4ef25343326fe1f9a0d081ab2eaa00a214fe0bd6420198d080c9f77",
+    "path": "C:\\666\\Export.l16",
+    "size_bytes": 2589411,
+    "sha256_before": "aa7269685cbd156df411ee401a115932eec13c47d41dd7a2f26b356a4cc6886c",
+    "sha256_after": "aa7269685cbd156df411ee401a115932eec13c47d41dd7a2f26b356a4cc6886c",
     "read_only_verified": true,
-    "waveform_us": 333240640,
+    "waveform_us": 343029776,
     "gaps": [
       {
-        "begin_us": 6359152,
-        "end_us": 6704224,
-        "duration_us": 345072,
-        "begin_offset": 24508,
-        "end_offset": 24854
+        "begin_us": 0,
+        "end_us": 1008240,
+        "duration_us": 1008240,
+        "begin_offset": 0,
+        "end_offset": 1001
+      },
+      {
+        "begin_us": 21955520,
+        "end_us": 23971600,
+        "duration_us": 2016080,
+        "begin_offset": 134627,
+        "end_offset": 136628
+      },
+      {
+        "begin_us": 107229536,
+        "end_us": 109245616,
+        "duration_us": 2016080,
+        "begin_offset": 790883,
+        "end_offset": 792884
+      },
+      {
+        "begin_us": 175588160,
+        "end_us": 177604240,
+        "duration_us": 2016080,
+        "begin_offset": 1316153,
+        "end_offset": 1318154
+      },
+      {
+        "begin_us": 231299264,
+        "end_us": 233315344,
+        "duration_us": 2016080,
+        "begin_offset": 1743161,
+        "end_offset": 1745162
+      },
+      {
+        "begin_us": 287791424,
+        "end_us": 289807504,
+        "duration_us": 2016080,
+        "begin_offset": 2172923,
+        "end_offset": 2174924
       }
     ],
+    "previous_example": {
+      "origin_us": 120000000,
+      "single_target_us": 109045616,
+      "double_target_us": 23771600,
+      "first_target": 0
+    },
     "rmt_suffix_start_percent": 50,
-    "rmt_suffix_source_us": 164354896,
-    "rmt_suffix_with_tx_padding_us": 165154896,
+    "rmt_suffix_source_us": 170123856,
+    "rmt_suffix_with_tx_padding_us": 170923856,
     "hardware_measurement": false
+  },
+  "negative_reference": {
+    "path": "/mnt/c/Dokumenty/GitHub/MZTools/MZTool.Tests/LEP/Barbarian2.l16",
+    "size_bytes": 2577411,
+    "sha256": "71950dd0a4ef25343326fe1f9a0d081ab2eaa00a214fe0bd6420198d080c9f77",
+    "largest_gap_us": 345072,
+    "qualifying_gap_count": 0,
+    "min_gap_us": 500000,
+    "read_only_verified": true
   }
 }

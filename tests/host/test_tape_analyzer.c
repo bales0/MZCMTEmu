@@ -334,13 +334,13 @@ static void gaps(void) {
     for(unsigned format=0;format<2;++format) {
         unsigned unit=format ? 16:50;const char *path=format ? "gaps.l16":"gaps.lep";
         assert(edge_writer_open(path,1000000/unit));
-        assert(edge_writer_write_interval_units(0,250000/unit));
+        assert(edge_writer_write_interval_units(0,500000/unit));
         for(unsigned i=0;i<16;++i){assert(edge_writer_write_interval_units(1,1600/unit));assert(edge_writer_write_interval_units(0,1600/unit));}
         assert(edge_writer_write_interval_units(1,3000000/unit));
         for(unsigned i=0;i<16;++i){assert(edge_writer_write_interval_units(0,1600/unit));assert(edge_writer_write_interval_units(1,1600/unit));}
         assert(edge_writer_write_interval_units(0,4000000/unit));
         assert(edge_writer_write_interval_units(1,1600/unit));
-        assert(edge_writer_write_interval_units(0,249600/unit)); /* Below the 250ms threshold. */
+        assert(edge_writer_write_interval_units(0,499200/unit)); /* Below the 500ms threshold. */
         assert(edge_writer_write_interval_units(1,1600/unit) && edge_writer_finalize());
         tape_analyzer_invalidate();const tape_index_t *deep=analyze(path);
         const tape_index_t *thin=tape_time_prepare(path,NULL,NULL);
@@ -348,7 +348,7 @@ static void gaps(void) {
         for(unsigned pass=0;pass<2;++pass) {
             const tape_index_t *idx=pass ? thin:deep;
             assert(idx->gaps_ready && !idx->gaps_truncated && idx->gap_count==3);
-            assert(idx->gaps[0].begin_us==0 && idx->gaps[0].end_us==250000);
+            assert(idx->gaps[0].begin_us==0 && idx->gaps[0].end_us==500000);
             assert(idx->gaps[1].end_us-idx->gaps[1].begin_us==3000000);
             assert(idx->gaps[2].end_us-idx->gaps[2].begin_us==4000000);
             uint64_t target=UINT64_MAX;
@@ -359,7 +359,7 @@ static void gaps(void) {
             }
             assert(tape_gap_find(idx,0,false,&target,NULL,NULL)==TAPE_GAP_NONE);
             assert(tape_gap_find(idx,idx->waveform_us,true,&target,NULL,NULL)==TAPE_GAP_NONE);
-            assert(tape_gap_find(idx,50000,true,&target,NULL,NULL)==TAPE_GAP_FOUND && target==idx->gaps[1].end_us-TAPE_GAP_LEAD_US);
+            assert(tape_gap_find(idx,300000,true,&target,NULL,NULL)==TAPE_GAP_FOUND && target==idx->gaps[1].end_us-TAPE_GAP_LEAD_US);
             uint64_t first=idx->gaps[0].end_us-TAPE_GAP_LEAD_US;
             uint64_t second=idx->gaps[1].end_us-TAPE_GAP_LEAD_US;
             assert(tape_gap_find(idx,second+100000,false,&target,NULL,NULL)==TAPE_GAP_FOUND && target==second);
@@ -403,7 +403,7 @@ static void gaps(void) {
     assert(edge_writer_open("silence.l16",62500));assert(edge_writer_write_interval_units(0,250000) && edge_writer_finalize());
     idx=tape_time_prepare("silence.l16",NULL,NULL);assert(idx && idx->gaps_ready && !idx->gap_count);
     assert(tape_gap_find(idx,0,true,&target,NULL,NULL)==TAPE_GAP_NONE);assert(!remove("silence.l16"));
-    puts("PASS physical gaps: LEP/L16 inclusive 250ms threshold versus 249.6ms rejection, both levels, no wrap/trailing-silence target, WAV shared hysteresis, lazy pass/progress/cancel, capacity fallback and stale media");
+    puts("PASS physical gaps: inclusive 500ms versus 499.2ms rejection, both levels, no wrap/trailing-silence target, WAV hysteresis, cancel/cache/capacity");
 }
 static void byte_seeks(void) {
     const uint8_t data[]={127,0,0,0,129,0,0,128,0,64,0};
@@ -425,7 +425,7 @@ static void byte_seeks(void) {
     assert(!remove("byte.l16"));
     assert(edge_writer_open("partial.l16",62500));
     for(unsigned g=0;g<3;++g) {
-        assert(edge_writer_write_interval_units(0,18750)); /* 300ms */
+        assert(edge_writer_write_interval_units(0,37500)); /* 600ms */
         for(unsigned i=0;i<4000;++i)assert(edge_writer_write_interval_units(i%2 ? 0:1,100));
     }
     assert(edge_writer_finalize());idx=tape_time_navigation("partial.l16",NULL,NULL);
@@ -444,17 +444,29 @@ static void byte_seeks(void) {
     assert(!remove("partial.l16"));
     puts("PASS byte navigation cache: direct continuation levels, partial scan resumes, repeated forward/back reads zero waveform bytes, cancel/retry and true EOF completion");
 }
-static void barbarian_reference(const char *path) {
+static void l16_reference(const char *path) {
     const tape_index_t *idx=analyze(path);
-    assert(idx->source.size_bytes==2577411 && idx->waveform_us==333240640);
-    assert(idx->gaps_ready && idx->gap_count==1);
-    assert(idx->gaps[0].begin_us==6359152 && idx->gaps[0].end_us==6704224);
-    assert(idx->gaps[0].begin_offset==24508 && idx->gaps[0].end_offset==24854);
+    bool exported=idx->source.size_bytes==2589411;
+    assert(exported || idx->source.size_bytes==2577411);
+    assert(idx->waveform_us==(exported ? 343029776:333240640));
+    assert(idx->gaps_ready && idx->gap_count==(exported ? 6U:0U));
     uint64_t target=0;
-    assert(tape_gap_find_offset(idx,0,true,UINT64_MAX,&target,NULL,NULL)==TAPE_GAP_FOUND);
-    assert(target>=24508 && target<24854);
-    assert(tape_gap_find_offset(idx,24855,false,UINT64_MAX,&target,NULL,NULL)==TAPE_GAP_FOUND);
-    assert(tape_gap_offset_read_bytes()==0); /* Cached target, no new waveform pass. */
+    if(exported) {
+        const uint64_t begins[]={0,21955520,107229536,175588160,231299264,287791424};
+        const uint64_t ends[]={1008240,23971600,109245616,177604240,233315344,289807504};
+        const uint64_t offsets[]={0,134627,790883,1316153,1743161,2172923};
+        for(unsigned i=0;i<6;++i) {
+            assert(idx->gaps[i].begin_us==begins[i] && idx->gaps[i].end_us==ends[i] && idx->gaps[i].begin_offset==offsets[i]);
+            assert(tape_gap_find(idx,ends[i],false,&target,NULL,NULL)==TAPE_GAP_FOUND && target==ends[i]-TAPE_GAP_LEAD_US);
+        }
+        assert(tape_gap_find(idx,120000000,false,&target,NULL,NULL)==TAPE_GAP_FOUND && target==109045616);
+        assert(tape_gap_find(idx,target,false,&target,NULL,NULL)==TAPE_GAP_FOUND && target==23771600);
+        assert(tape_gap_find_offset(idx,900000,false,UINT64_MAX,&target,NULL,NULL)==TAPE_GAP_FOUND);
+        assert(target>=790883 && target<792884);uint64_t current=target;
+        assert(tape_gap_find_offset(idx,current,false,UINT64_MAX,&target,NULL,NULL)==TAPE_GAP_FOUND && target>=134627 && target<136628);
+        assert(tape_gap_find_offset(idx,900000,false,UINT64_MAX,&target,NULL,NULL)==TAPE_GAP_FOUND && target==current);
+        assert(tape_gap_offset_read_bytes()==0);
+    }else assert(tape_gap_find(idx,0,true,&target,NULL,NULL)==TAPE_GAP_NONE);
     FILE *f=fopen(path,"rb");assert(f);uint8_t buffer[64];
     for(unsigned percent=1;percent<100;percent+=7) {
         uint64_t offset=idx->source.size_bytes*percent/100;
@@ -474,11 +486,11 @@ static void barbarian_reference(const char *path) {
         tape_cursor_close(&c);
     }
     assert(!fclose(f));
-    printf("PASS Barbarian2 read-only: 345072us gap at 6.359152..6.704224s, 250ms rule, cached forward/back target, 15 direct byte seeks without prefix scan\n");
+    printf("PASS L16 reference read-only: bytes=%llu gaps=%u at 500ms, current/previous lookup in time and byte modes, cached targets and 15 direct byte seeks\n",(unsigned long long)idx->source.size_bytes,idx->gap_count);
 }
 int main(int argc,char **argv) {
     setvbuf(stdout,NULL,_IONBF,0);
     edges();wave_seek();bad_wave();codecs();multi_wav();aux_indexes();uncertain_and_limits();long_tapes();gaps();byte_seeks();
-    if(argc>1)barbarian_reference(argv[1]);
+    if(argc>1)l16_reference(argv[1]);
     printf("PASS bounded read-only index, multi-program NORMAL/IC/TC, exact edge/WAV waveform and bidirectional seek, cache/cancel; pools=%zu bytes\n",tape_analyzer_pool_bytes());return 0;
 }

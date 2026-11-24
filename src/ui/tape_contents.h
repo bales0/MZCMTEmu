@@ -35,3 +35,20 @@ void tape_contents_render(tape_contents_t *,const tape_index_t *,ui_model_t *,
                           uint32_t now_ms,const tape_transport_view_t *);
 /* Overlay seek controls on the existing PLAY metadata and fixed footer. */
 void tape_contents_apply_transport(const tape_contents_t *,const tape_index_t *,ui_transport_view_t *);
+
+#define TAPE_PREV_DOUBLE_MS 350U
+typedef struct {
+    uint64_t time_us,offset;
+    bool resume,absolute_time,previous;
+} tape_previous_request_t;
+typedef struct {
+    uint32_t pressed_at;
+    bool pending;
+    tape_previous_request_t request;
+} tape_previous_click_t;
+/* PLAY-only; other input/context changes cancel the pending first click. */
+bool tape_previous_click(tape_previous_click_t *,btn_event_t,uint32_t now_ms,bool enabled,
+                          const tape_previous_request_t *,tape_previous_request_t *);
+typedef tape_gap_result_t (*tape_previous_find_fn)(void *,uint64_t before,uint64_t *target);
+/* Finder is strict-before and normalizes a leading gap to file start. */
+tape_gap_result_t tape_previous_target(uint64_t origin,bool previous,tape_previous_find_fn,void *,uint64_t *);
